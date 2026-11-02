@@ -1,0 +1,8 @@
+{
+  "name": "agent-desk",
+  "version": "0.3.0",
+  "description": "agent-desk: one desk for parallel agent sessions over several repos. Skills (kickoff, handoff, orchestrate, ponytail), agents (implementer, reviewer, verifier, archiver), and a mod: auto-compaction prune, warm-hold, edit guard, the Desk pane (desk status), an owner-decisions band and /decide.",
+  "author": { "name": "agent-desk contributors" },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

@@ -1,0 +1,583 @@
+# agent-desk
+
+One desk for parallel coding-agent sessions over many repos and folders. A desk is a plain folder
+next to your repos. It holds the shared state every session reads at start:
+
+- **todos** (`todo.jsonl`)
+- **a claim board** (`board.jsonl`): who holds which worktree, CI results, review verdicts
+- **rulings** (`decisions.jsonl`): the owner's decisions, appended by `desk decide`
+
+Every change happens in its own git worktree. Merges go through a gate: CI green and a review
+verdict `MERGE @<head sha>` on the board. The same skills, agents and session context are set up
+for **Claude Code** and **GitHub Copilot** from one source.
+
+It ships in two parts that share one version number:
+
+- **`desk` CLI**: Node 20+, no dependencies. Covers status, todos, the board, worktrees, streams,
+  init and sync. `desk sync` also writes the session and subagent context hook (Ponytail, the desk
+  rules, the board), which Claude Code and Copilot both read.
+- **Claude Code plugin**:
+  - skills: `kickoff`, `handoff`, `orchestrate`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`
+  - agents: `implementer`, `reviewer`, `verifier`, `archiver`
+  - a mod: the Desk pane, the owner-decisions band, `/desk` and `/decide`, auto-compaction prune,
+    cache warm-hold, the edit guard and the session meters (plan quota, context), secret redaction
+
+## Install
+
+**Requirements.**
+
+- Node 20 or later and `git`.
+- `gh`, logged in (`gh auth login`), for the CI wait, the merge gate, PR state in `desk status` and
+  any repo with `gh` set.
+- The `claude` CLI for `desk stream`, `desk check` (plugin tests) and the plugin.
+
+**CLI.** Each desk pins its own kit, the way husky or commitlint are pinned: `desk init` writes the
+desk's `package.json` with the devDependency `"agent-desk": "github:klintravis/agent-desk#v<version>"`
+and runs `npm install` (`--no-install` skips it). `npx` is only for that first init:
+
+```sh
+mkdir desk && cd desk
+npx github:klintravis/agent-desk init --repo app=../app
+./desk status            # from then on: the desk's shim (.\desk.cmd in PowerShell or cmd)
+```
+
+`desk init` and `desk sync` write a `desk` shim (and `desk.cmd` for Windows) into the desk folder. The
+shim runs the desk's pinned kit with `DESK_HOME` set, so `<desk>/desk ...` works from any folder,
+worktrees included. Agents are told its path in their session context. Avoid `npx desk` outside the
+desk folder, because it resolves the registry's unrelated `desk` package. The hooks and settings
+`desk sync` writes call `node <desk>/node_modules/agent-desk/...`. Until that copy is installed, the
+hooks and the shim call the kit that ran `desk sync`. A global install
+(`npm install -g github:klintravis/agent-desk`) is optional and only puts a `desk` on your PATH that
+finds the desk from the current folder. The hooks and the shim still use the pinned copy.
+
+**Claude Code plugin.** The repo is its own marketplace:
+
+```text
+/plugin marketplace add klintravis/agent-desk
+/plugin install agent-desk@agent-desk
+```
+
+The mod part (everything under `hooks/`) runs only when Claude Code's function hooks are on
+(`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`). With them off the engine does not load it, so it does
+nothing; the skills and agents still work. Outside a desk the mod runs only what does not depend on
+a desk: auto-compaction prune, secret redaction and the session meters. No pane, warm-hold, edit
+guard or context.
+
+### Secret redaction
+
+Secrets (vendor key shapes, private keys, connection-string passwords, high-entropy tokens next to a
+key's name), email addresses and public IP addresses are swapped for a stable placeholder such as
+`[REDACTED-SECRET-1a2b3c4d]` (`[REDACTED-EMAIL-...]` and `[REDACTED-IP-...]` for addresses) in what you type, in tool results and (secrets only) in the context
+blocks of the first message. The same value always gets the same placeholder, and a placeholder in a
+tool call's input is swapped back for the real value, so `curl -H "Authorization: <placeholder>"`
+still sends the key. The values live in the session's memory only. Git SHAs, checksums, file paths,
+names in code, Stripe and YouTube public ids, example and noreply addresses, private,
+loopback and documentation IP ranges, and a connection-string password that is one template
+placeholder holding a bare name and no default value (`${pass}`, `{{pass}}`) are kept; `<password>` is hidden like any password. A toast or a notice under the tool says how many
+values were hidden. There are no options; the defaults are secret-redactor's.
+
+The vault is in memory only, so placeholders in a resumed transcript do not restore. Placeholders are
+not swapped back in the input of `Agent`, `SendMessage` and `AskUserQuestion`, which carry your words
+to another model. Redaction fails open: on an internal error the text goes through unchanged rather
+than blocking a send. Notes a settings hook attaches to a tool result (its `context`) are not scrubbed.
+
+### Session meters
+
+The mod keeps one status line under the prompt (the engine allows one per plugin), shared by
+the meters and, in a desk, the warm-hold mode and the decision flag:
+`ctx ▰▰▰▱▱▱▱▱ 42% · 5h ▰▰▱▱ 42% · warm auto · ⚑ 1`. The `warm` and `⚑` slots appear only in a desk
+(`⚑ n` only while n owner decisions wait). The longer forms of each meter are rows of the Desk pane.
+
+- **Plan quota.** Pane row `5h ▰▰▰▰▱▱▱▱▱▱ 42% · resets 2h10m · 7d ▰▰▱▱▱▱▱▱▱▱ 18% · 5h full in ~3h05m`:
+  the 5-hour and 7-day window use, the 5-hour reset countdown, and the first window that fills before
+  it resets at the current burn rate. The rate needs samples over a twentieth of the window (15 min
+  for 5h); until then it says `collecting burn rate`. Samples persist in the plugin store (key
+  `quota-samples`) across sessions. No row when the host reports no limits (an API key, no subscription).
+- **Context fullness.** Pane row `▰▰▰▰▱▱▱▱▱▱ 42%  84k/200k`: the main session's context use after its last
+  response, green, orange from 60% and red from 80%. From 80% the band above the prompt also shows
+  `ctx ▰▰▰▰▰▰▰▱ 85%  near full: handoff or /compact`, in any session.
+- **Cache.** Pane row `94% hit`: the main session's cache read / all input, the same ratio `desk tokens`
+  reports per day. No dollar amount: cost differs by plan.
+
+### Cold-cache guard (in a desk)
+
+When you send a prompt and the main cache has been idle past its hour with 50k+ tokens of context,
+the mod logs what the send costs: `cache cold for 12m: this send re-writes ~330k tokens, ~20x a warm
+turn's input`. The send goes through. With `AGENT_DESK_COLD_GUARD=refuse` in the session's
+environment, the first such send is dropped with that text instead, and the resend goes through.
+A session that starts with a context already in it (a resume) counts as cold until its first request.
+Only your own sends are checked, not slash commands or plugin and peer messages. After a cold write
+lands (the send above, or a turn that rewrote half its context without reading it back from the
+cache, which a big file read does not), warm-hold arms for 3 hours even
+with no agents running, so the rewrite is not paid again soon. There is no dollar figure, because
+the kit keeps no price table.
+
+### Warm-hold (in a desk)
+
+While this session has agents pending or running, the mod pings the main session 50 minutes after
+its last request, just before the cache's hour, so the next turn reads the context instead of
+rewriting it. The pane's Warm row shows `2 agents running, ping in 12m`, and its button
+toggles `auto` / `off` for this session only (never stored: a new session starts on `auto`). While
+`off` the hold never arms or pings, and the cold-send warning drops its "Warm-hold arms" sentence. The hold stops, and
+says why (`warm-hold off: ...`), when the cache is already cold, after 4 hours (the cap), when a
+ping fails, or when a ping finds the cache gone. After a cold write it arms with no agents running
+(see the cold-cache guard above). The ping is a model fork whose reply is the word `ok`.
+
+### Auto-compaction prune
+
+On an automatic compaction, in the main session and in subagents, the mod first cuts re-readable
+tool output: an output over 1500 characters keeps its first 400. The first message and the newest 8 messages, the
+output of `Agent` and `Task`, errors, and snapshots of state that has moved on (`git status`,
+`git stash list`, `gh run view`, `gh pr checks`) stay as written, and the file-write tools' inputs
+are shortened the same way. The conversation stays word for word. If that saves under 30% the
+engine's own summary runs instead, as it does for a manual `/compact`. A toast says
+`tool output cut, context -N%`. A prune error never blocks compaction.
+
+### Desk pane
+
+In an interactive session inside a desk, or once a surface attaches (the VS Code extension, the desktop app, a phone), the mod opens the **Desk** pane (`desk-status`) beside the
+chat. Its rows: Context, Quota, Cache, Style (the output style, `default` when none), Warm (the
+keep-warm toggle and why), Agents (type, description and age, first seen on the minute tick), Trees
+(claimed worktrees) and Decide (waiting decisions, with a `Decide T-n` button). Below them comes the
+`desk status` text, refreshed every minute from `desk status --json`. A band above the prompt shows
+`⚑ 2 decisions waiting` with a `Decide T-n` button, and the near-full context row (any session).
+Either button shows the decision's options and, where the surface's prompt box takes it and holds no
+draft, leaves `/decide T-n ` there: type the ruling, Enter. Otherwise type the printed Answer line.
+Two commands are registered: `/desk` opens the pane, and `/decide` shows the next decision or, as
+`/decide T-n <ruling>`, records one (it runs `desk decide`). The pane's data are plugin atoms whose
+shapes (`status-2`, `meters-2`, `warm-1`, `style-1`, `agents-1`) are declared in `types/index.d.ts`.
+
+## Quickstart
+
+```sh
+mkdir desk && cd desk
+npx github:klintravis/agent-desk init --repo app=../app --repo api=../api --repo notes=../notes
+# `desk` below is the desk's shim: ./desk (bash), .\desk.cmd (PowerShell or cmd), <desk>/desk elsewhere
+# edit desk.config.json: install/build/check per repo, gh where CI lives on GitHub
+desk sync
+desk todo add "first piece of work" --area app
+desk wt new first --repo app        # worktree ../worktrees/app-first on agent/first
+# ... work, commit ...
+desk wt finish first                # repo check, push, wait for CI
+desk board post verdict first "MERGE @<head sha>"   # after a clean review
+desk wt merge first                 # ff-only merge, push, todos closed, worktree removed
+desk status
+```
+
+What `desk init` does:
+
+- A path that holds `.git` becomes a git repo: `gh` comes from the `origin` URL (GitHub only) and
+  `defaultBranch` from `origin/HEAD`, else the checked-out branch, else `main`. Any other folder
+  becomes a plain folder. `--repo <id>` without `=<path>` means the desk folder itself; a missing path
+  or an id that is not lowercase letters, digits and dashes is an error.
+- It writes these files: `desk.config.json`, `AGENTS.md`, `CLAUDE.md` (which imports `AGENTS.md`),
+  `agent-rules.md`, empty `todo.jsonl`, `board.jsonl` and `decisions.jsonl`, `.gitignore`,
+  `<desk>.code-workspace`, the `desk`/`desk.cmd` shim and `package.json`, which pins the kit (an
+  existing `package.json` gets the devDependency added). Then it runs `npm install`.
+- It never overwrites the content of an existing file it wrote (the files above and `package.json`),
+  with these exceptions: the `folders` list of the `.code-workspace` file (its settings stay) is
+  refreshed on every run, and `init` and `sync` rewrite a `desk` or `desk.cmd` that carries
+  the `written by desk sync` marker. A file or folder of that name without the marker is left alone
+  with a warning, and the command exits 1. When `.claude/agent-rules.md` exists (an older desk), it
+  writes no second `agent-rules.md`.
+- Every line the CLI writes to `todo.jsonl`, `board.jsonl` and `decisions.jsonl` carries `"v": 1`.
+  The JSON Schemas of these files and of `desk.config.json` are in the kit's `schemas/`; `desk check`
+  prints a warning per line that breaks them (at most 5 per file) and the readers skip a line they
+  cannot parse.
+
+`desk sync` then writes each harness's files:
+
+- **Claude**: `.claude/settings.local.json` in the desk, in every git repo checkout and in every
+  open worktree. The file sets `DESK_HOME`, the readable directories, and the `SessionStart` and
+  `SubagentStart` context hooks.
+  - In checkouts and worktrees it also carries the desk's own `.claude/settings.json`: its
+    permissions, env, hooks and every other key (`autoMode`, `enabledPlugins`, cache TTLs, ...), since
+    a session opened there never reads the desk's file. Give the desk's hook commands absolute paths.
+    Object keys such as `enabledPlugins` merge with yours; the desk's value wins on other keys.
+  - The hook command carries the desk and the checkout, so a worktree session finds the desk even
+    when `env` is not applied. In a multi-root VS Code workspace only the checkout that holds the
+    session answers, so Copilot gets the context once.
+  - On a re-sync, your own keys, env vars, permission entries and hooks are kept. `allow`, `deny`,
+    `ask` and `additionalDirectories` become the union of yours and the desk's.
+  - An entry the desk wrote last time and no longer writes is removed: a permission entry, a hook,
+    a key, an env var, or one entry of an object key (a plugin in `enabledPlugins`; yours stay). The
+    record of what it wrote is `.claude/synced-permissions.json` (names only, no values). A matching
+    entry of your own is removed with it.
+  - If the desk's `settings.json` is not plain JSON, no checkout is rewritten and `desk sync` exits 1,
+    so a typo there cannot strip the guards from the worktrees.
+  - Your hooks stay, including any that share a group with the desk's hook.
+  - A file that is not plain JSON, such as one with JSONC comments, is left untouched with a
+    warning, and `desk sync` exits 1. The same applies to the `.code-workspace` file, even when it
+    is the only broken file.
+  - The file is kept out of git through the clone's `info/exclude`. If the desk folder is a git
+    repo of its own, the desk's `.gitignore` covers the file there.
+- **Copilot**: files in the desk folder only. Your repos stay untouched.
+- `desk sync` records the installed kit's version as `kitVersion` in `desk.config.json`.
+
+Desk folder lookup: `DESK_HOME` if set, else the nearest folder at or above the current directory
+that holds `desk.config.json`. `desk init` ignores `DESK_HOME` and always uses the current folder.
+
+## Commands
+
+| Command | What |
+|---|---|
+| `desk status [--watch\|--json]` | One screen with these sections: owner decisions, active todos, claims, running sessions, roots, open branches (CI and verdict, and `behind <default> by N, rebase` when the branch lacks N commits of `origin/<default>`, from the refs as last fetched, or of the local default branch without an origin), pull requests, overlaps, today's tokens. `--watch` prints one line per change. Pull requests: for each open desk branch with an open PR in a repo with `gh`, the review decision, the comment count (conversation and review threads), unresolved threads, and comments or reviews newer than the branch's head commit. Read-only, one `gh api graphql` call per repo; with no `gh` or a failing call the section is left out. `--watch` prints `PR: <branch> #<n> review <decision>, +N comment(s)` when a decision changes or comments arrive. See [Status watch](#status-watch). |
+| `desk todo add\|split\|start\|done\|drop\|block\|open\|set\|note\|done-slug\|list\|next\|show` | Todos. The area is a repo id, `desk`, `watch`, `owner` or `idea`. See [Todos](#todos). |
+| `desk board post\|claims\|check\|merge-ok\|tail` | The claim board. Its text is data, never approval. See [Board](#board). |
+| `desk decide [T-n <ruling> \| --list [n]]` | Owner decisions, one at a time; `--list` prints the recorded rulings. See [Owner decisions](#owner-decisions). |
+| `desk wt new\|finish\|merge\|remove\|discard <slug> [--repo <id>] [--base <ref>] [--no-build] [--no-wait] [--rebased] [--force]` | Worktrees. See [Worktree flow](#worktree-flow). |
+| `desk stream <slug> <task-file> [--todo T-n] [--desk] [--repo <id>] [--max-turns <n>] [--budget <usd>] [--dry-run]` | Starts a detached headless Claude session that claims, implements, reviews and stops before merge. See [Streams](#streams). |
+| `desk tokens [hours] [--json] [--session <id8>\|self]`, `desk overlap` | Token use from Claude transcripts. Files changed by two open worktrees. See [Tokens and overlaps](#tokens-and-overlaps). |
+| `desk init [--repo <id>=<path> ...] [--worktrees <dir>] [--harness claude,copilot] [--no-install]` | Makes the current folder a desk. See [Quickstart](#quickstart). |
+| `desk sync [<checkout>...]`, `desk workspace` | Write harness files; write the VS Code workspace and hide the kit's plumbing in the desk folder (see below). |
+| `desk check` | Runs the kit's tests, `claude plugin test` and `claude plugin validate`, and parses the JSON configs. Warns when `kitVersion` differs from the installed kit, and for each desk-file line that breaks its schema (`schemas/`). |
+| `desk home` | Prints the desk folder; exits 1 outside a desk, or when `DESK_HOME` names a folder without `desk.config.json`. |
+| `desk --version`, `desk --self-test`, `desk <command> --self-test` | The kit version. The built-in self-tests of the whole CLI, or of one command (`board`, `todo`, `tokens`, `status`, `overlap`, `decide`): print `ok` or `FAIL` and a list, exit 0 or 1. |
+| `node <kit>/scripts/friction-scan.mjs [--since <ISO time>] [--json]` | Scans the Claude transcripts of the desk's sessions and subagents for friction: tool errors, permission denials, oversized outputs, repeated commands. Prints a short summary. Read-only. |
+
+### Worktree flow
+
+`wt` and `stream` each take only their own flags: they exit 1 on an unknown flag or a value flag without
+its value.
+
+- **`wt new`**:
+  - Branches `<branchPrefix><slug>` from `origin/<defaultBranch>` (`--base <ref>` starts from another
+    ref; a repo with no `origin` starts from its local default branch).
+  - Writes the settings and posts a claim.
+  - Runs `install`, then `build`. `--no-build` skips the build.
+  - Slugs are desk-wide: a slug already open in another repo is refused.
+- **`wt finish`**:
+  - Refuses uncommitted changes, and refuses a worktree that is not on `<branchPrefix><slug>`.
+  - Runs `check`, then pushes. Use `--rebased` (force-with-lease) after a rebase; a push git rejects as
+    non-fast-forward says so.
+  - `--no-wait` pushes and prints the `gh run list` command instead of waiting.
+  - Waits for every GitHub Actions run on the pushed head through `gh`. CI is green only when
+    every run succeeded or was skipped. The repo's workflows must run on pushes to every branch
+    (`on: push: branches: ['**']`), not just `main`: otherwise there is no run to wait for.
+- **`wt merge`** needs all of these:
+  - the branch is pushed
+  - CI is green
+  - the newest board verdict for the slug is `MERGE @<sha>` and covers the branch head
+  - the main checkout is on the default branch and clean
+
+  It then fast-forwards the default branch (ff-only), pushes it, closes the todos started with
+  `--slug`, posts `merged` and removes the worktree. If git refuses to remove it (modified or untracked
+  files, a lock) git's reason is shown, the worktree and the claim stay and it exits 1: fix that, then
+  `desk wt remove <slug>`. If git unregistered the worktree but the folder stayed (a shell holds it on
+  Windows) the merge still closes: it prunes, deletes the branch when git allows, posts `release`,
+  warns which folder to remove by hand and exits 0.
+- **`wt remove`** removes a worktree and its branch once the branch is in `origin/<defaultBranch>`
+  (`merge` calls it), and posts `release`. Like `merge`, it fails (`cd out of <path> first`) when your
+  current directory is inside the worktree. If git unregistered the worktree but the folder stayed, it
+  finishes the same way as `merge`: branch deleted, `release` posted, a warning, exit 0.
+- **`wt discard`** drops the worktree and its branch, uncommitted work included, and posts `release`.
+  It refuses a slug another session holds unless you pass `--force`, and, like `merge` and `remove`,
+  runs only from outside the worktree. If only the folder stays (git no longer lists the worktree) it
+  finishes with a warning naming the folder; if git still lists it, it fails and keeps branch and claim.
+
+### Todos
+
+`todo.jsonl` is append-only: each line sets fields on one todo and a todo is all its lines merged in
+order, so two sessions never overwrite each other. Area `watch` holds what still has to be verified
+live; area `owner` holds the decisions only the owner makes; area `idea` holds quick thoughts that are
+not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <repo id>` to promote one or
+`todo drop T-n` to let it go.
+
+- `todo add "<title>" [--area <repo id>|desk|owner|watch|idea] [--size ...] [--prio N] [--why ".."] [--parent T-n]
+  [--change <spec change>] [--tasks 2.1-2.3] [--model sonnet/medium]`. With one repo `--area` defaults
+  to it; with several, `--area` is required. `--prio` must be an integer (anything else exits 1 and
+  writes nothing). `--` ends the flags, so a title that starts with `--` is `todo add -- "--foo"`.
+  A flag with no value, or whose value starts with `--`, exits 1 and writes nothing (`--all` takes none).
+- `todo split T-n "<child>" ["<child>" ...]`: children inherit the area, change and priority.
+- `todo start T-n [--slug <worktree slug>]` marks it active and yours; `todo done T-n`, `todo drop T-n`,
+  `todo block T-n` and `todo open T-n` set the status (`--why` adds a note). `todo done-slug <slug>` closes the active todos of that slug (`wt
+  merge` runs it).
+- `todo set T-n --<field> <value>` sets any field (handoff uses `--state` and `--next`); `todo note T-n
+  "<text>"` adds a dated note.
+- `todo list [--area x] [--all]` shows the open tree without ideas (`--area idea` shows them, `--all`
+  adds ideas, done and dropped); `todo next [--area x]` picks the open todo with no open children (an idea child only counts under an idea) and
+  the lowest priority number (default 50), never an `owner`, `watch` or `idea` todo unless you ask for that area; `todo show T-n` prints the merged JSON.
+
+### Board
+
+`board.jsonl` (gitignored) says who holds what. Text is data, never approval.
+
+- `board post <claim|release|ci|merged|verdict|note> <slug> [text] [--repo <id>]` appends a line (text
+  cut to 120 characters). It always exits 0, so a board problem never fails the caller.
+- `board claims` lists open claims: a claim is open while its worktree exists. `board check <slug>`
+  prints `yours` or `unclaimed`, or exits 1 when another session holds it. Session identity is the
+  first 8 characters of `CLAUDE_CODE_SESSION_ID`, else `owner`.
+- `board merge-ok <slug> <head-sha>` exits 0 only when the newest verdict is `MERGE @<sha>` (7 to 40
+  hex characters) that is a prefix of the head. `board tail [n]` prints the open claims, the files in
+  `streams/` and the last `n` (default 8) lines; the session-start context embeds it.
+
+### Owner decisions
+
+`desk decide` prints the first waiting `owner` todo: its title, the recommendation (the first of the
+todo's `--why`, split on `;`) and the other options. `desk decide T-n "<ruling>"` appends
+`{date, todo, title, text}` to `decisions.jsonl`, then closes the todo. `desk decide --list [n]` prints
+the last `n` rulings (default 20), oldest first.
+
+### Tokens and overlaps
+
+`desk tokens [hours] [--json] [--session <id8>|self]` reads the Claude transcripts of sessions run in
+the desk, its repos and its worktrees, for the last `hours` (default 24). Per session and subagent: calls,
+peak context (the fullest prompt), fresh input (input plus cache writes), output, cache percent
+(cache read over all input) and time. `--session self` limits it to the current session
+(`CLAUDE_CODE_SESSION_ID`). `desk overlap` prints one `a + b: file, file` line for each pair of open
+worktrees of one repo that changed the same file (committed against the default branch, plus uncommitted).
+
+### Status watch
+
+`desk status` is one screen with these sections: Owner decisions waiting, Active todos, Claims,
+Running sessions (transcripts written in the last 10 minutes), Roots (each git repo's default branch
+and its sha), Open branches (CI and review
+verdict per branch, and `behind <default> by N, rebase`), Pull requests (when a repo has `gh`), Overlaps and Tokens today. A source that
+cannot be read prints `unavailable`; the command never fails.
+
+`desk status --json` prints the same data as one JSON object (`decisions`, `active`, `claims`,
+`sessions`, `roots`, ..., plus `text`, the screen above), validated by `schemas/desk-status.schema.json`.
+The Desk pane reads it.
+
+`desk status --watch` (run it under a monitor) checks every 90 seconds and prints one line per change:
+`BOARD: <json>` for a new board line, `CI: <branch> <sha> completed <conclusion>`,
+`AGENT+: <session> <agent> (<model>)` for a new running agent, `CTX>250k: ...` when one passes 250k
+tokens of context (printed once ever per agent, like `OWNER+:`), `OVERLAP: <pair>` (also posted as a board note), `OWNER+: T-n <title>` for a new owner
+decision (printed once ever) and `PR: ...`. A failed look keeps the last good one.
+
+### Streams
+
+`desk stream <slug> <task-file>` writes the prompt and the log to `scratchDir`
+(`<slug>-prompt.txt`, `<slug>-run.jsonl`, `<slug>-run.jsonl.err`) and starts a detached headless
+`claude -p` in the desk folder that claims, implements, reviews and stops before merge.
+
+- `--todo T-n` tells the run to start and split that todo; `--repo <id>` picks the repo.
+- `--desk` is desk work: edit the desk folder directly, no worktree pipeline.
+- `--max-turns <n>` (default 80). `--budget <usd>`, or `budgetUsd: 5` in a front matter block at the
+  top of the task file, passes `--max-budget-usd`; the flag wins; default none.
+- `--dry-run` prints the command and the prompt and starts nothing.
+- The child does not inherit `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_ENTRYPOINT` or
+  `CLAUDE_CODE_SSE_PORT`, so the board credits its claims to it and it cannot attach to the caller's
+  socket. `DESK_HOME` is set for it.
+
+## Environment variables
+
+| Variable | Read or set by | Meaning |
+|---|---|---|
+| `DESK_HOME` | read by the CLI and the mod; set by the shim, `desk sync` settings and `desk stream` | The desk folder. Without it the CLI walks up from the current folder to `desk.config.json`. |
+| `CLAUDE_CODE_SESSION_ID` | read by `desk` (board identity, `desk tokens --session self`) | Session identity: its first 8 characters, else `owner`. Subagents share their parent's. |
+| `CLAUDE_PROJECT_DIR` | read by `scripts/subagent-context.mjs` | The root whose settings Claude loaded (else the payload's `cwd`). A hook installed for one checkout answers only when the session is inside it. |
+| `AGENT_DESK_COLD_GUARD` | read by the mod | `refuse` drops the first send to a cold cache; anything else only warns. |
+| `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` | read by Claude Code | `1` turns on the mod's function hooks. |
+| `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SSE_PORT` | removed by `desk stream` | Stripped from the stream child's environment, with `CLAUDE_CODE_SESSION_ID`. |
+
+## What is in the kit
+
+| Part | Files |
+|---|---|
+| Plugin | `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `hooks/hooks.json` (registers `./register.ts`) |
+| Skills | `kickoff`, `handoff`, `orchestrate`, and the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt` |
+| Agents | `implementer`, `reviewer`, `verifier`, `archiver` |
+| Templates for `desk init` | `templates/AGENTS.md`, `templates/agent-rules.md` |
+| JSON Schemas of the desk files | `schemas/desk-config.schema.json`, `schemas/todo.schema.json`, `schemas/board.schema.json`, `schemas/decisions.schema.json` |
+| Hook scripts | `scripts/subagent-context.mjs` (session and subagent context), `scripts/edit-guard.mjs` (the edit guard as a `PreToolUse` script), `scripts/friction-scan.mjs [--since <ISO time>] [--json]` (workflow friction in the desk's transcripts: tool errors, denials, oversized outputs, repeated commands; default last 2 hours) |
+
+## Specs
+
+Behaviour is specified in [`openspec/specs`](openspec/specs), one capability per folder, in
+requirement and scenario form. A change to behaviour goes through [`openspec/changes`](openspec/changes)
+(`openspec` CLI: propose, apply, archive). `openspec/inventory.md` lists every command, flag,
+variable, config key, hook and written file with the README section that documents it.
+
+## Config reference (`desk.config.json`)
+
+Paths are relative to the desk folder.
+
+```json
+{
+  "kitVersion": "0.2.0",
+  "worktreesDir": "../worktrees",
+  "scratchDir": "scratch",
+  "harnesses": ["claude", "copilot"],
+  "outputStyle": "Concise",
+  "permissions": { "allow": [], "deny": [], "ask": [], "additionalDirectories": [] },
+  "repos": [
+    { "id": "app", "kind": "git", "path": "../app", "gh": "you/app", "defaultBranch": "main",
+      "branchPrefix": "agent/", "worktreePrefix": "app-", "install": "npm ci", "build": "npm run build", "check": "npm test" },
+    { "id": "tools", "path": "../tools" },
+    { "id": "notes", "kind": "folder", "path": "../notes" }
+  ]
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `kitVersion` | written by `init` and `desk sync` | The installed kit version the desk files were last written with. `desk check` warns when it differs from the kit in `node_modules`. |
+| `worktreesDir` | `../worktrees` | Where worktrees live. One worktree is `<worktreePrefix><slug>`. |
+| `scratchDir` | `scratch` | Stream prompts and logs. |
+| `harnesses` | `["claude"]` (`init` writes both) | Which harness files `desk sync` writes. |
+| `outputStyle` | `"Concise"` | Claude output style. `desk sync` writes it as `outputStyle` into every `settings.local.json` it writes, so main and headless (`desk stream`) sessions use it, and subagents (which ignore output styles) get a one-line "reply concisely" rule when it is `Concise`. `""` writes nothing and removes an `outputStyle` an earlier sync wrote (one you set yourself stays). Must be a string. |
+| `permissions` | `{}` | Copied into each Claude `settings.local.json`; `allow`, `deny`, `ask` and `additionalDirectories` are merged with yours as unions. `additionalDirectories` is extended with the desk, `worktreesDir` and every plain folder. |
+| `repos[].id` | required | Lowercase letters, digits and dashes. Used by `--repo`, todo areas and board claims. |
+| `repos[].path` | required | The main checkout, or the folder. |
+| `repos[].kind` | `git` | `git`: worktrees, branches, merges. `folder`: no worktrees. |
+| `repos[].gh` | none | GitHub `owner/name` for the CI wait and gate, and the CI column in status. |
+| `repos[].defaultBranch` | `main` | The branch that worktrees start from and merge into. |
+| `repos[].branchPrefix` | `agent/` | Prefix of each worktree's branch. |
+| `repos[].worktreePrefix` | `<id>-` | Prefix of each worktree's directory name. An older desk keeps its directory names by setting this, for example `"old-"`. No prefix may start another repo's prefix (`a-` and `a-b-` are refused), so every directory names one repo. |
+| `repos[].install`, `repos[].build`, `repos[].check` | empty | Shell command lines run in the worktree. Empty means the step is skipped. |
+
+### Many repos, local repos and plain folders
+
+| Entry | Worktrees | Push and fetch | CI | Status shows |
+|---|---|---|---|---|
+| git repo with `gh` | yes | yes | waited on and gated | the run's result |
+| git repo, no `gh` | yes | yes, if `origin` exists | none | `CI -` |
+| git repo, no `origin` remote | yes | none | none | `CI -` |
+| `kind: "folder"` | none; `wt` refuses | none | none | listed under Roots |
+
+**git repo, no `gh`.** `finish` still runs `check` and pushes, but there is no CI wait. `merge`
+skips the CI gate and still pushes.
+
+**git repo, no `origin` remote.** It works as a local-only repo:
+
+- `finish` runs `check` only.
+- `merge` fast-forwards the local default branch.
+- Branches start from the local default branch.
+
+**`kind: "folder"`.** A plain folder, with or without git. It is:
+
+- listed in the `.code-workspace`
+- readable from every checkout (added to `additionalDirectories`)
+- usable as a todo area
+
+It gets no settings file.
+
+**Several repos at once:**
+
+- **Slugs are desk-wide.** `wt new` refuses a slug that is already open in another repo. Directory
+  names stay `<worktreePrefix><slug>`.
+- **`--repo` is required** when a command cannot tell which repo you mean: `wt new` with several git
+  repos, or `todo add` with several repos. Other `wt` commands find the repo from the open
+  worktree.
+- **Board claims** carry `repo`. A claim without it means the first repo. Todo area `repo` (from
+  older single-repo desks) also means the first repo.
+
+## Claude Code and GitHub Copilot
+
+`desk sync` writes the Copilot form of the kit's skills and agents into the desk folder's `.github/`
+folder. Open the desk folder, or the generated `.code-workspace`, in VS Code.
+
+| Feature | Claude Code | GitHub Copilot (VS Code) |
+|---|---|---|
+| Desk instructions | `CLAUDE.md` (imports `AGENTS.md`) | `AGENTS.md` |
+| Skills (kickoff, handoff, orchestrate, ponytail, ...) | plugin | `.github/skills/<name>/` (copied by `desk sync`) |
+| Agents (implementer, reviewer, verifier, archiver) | plugin | `.github/agents/<name>.agent.md`. `model` is dropped (use the picker); `effort` becomes `reasoning-effort`; tools map to Copilot's `read`, `search`, `edit`, `execute`, `web`, `agent`. |
+| Ponytail and `agent-rules.md` at session and subagent start, plus the board at session start | `SessionStart`/`SubagentStart` hooks in `.claude/settings.local.json` | the same hooks: Copilot reads `.claude/settings.json` and `settings.local.json` |
+| `desk` CLI: todos, board, status, worktrees, merge gate, decide | yes | yes |
+| Desk pane, owner-decisions band, `/desk`, `/decide` | yes (mod) | no |
+| Auto-compaction prune, cache warm-hold | yes (mod) | no |
+| Edit guard (refuses `sed -i` and heredoc edits) | yes (mod) | no |
+| `desk tokens`, running sessions in `desk status` | yes (reads Claude transcripts) | no |
+| `desk stream` (headless runs) | yes (`claude -p`) | no |
+
+The pane, warm-hold, prune, the edit guard, the token report and streams are Claude-only.
+
+**One hook source.** Copilot runs hooks from every source it finds and does not deduplicate them,
+so the context hooks live only in `.claude/settings.local.json`. Earlier builds also wrote
+`.github/hooks/agent-desk.json`; `desk sync` deletes it. Each hook command is a plain
+`node "<path>" <Event>`, because Copilot runs the same `command` under bash and PowerShell. The
+script reads either harness's payload (Claude's, or Copilot's PascalCase event with snake_case
+fields), finds the desk from the payload's `cwd`, and prints `{}` outside a desk.
+
+**Same-named skills.** `desk sync` replaces `.github/skills/<name>/` and
+`.github/agents/<name>.agent.md` for every kit skill and agent name. Give your own skills and agents
+in the desk other names. In Claude Code the kit's skills come from the plugin, so they are
+namespaced (`agent-desk:handoff`); the `.github/skills` copies keep the plain name (`handoff`) and are
+read by Copilot only.
+
+The edit guard refuses `sed -i`, heredoc and `node -e` file edits inside a desk. The mod runs it in
+Claude Code. `scripts/edit-guard.mjs` is the same check as a standalone `PreToolUse` hook script
+for Bash, if you wire it into another harness yourself. Both do nothing outside a desk.
+
+### VS Code settings
+
+- **The desk folder must be a workspace root.** VS Code finds `.github/skills`, `.github/agents` and
+  `.claude/settings*.json` only in the root folders of the workspace. The generated
+  `.code-workspace` lists the desk first.
+- **Plumbing hidden.** `desk sync` and `desk workspace` add `files.exclude` entries to the desk folder's
+  `.vscode/settings.json` for `desk`, `desk.cmd`, `node_modules`, `package.json`, `package-lock.json`,
+  `.github`, `.claude` (so `.claude/settings.json` goes with it; set `".claude": false` to show it again; skipped on an older desk whose rules are in `.claude/agent-rules.md`), `.gitignore`, `*.code-workspace` and `NEXT.md.bak`. Your other keys and excludes
+  stay, and an exclude you set to `false` shows the file again. It is the desk folder's file, not the
+  `.code-workspace`, so the repos keep their `package.json` visible. `.vscode/` is in the `.gitignore`
+  `desk init` writes; add it to an older desk's by hand, from a terminal (VS Code now hides `.gitignore`).
+- `chat.useCustomizationsInParentRepositories`: turn it on when the desk folder sits inside another
+  git repo, so VS Code reads the customizations from the folder you opened and not only the repo
+  root.
+- `chat.useClaudeHooks`: the older Local harness reads the `.claude/settings*.json` hooks only with
+  this on. The Copilot harness reads them by default.
+- `github.copilot.chat.skillTool.enabled`: turn it on so agents can load the `.github/skills`.
+- Claude-only, with no Copilot equivalent: the Desk pane and band, `/desk` and `/decide`,
+  auto-compaction prune, warm-hold, the edit guard, `desk tokens`, running sessions in
+  `desk status`, and `desk stream`.
+
+## Versioning and upgrade
+
+- agent-desk uses [semver](https://semver.org). The CLI and the plugin always carry the same
+  version.
+- [CHANGELOG.md](CHANGELOG.md) lists every release and says what an existing desk must do.
+
+To upgrade:
+
+1. Read the CHANGELOG entries between your `kitVersion` and the new version.
+2. Bump the tag in the desk's `package.json`, for example
+   `"agent-desk": "github:klintravis/agent-desk#v0.3.0"`.
+3. Run `npm install` in the desk.
+4. Run `desk sync`. It rewrites the hooks and settings and records the new `kitVersion`. From 0.3.0
+   it also migrates the desk once: `NEXT.md`'s rulings go to `decisions.jsonl` and its "Not yet
+   verified live" items become `watch` todos, `NEXT.md` is renamed `NEXT.md.bak` (sync names the
+   sections it did not migrate), a generated `TODO.md` is deleted, and the shipped `AGENTS.md` lines
+   that named `NEXT.md` or `TODO.md` are replaced. Edit by hand only the lines sync names, then commit.
+5. Update the plugin: `/plugin marketplace update agent-desk`.
+
+Until step 4, `desk check` warns that `kitVersion` differs from the installed kit.
+
+**Migrating a hand-rolled desk:** run `desk init` in it (it keeps existing files), fill
+`desk.config.json`, then remove your own `SessionStart` and `SubagentStart` context hooks from the
+desk's `.claude/settings.json` and from each checkout's settings. `desk sync` writes its own, and
+Claude Code and Copilot would otherwise run both.
+
+Development: `npm test` (node:test, no dependencies). `desk check` adds the plugin's own tests and
+validation. Day-to-day work happens in a private development repo (git remote `origin`); this public
+repo (git remote `public`) receives one commit per release, on `main`, with its tag. CI runs `npm test` with Node 20 and 22, on hosted Linux, Windows and macOS here
+and on one self-hosted Linux runner in the private repo, where Windows is covered by the check in
+`desk wt finish`. No runner is ever registered on this repo: a fork's pull request can edit the
+workflow, and it must find nothing of the owner's to run on.
+
+### Releasing
+
+A release is a git tag `v<version>` on `main` plus a GitHub release on the public repo. There is no npm
+publish.
+
+1. On a branch, run `node scripts/release.mjs bump <x.y.z>`. It needs `x.y.z` greater than the current
+   version and entries under `## Unreleased`; it sets the version in `package.json` and
+   `.claude-plugin/plugin.json` and moves the entries to `## <x.y.z> - <date>`.
+2. Review the branch, merge it to `develop`, wait for CI.
+3. Fast-forward `main` to that `develop` commit, push it, tag it and push the tag:
+   `git tag vX.Y.Z && git push origin main vX.Y.Z`.
+4. With `main` checked out at the tag, run `node scripts/release.mjs publish vX.Y.Z`. It makes one commit
+   from the tag's tree on top of the public `main` and pushes it with the tag, so the private history
+   stays private. Never push a private branch or tag to `public`.
+5. `.github/workflows/release.yml` runs on the tag and skips a private repo. It fails unless the tagged
+   commit is on `main`, runs `npm test`, writes the CHANGELOG section to `notes.md` and creates the
+   GitHub release from it.
+
+`node scripts/release.mjs notes vX.Y.Z` prints that section and exits 1 unless the tag is `v` plus the
+version in both files and the CHANGELOG has the section. To create a release by hand after step 4, run
+`node scripts/release.mjs notes vX > n.md && gh release create vX --repo klintravis/agent-desk --verify-tag --title vX -F n.md`.
+
+## License
+
+MIT. See [LICENSE](LICENSE). The vendored Ponytail skills keep their own `LICENSE` and
+`UPSTREAM.md`. Mod code ported from other MIT mods is listed, with its copyright, in
+[THIRD-PARTY.md](THIRD-PARTY.md).

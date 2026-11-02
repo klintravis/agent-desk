@@ -1,0 +1,13 @@
+{
+  "name": "agent-desk",
+  "version": "0.3.0",
+  "description": "One desk for parallel coding-agent sessions over several repos: todos, a claim board, worktrees, review-gated merges, and Claude Code / GitHub Copilot setup from one source.",
+  "type": "module",
+  "bin": { "desk": "bin/desk.mjs" },
+  "files": ["bin", "lib", "scripts", "templates", "schemas", "skills", "agents", "hooks", "types", ".claude-plugin", "CHANGELOG.md", "THIRD-PARTY.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test test/config.test.mjs test/desk.test.mjs test/wt.test.mjs test/sync.test.mjs test/context.test.mjs test/release.test.mjs"
+  },
+  "license": "MIT"
+}

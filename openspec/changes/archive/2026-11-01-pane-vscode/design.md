@@ -1,0 +1,1 @@
+A module-level `started` flag in `startPane`; `session.attach` calls it with `true`. Nothing resets state mid-session, so the flag is never reset. An attach seen before `session.start` finished its desk probe is remembered (`attached`) and honoured by `session.start`.

@@ -1,0 +1,231 @@
+# worktrees-and-streams Specification
+
+## Purpose
+
+One worktree per piece of work, and unattended headless sessions that work in them. Implemented in
+`lib/wt.mjs` (`desk wt new|finish|merge|remove|discard` and `desk stream`). Uses `git` and `gh` only,
+the same on every OS.
+
+## Requirements
+
+### Requirement: Slugs and repo lookup
+A slug SHALL match `[a-z0-9][a-z0-9-]*` and SHALL be unique desk-wide. A `wt` command SHALL act on the
+repo given by `--repo`, else the repo whose worktree has that slug, else the only git repo. A repo of
+kind `folder` SHALL be refused by every `wt` command with a message pointing at its path.
+
+#### Scenario: Plain folder
+- **WHEN** a `wt` command targets a repo of kind `folder`
+- **THEN** it fails saying the folder has no worktrees
+
+#### Scenario: Bad slug
+- **WHEN** the slug is `Foo` or missing
+- **THEN** the command fails with `slug must be lowercase letters, digits and dashes`
+
+### Requirement: wt new
+`wt new <slug> [--repo id] [--base ref] [--no-build]` SHALL create a worktree on a new branch, claim it on the board and prepare it.
+
+#### Scenario: Worktree and branch
+- **WHEN** `wt new` runs
+- **THEN** it fetches `origin` (when the repo has one) and creates `<worktreesDir>/<worktreePrefix><slug>` on a new branch `<branchPrefix><slug>`
+- **AND** the base ref is `--base`, else `origin/<defaultBranch>`, or the local default branch without `origin`
+
+#### Scenario: Setup and claim
+- **WHEN** the worktree exists
+- **THEN** the checkout's settings are written (`sync`), an existing `.code-workspace` is refreshed and a `claim` with the text `from <base>` is posted
+- **AND** the repo's `install` and `build` commands run from the worktree, each skipped when empty and `build` skipped by `--no-build`
+- **AND** it prints `Ready: <dir> (branch <branch> from <base>)`
+
+#### Scenario: Folder exists
+- **WHEN** the folder exists or the slug is already open in any repo
+- **THEN** it fails
+
+#### Scenario: Slug taken
+- **WHEN** slug `x` is open in repo `a` and `wt new x --repo b` runs
+- **THEN** it fails saying slugs are desk-wide
+
+#### Scenario: No build
+- **WHEN** `--no-build` is given and the repo has `install` and `build` commands
+- **THEN** `install` runs and `build` does not
+
+### Requirement: wt finish
+`wt finish <slug> [--no-wait] [--rebased]` SHALL check the worktree, push its branch and report the CI result.
+
+#### Scenario: Preconditions and push
+- **WHEN** `wt finish` runs
+- **THEN** the worktree must exist, be on its branch and have no uncommitted changes
+- **AND** the repo's `check` command runs, then the branch is pushed with `-u origin <branch>` (`--force-with-lease` with `--rebased`)
+
+#### Scenario: Early stop
+- **WHEN** the repo has no `origin` remote
+- **THEN** it stops after the check
+- **AND** for a repo without `gh` it stops after the push, and with `--no-wait` it prints the `gh run list` command and stops
+
+#### Scenario: CI report
+- **WHEN** it waits
+- **THEN** it waits up to 60 seconds for a CI run on the head, watches every run on that commit, posts a `ci` line `<sha7> <conclusion>` and prints the conclusion
+- **AND** when CI is not `success` it prints the failed-log or still-running command for each such run and sets exit code 1
+
+#### Scenario: CI conclusion across runs
+- **WHEN** a commit has two runs, one `success` and one `skipped`
+- **THEN** the conclusion is `success`
+
+#### Scenario: Any run still open
+- **WHEN** one of several runs is not completed
+- **THEN** the conclusion is `running`
+
+#### Scenario: Wrong branch
+- **WHEN** the worktree has another branch checked out
+- **THEN** finish fails naming both
+
+### Requirement: wt merge
+`wt merge <slug>` SHALL fast-forward the default branch to the local branch head only when every gate passes for that one sha.
+
+#### Scenario: Gates
+- **WHEN** `wt merge` runs
+- **THEN** it requires the branch pushed to `origin` at that sha (when `origin` exists), CI `success` on it (when the repo has `gh`), a board verdict gate passing for exactly that sha (see `todos-and-board`), and the main checkout on the default branch and clean
+- **AND** any failed gate stops the merge before the default branch changes
+
+#### Scenario: Merge steps
+- **WHEN** all gates pass
+- **THEN** the default branch is fast-forwarded to `origin/<default>` and then to the sha (`--ff-only`) and pushed
+- **AND** `merged` is posted, todos started with that slug are closed and the worktree is removed
+
+#### Scenario: Unpushed commits
+- **WHEN** the local branch differs from `origin/<branch>`
+- **THEN** merge fails telling the caller to run `wt finish` first
+
+#### Scenario: Not a fast-forward
+- **WHEN** the default branch has moved past the branch's base
+- **THEN** merge fails telling the caller to rebase, finish `--rebased` and re-run CI
+
+#### Scenario: No verdict
+- **WHEN** the board has no verdict for the slug
+- **THEN** merge fails with `merge blocked: no verdict on the board`
+
+### Requirement: wt remove
+`wt remove <slug>` SHALL remove the worktree and delete its branch (`-d`) only when the branch is an
+ancestor of the base ref, delete `streams/<slug>.md` if present, refresh the workspace file and post
+`release` with the text `removed`. It SHALL fail with `cd out of <path> first` before changing anything when the current directory is inside the worktree. When `git worktree remove` fails, it SHALL prune; if git still lists the worktree it SHALL fail and change nothing else, otherwise (the folder stayed) it SHALL delete the branch when git allows, post `release` with the text `removed; folder left` and print a warning naming the folder.
+
+#### Scenario: Not merged
+- **WHEN** the branch is not in `origin/<default>`
+- **THEN** remove fails with `... is not in ... yet; merge it first` and nothing is removed
+
+### Requirement: wt discard
+`wt discard <slug> [--force]` SHALL force-remove the worktree and delete the branch (`-D`), uncommitted
+work included, and post `release` with the text `discarded`. It SHALL refuse, unless `--force`, when
+another session holds the open claim. It SHALL fail with `cd out of <path> first` before changing anything when the current directory is inside the worktree. When `git worktree remove` fails, it SHALL prune; if git still lists the worktree it SHALL fail and change nothing else, otherwise (the folder stayed) it SHALL finish the discard and print a warning naming the folder.
+
+#### Scenario: Foreign claim
+- **WHEN** session B holds the claim and session A runs `wt discard x`
+- **THEN** it fails naming B and nothing is removed
+
+#### Scenario: Current directory inside the worktree
+- **WHEN** `wt discard x` runs with the current directory inside the worktree of `x`
+- **THEN** it exits 1 with `cd out of <path> first`; the worktree, the branch and the claim are untouched
+
+### Requirement: Stream start
+`desk stream <slug> <task-file> [--todo T-n] [--desk] [--repo id] [--max-turns n] [--budget usd] [--dry-run]` SHALL start a headless `claude` session on the task, or fail for a bad slug or a missing task file.
+
+#### Scenario: Start
+- **WHEN** the stream starts
+- **THEN** the prompt is written to `<scratchDir>/<slug>-prompt.txt`
+- **AND** `claude -p --max-turns <n|80> --output-format stream-json --verbose` runs detached in the desk folder with the prompt as stdin, stdout in `<scratchDir>/<slug>-run.jsonl` and stderr in `<log>.err`
+- **AND** the pid and log path are printed
+
+#### Scenario: Child environment
+- **WHEN** the child starts
+- **THEN** its environment is the caller's without `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_ENTRYPOINT` and `CLAUDE_CODE_SSE_PORT`, plus `DESK_HOME`
+
+#### Scenario: Dry run
+- **WHEN** `--dry-run` is given
+- **THEN** the claude command line and the prompt are printed and no process starts
+
+#### Scenario: No inherited identity
+- **WHEN** the calling session has `CLAUDE_CODE_SESSION_ID` set
+- **THEN** the child does not receive it, and its board claims are credited to itself
+
+### Requirement: Stream brief
+The prompt SHALL give the session its task and pipeline, and SHALL tell it to stop before `desk wt merge`.
+
+#### Scenario: Worktree form
+- **WHEN** the brief is built without `--desk`
+- **THEN** it states the slug (and repo and worktree path), the task text and an optional `--todo` instruction (`desk todo start T-n --slug <slug>`)
+- **AND** it gives the pipeline: create or check the worktree, delegate, `desk wt finish`, fresh `reviewer`, fixes, `verifier`
+
+#### Scenario: Desk form
+- **WHEN** `--desk` is given
+- **THEN** the brief tells the session to edit the desk folder directly with no worktree or CI, post a `claim desk-<slug>`, commit each finished todo on its own and review with a fresh agent
+
+#### Scenario: Both forms
+- **WHEN** either brief is built
+- **THEN** it names the handoff skill and asks for the `desk tokens 24 --session self` table in the final message
+
+#### Scenario: Merge is not delegated
+- **WHEN** a worktree stream's brief is built
+- **THEN** it says to STOP before `desk wt merge`
+
+### Requirement: Stream budget
+A positive `--budget <usd>`, or a `budgetUsd: <n>` line in a `---` front matter block at the top of the
+task file, SHALL be passed as `--max-budget-usd`, the flag winning; the front matter SHALL be removed
+from the task text. A budget that is not a positive number SHALL fail the command. Without either there
+SHALL be no budget cap.
+
+#### Scenario: Flag wins
+- **WHEN** the file says `budgetUsd: 5` and `--budget 2` is given
+- **THEN** `--max-budget-usd 2` is passed
+
+#### Scenario: Bad budget
+- **WHEN** the budget is `0` or `abc`
+- **THEN** the command fails with `budget must be a positive dollar amount`
+
+### Requirement: Launching claude
+On non-Windows systems the stream SHALL start `claude` detached without a shell. On Windows it SHALL
+start a real `claude.exe` found by `where` detached without a shell, and otherwise (a `.cmd` shim) run
+`claude` through a shell undetached. A launch error SHALL print `desk stream: cannot start claude` and
+set exit code 1.
+
+#### Scenario: Windows with an exe
+- **WHEN** `where claude` lists a `.exe`
+- **THEN** that file is started directly and detached
+
+### Requirement: Strict flags
+`desk wt` and `desk stream` SHALL accept only their own flags and SHALL fail with exit 1 otherwise.
+
+#### Scenario: Unknown wt flag
+- **WHEN** `desk wt` gets a flag other than `--repo`, `--base`, `--no-build`, `--no-wait`, `--rebased`, `--force` (for example `wt discard x --dry-run`)
+- **THEN** the command fails with `unknown flag --x` and runs nothing
+
+#### Scenario: Unknown stream flag
+- **WHEN** `desk stream` gets a flag other than `--repo`, `--todo`, `--max-turns`, `--budget`, `--desk`, `--dry-run`
+- **THEN** the command fails with `unknown flag --x`
+
+#### Scenario: Missing value
+- **WHEN** a value flag is last in the arguments or is followed by another `--flag`
+- **THEN** the command fails with `--x needs a value`
+
+### Requirement: wt finish rejected push
+When git rejects the push of `wt finish` as non-fast-forward, the error SHALL say to rerun with `--rebased`.
+
+#### Scenario: Amended after a push
+- **WHEN** the pushed branch was amended or rebased and `wt finish` runs without `--rebased`
+- **THEN** it fails with `git push failed: ... rerun with --rebased`
+
+### Requirement: wt merge with an unremovable worktree
+When the merge is pushed but `git worktree remove` fails, `wt merge` SHALL show git's reason, SHALL still close the work and exit 0 with a warning only when git no longer lists the worktree, and SHALL otherwise keep the worktree and the claim and exit 1.
+
+#### Scenario: Git refuses the remove
+- **WHEN** `git worktree remove` fails after the merge was pushed and the worktree is still listed after a prune (modified or untracked files, a lock)
+- **THEN** git's reason is shown, nothing is released and the command fails with `git worktree remove failed`, naming `desk wt remove <slug>`
+
+#### Scenario: Folder left after git unregistered the worktree
+- **WHEN** `git worktree remove` fails after the merge was pushed and the worktree is no longer listed after a prune (the folder could not be deleted, such as a shell holding it on Windows)
+- **THEN** it deletes the local branch when git allows, drops the stream file, posts `release`, and prints a warning naming the folder to remove by hand
+- **AND** the exit code is 0
+
+### Requirement: wt merge current directory
+`wt merge` SHALL fail with `cd out of <path> first`, before fetching or merging anything, when the current directory is inside the worktree.
+
+#### Scenario: Current directory inside the worktree
+- **WHEN** `wt merge x` runs with the current directory inside the worktree of `x`
+- **THEN** it exits 1 with `cd out of <path> first` and nothing is merged or pushed

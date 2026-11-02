@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "desk.config.json",
+  "description": "The desk's repos and settings. Paths are relative to the desk folder. Other keys are allowed.",
+  "type": "object",
+  "properties": {
+    "kitVersion": { "type": "string" },
+    "worktreesDir": { "type": "string", "minLength": 1 },
+    "scratchDir": { "type": "string", "minLength": 1 },
+    "harnesses": { "type": "array", "items": { "enum": ["claude", "copilot"] } },
+    "outputStyle": { "type": "string" },
+    "permissions": {
+      "type": "object",
+      "properties": {
+        "allow": { "type": "array", "items": { "type": "string" } },
+        "deny": { "type": "array", "items": { "type": "string" } },
+        "ask": { "type": "array", "items": { "type": "string" } },
+        "additionalDirectories": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "path"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "kind": { "enum": ["git", "folder"] },
+          "path": { "type": "string", "minLength": 1 },
+          "gh": { "type": "string" },
+          "defaultBranch": { "type": "string", "minLength": 1 },
+          "branchPrefix": { "type": "string" },
+          "worktreePrefix": { "type": "string" },
+          "install": { "type": "string" },
+          "build": { "type": "string" },
+          "check": { "type": "string" }
+        }
+      }
+    }
+  }
+}

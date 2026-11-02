@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "board.jsonl line",
+  "description": "One post on the claim board. Written by `desk board post` and `desk wt`.",
+  "type": "object",
+  "required": ["ts", "from", "kind", "slug"],
+  "additionalProperties": false,
+  "properties": {
+    "v": { "const": 1 },
+    "ts": { "type": "string", "minLength": 1 },
+    "from": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["claim", "release", "ci", "merged", "verdict", "note"] },
+    "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "text": { "type": "string" },
+    "repo": { "type": "string", "minLength": 1 }
+  }
+}

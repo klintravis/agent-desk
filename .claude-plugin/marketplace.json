@@ -1,0 +1,8 @@
+{
+  "name": "agent-desk",
+  "owner": { "name": "agent-desk contributors" },
+  "metadata": { "description": "agent-desk: the desk plugin (skills, agents, mod) for parallel agent sessions." },
+  "plugins": [
+    { "name": "agent-desk", "source": "./", "description": "Desk skills, agents and mod: prune, warm-hold, edit guard, Desk pane, /decide" }
+  ]
+}

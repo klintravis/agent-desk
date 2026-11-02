@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "decisions.jsonl line",
+  "description": "One owner ruling. Written by `desk decide T-n <ruling>` and by the NEXT.md migration in `desk sync` (source NEXT.md).",
+  "type": "object",
+  "required": ["ts", "from", "text"],
+  "additionalProperties": false,
+  "properties": {
+    "v": { "const": 1 },
+    "ts": { "type": "string", "minLength": 1 },
+    "from": { "type": "string", "minLength": 1 },
+    "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "todo": { "type": "string", "pattern": "^T-\\d+$" },
+    "title": { "type": "string" },
+    "text": { "type": "string", "minLength": 1 },
+    "source": { "type": "string" }
+  }
+}

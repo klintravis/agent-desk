@@ -1,0 +1,23 @@
+name: ci
+on:
+  push:
+    branches: ['**'] # agent branches too: `desk wt finish` waits for a run on the pushed head
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+        # The private dev repo uses the owner's machine (hosted minutes ran out). A fork's PR can edit this file, so the real barrier is: never register a runner on the public repo.
+        os: ${{ github.event.repository.private && fromJSON('[["self-hosted","linux","adesk"]]') || fromJSON('["ubuntu-latest","windows-latest","macos-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+        env:
+          TMPDIR: ${{ runner.temp }} # the tests leave their temp folders; this machine is not thrown away after a job

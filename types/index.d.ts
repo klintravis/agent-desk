@@ -1,0 +1,42 @@
+/** `desk status --json` (schemas/desk-status.schema.json), the object the Desk pane and the band read. */
+export type DeskStatus = {
+  v: 1
+  at: string
+  decisions: { id: string; title: string }[]
+  active: { id: string; title: string; status: string; [k: string]: unknown }[]
+  claims: { slug: string; from: string; ts: string; last: string | null }[]
+  sessions: { session: string; agents: string[] }[] | null
+  roots: { id: string; kind: string; path: string; gh?: string; defaultBranch?: string; sha?: string }[]
+  branches: { slug: string; head: string; ci: string; verdict: string | null; behind: { base: string; n: number } | null }[]
+  prs: { slug: string; number: number; decision: string; comments: number; unresolved: number; sinceHead: number }[] | null
+  overlaps: string[] | null
+  tokens: { calls: number; fresh: number; cached: number; out: number } | null
+  /** The text screen, byte for byte what `desk status` prints. */
+  text: string
+}
+/** The session's meters as numbers; each surface formats them (status line, band, pane). */
+export type DeskMeters = {
+  ctx?: { pct: number; tokens: number; window: number }
+  /** Cache hit, whole percent. */
+  cache?: number
+  quota?: { rows: { name: string; pct: number; until: number | null }[]; tail: string }
+}
+/** Keep-warm for this session: `off` is the toggle (auto when false), `why` warm-hold's own state text. */
+export type WarmState = { off: boolean; why?: string }
+/** A running or pending agent; `since` is when the minute tick first saw it. */
+export type AgentRow = { id: string; type: string; description: string; status: string; since: number }
+
+declare module 'claude-code' {
+  interface PluginState {
+    'agent-desk': {
+      status: Shaped<DeskStatus | null>
+      /** The last failed `desk status --json` run, else ''. */
+      err: Shaped<string>
+      meters: Shaped<DeskMeters>
+      warm: Shaped<WarmState>
+      /** The output style's name; null for the default. */
+      style: Shaped<string | null>
+      agents: Shaped<AgentRow[]>
+    }
+  }
+}
