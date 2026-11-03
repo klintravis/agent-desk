@@ -54,6 +54,7 @@
           "branchPrefix": { "type": "string" },
           "merge": { "enum": ["direct", "review"] },
           "worktreePrefix": { "type": "string" },
+          "copy": { "type": "array", "items": { "type": "string", "minLength": 1 } },
           "install": { "type": "string" },
           "build": { "type": "string" },
           "check": { "type": "string" }

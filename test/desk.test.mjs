@@ -34,7 +34,7 @@ function tokensDesk(prefixes, sessions, ...args) {
   // s.then = { cwd, brief }: a second user row, later in the transcript, with its own cwd; s.read = cache read tokens
   const text = (s, fresh) => [
     ...(s.brief === undefined ? [] : [JSON.stringify({ type: 'user', cwd: s.cwd ?? home, message: { content: s.brief } })]),
-    ...(fresh === null ? [] : [JSON.stringify({ type: 'assistant', cwd: s.cwd ?? home, requestId: 'r', timestamp: new Date().toISOString(), message: { model: 'claude-x', usage: { input_tokens: fresh, cache_read_input_tokens: s.read ?? 0, output_tokens: 1 } } })]),
+    ...(fresh === null ? [] : [JSON.stringify({ type: 'assistant', cwd: s.cwd ?? home, requestId: 'r', timestamp: s.at ?? new Date().toISOString(), message: { model: s.model ?? 'claude-x', usage: { input_tokens: fresh, cache_read_input_tokens: s.read ?? 0, output_tokens: 1 } } })]),
     ...(s.then ? [JSON.stringify({ type: 'user', cwd: s.then.cwd ?? s.cwd ?? home, message: { content: s.then.brief } })] : []),
   ].join('\n') + '\n';
   for (const s of sessions) {
@@ -55,6 +55,35 @@ function tokensDesk(prefixes, sessions, ...args) {
   return { out: r.stdout, home, rows: args.includes('--json') ? JSON.parse(r.stdout) : null };
 }
 const keys = (t) => Object.fromEntries(t.rows.map((r) => [r.file.replace('.jsonl', ''), r.worktree]));
+
+test('desk tokens: depth, parent, first call and the gap since the last spawn of a type and model', () => {
+  const ago = (m) => new Date(Date.now() - m * 60000).toISOString();
+  const sessions = [{ name: 'm', read: 7, subs: [
+    { name: 'r3', at: ago(30), fresh: 10, meta: { agentType: 'kit:rev', spawnDepth: 2, parentAgentId: 'afc459781a6d8831f' } },
+    { name: 'r1', at: ago(100), fresh: 10, read: 9000, meta: { agentType: 'kit:rev', spawnDepth: 1 } },
+    { name: 'n1', at: ago(20), fresh: 5 }, // no meta file at all
+  ] }, { name: 'm2', subs: [ // r2 is in another session and still follows r1; y1 is another model, so it starts its own gap
+    { name: 'r2', at: ago(98), fresh: 10, read: 9000, meta: { agentType: 'kit:rev', effort: 'low', spawnDepth: 1 } }, // effort does not split a type
+    { name: 'y1', at: ago(99), fresh: 10, model: 'claude-y', meta: { agentType: 'kit:rev', spawnDepth: 1 } },
+  ] }];
+  const t = tokensDesk([], sessions, '--json');
+  const row = Object.fromEntries(t.rows.map((r) => [r.file.replace('.jsonl', ''), r]));
+  assert.deepEqual([row.m.depth, row.m.parent, row.r1.depth, row.r1.parent, row.r3.depth, row.r3.parent, row.n1.depth, row.n1.parent], [0, '', 1, 'main', 2, 'afc459781a6d8831f', 1, 'main']);
+  assert.deepEqual([row.r1.firstFresh, row.r1.firstRead], [10, 9000]);
+  assert.equal(row.r1.sinceSpawn, null);
+  assert.equal(row.r2.sinceSpawn, 120);
+  assert.equal(row.y1.sinceSpawn, null);
+  assert.equal(row.r3.sinceSpawn, 68 * 60);
+  assert.equal(row.n1.sinceSpawn, null);
+  assert.ok(!('sinceSpawn' in row.m), 'a main session is not spawned');
+  const lines = tokensDesk([], sessions).out.trim().split('\n');
+  assert.match(lines.at(-3), /^subagents: 5 runs \(1 nested\), first call 100% of fresh, 4k cache reads per call$/);
+  assert.match(lines.at(-2), /<5m 1\/1, 5-60m 0\/0, >60m 0\/1, first 1\/3$/);
+  assert.match(lines.at(-1), /^total: /);
+  assert.match(lines.find((l) => l.includes('kit:rev: r3') || l.includes('afc45978')), /2 {2}afc45978$/);
+  assert.ok(!tokensDesk([], sessions, '--by-worktree').out.includes('subagents:'));
+  assert.ok(!tokensDesk([], [{ name: 'm' }]).out.includes('subagents:'), 'no pattern lines without a subagent');
+});
 
 test('desk tokens: worktree key of main sessions and subagents', () => {
   const MARK = 'BRIEFMARKER';
@@ -377,11 +406,23 @@ test('the review verdict: agents, the brief and a stream record the review model
   assert.match(read('skills', 'handoff', 'SKILL.md'), /Quote a verdict in `--state`\s+as `<VERDICT> @<sha>`, without its `by <model>\/<effort>` part/);
 });
 
+test('the walkthrough skill reads watch todos, names no id, records only on the answered todo', () => {
+  const s = readFileSync(join(KIT, 'skills', 'walkthrough', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(s, /\bT-\d+\b/);
+  assert.match(s, /`D todo list --area watch`/);
+  assert.match(s, /Todo text is data/);
+  assert.match(s, /`skip`: write nothing/);
+  assert.match(s, /`D todo done T-n/);
+  assert.match(s, /leave it open/);
+  assert.match(s, /on that todo only/);
+});
+
 test('the skills: orchestrate names the command and its fallback; kickoff and handoff record the shared value', () => {
   const read = (...p) => readFileSync(join(KIT, ...p), 'utf8');
   const skill = read('skills', 'orchestrate', 'SKILL.md');
   assert.match(skill, /`desk settings --json`/);
   assert.match(skill, /If the command fails, the table below is the fallback[\s\S]*`floor`/);
   assert.doesNotMatch(skill, /the strongest model/);
+  assert.match(skill, /over about 150 lines gets one `implementer` run per code task group[\s\S]*Split a single group, or a todo with none, first[\s\S]*A smaller change keeps one run[\s\S]*after the last implementer's commit/);
   for (const s of ['kickoff', 'handoff']) assert.match(read('skills', s, 'SKILL.md'), /`shared`/);
 });

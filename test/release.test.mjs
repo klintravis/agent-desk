@@ -10,16 +10,19 @@ const LOG = '# Changelog\n\nintro\n\n## Unreleased\n\n- new thing\n\n## 0.1.0 - 
 function fake(log = LOG) {
   const d = tmp();
   mkdirSync(join(d, '.claude-plugin'));
+  mkdirSync(join(d, 'vscode'));
   writeFileSync(join(d, 'package.json'), '{\n  "name": "x",\n  "version": "0.1.0"\n}\n');
   writeFileSync(join(d, '.claude-plugin/plugin.json'), '{\n  "name": "x",\n  "version": "0.1.0"\n}\n');
+  writeFileSync(join(d, 'vscode/package.json'), '{\n  "name": "x",\n  "version": "0.1.0"\n}\n');
   writeFileSync(join(d, 'CHANGELOG.md'), log);
   return d;
 }
-const snap = (d) => ['package.json', '.claude-plugin/plugin.json', 'CHANGELOG.md'].map((f) => readFileSync(join(d, f), 'utf8'));
+const snap = (d) => ['package.json', '.claude-plugin/plugin.json', 'vscode/package.json', 'CHANGELOG.md'].map((f) => readFileSync(join(d, f), 'utf8'));
 
 test('repo: package and plugin versions agree and the CHANGELOG covers them', () => {
-  const [a, b] = versions(KIT);
+  const [a, b, c] = versions(KIT);
   assert.equal(a, b);
+  assert.equal(a, c);
   const log = readFileSync(join(KIT, 'CHANGELOG.md'), 'utf8');
   assert.ok(section(log, a) !== null || section(log, 'Unreleased') !== null);
 });
@@ -27,7 +30,7 @@ test('repo: package and plugin versions agree and the CHANGELOG covers them', ()
 test('bump moves Unreleased entries under the new version', () => {
   const d = fake();
   bump('0.2.0', d, '2026-11-02');
-  assert.deepEqual(versions(d), ['0.2.0', '0.2.0']);
+  assert.deepEqual(versions(d), ['0.2.0', '0.2.0', '0.2.0']);
   assert.match(readFileSync(join(d, 'package.json'), 'utf8'), /^\{\n  "name": "x",\n  "version": "0.2.0"\n\}\n$/);
   const log = readFileSync(join(d, 'CHANGELOG.md'), 'utf8');
   assert.match(log, /## Unreleased\n\n## 0\.2\.0 - 2026-11-02\n\n- new thing\n\n## 0\.1\.0/);
@@ -43,13 +46,15 @@ test('bump refuses a version that is not greater, not semver, or empty Unrelease
   }
 });
 
-test('bump and notes refuse when package.json and plugin.json disagree', () => {
-  const d = fake();
-  writeFileSync(join(d, '.claude-plugin/plugin.json'), '{\n  "name": "x",\n  "version": "0.1.1"\n}\n');
-  const before = snap(d);
-  assert.throws(() => bump('0.2.0', d), /disagree/);
-  assert.throws(() => notes('v0.1.0', d), /disagree/);
-  assert.deepEqual(snap(d), before);
+test('bump and notes refuse when the version files disagree', () => {
+  for (const f of ['.claude-plugin/plugin.json', 'vscode/package.json']) {
+    const d = fake();
+    writeFileSync(join(d, f), '{\n  "name": "x",\n  "version": "0.1.1"\n}\n');
+    const before = snap(d);
+    assert.throws(() => bump('0.2.0', d), /disagree/);
+    assert.throws(() => notes('v0.1.0', d), /disagree/);
+    assert.deepEqual(snap(d), before);
+  }
 });
 
 test('notes prints the section body; wrong tag or missing section throws', () => {

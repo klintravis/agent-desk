@@ -21,3 +21,12 @@ jobs:
       - run: npm test
         env:
           TMPDIR: ${{ runner.temp }} # the tests leave their temp folders; this machine is not thrown away after a job
+      # The plugin's hook tests (hooks/*.test.ts) need the CLI; no API key or secret is used. Pinned to the version the owner's machine runs, installed under the job's temp folder so the runner's global state stays untouched.
+      - name: Install Claude Code CLI
+        if: matrix.node == 22
+        shell: bash
+        run: |
+          npm install --prefix "${{ runner.temp }}/claude" @anthropic-ai/claude-code@2.1.317
+          echo "${{ runner.temp }}/claude/node_modules/.bin" >> "$GITHUB_PATH"
+      - run: claude plugin test
+        if: matrix.node == 22

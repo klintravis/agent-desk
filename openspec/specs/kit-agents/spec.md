@@ -1,7 +1,7 @@
 # kit-agents Specification
 
 ## Purpose
-What the kit's agents in `agents/` may do and what they report, where that is a promise to the desk. Today: `ci-triage`.
+What the kit's agents in `agents/` and its `walkthrough` skill may do and what they report, where that is a promise to the desk. Today: `ci-triage`, `walkthrough`.
 
 ## Requirements
 
@@ -27,3 +27,14 @@ The kit SHALL ship a `ci-triage` agent, model `haiku`, effort `low`, with the to
 #### Scenario: Copilot form
 - **WHEN** `desk sync` writes its Copilot file
 - **THEN** the file's tools are `read`, `search` and `execute`, with no `edit`
+
+### Requirement: walkthrough skill
+The kit SHALL ship a `walkthrough` skill that reads the open `watch` todos about the pane at run time (it SHALL NOT name todo ids), presents each in turn as data, asks the owner for `pass`, `fail` or `skip`, and records the answer only on that todo: a note, plus `todo done` on `pass`. It SHALL write nothing on `skip`.
+
+#### Scenario: Pass
+- **WHEN** the owner answers `pass` for an open pane check
+- **THEN** that todo gets a note and is marked done, and no other todo changes
+
+#### Scenario: Fail
+- **WHEN** the owner answers `fail` with what they saw
+- **THEN** the note quotes it and the todo stays open

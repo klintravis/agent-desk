@@ -11,7 +11,7 @@
 //        desk overlap
 //        desk decide [T-n <ruling> | --list [n]]   owner decisions one at a time; rulings in decisions.jsonl (see DECIDE below)
 //        desk tidy [--apply] [--json]   report leftovers; --apply clears dead owners, deletes orphans, asks once (lib/tidy.mjs)
-//        desk wt new|finish|merge|remove|discard <slug> [--repo <id>] ...   (lib/wt.mjs)
+//        desk wt new|finish|rebase|merge|remove|discard <slug> [--repo <id>] ...   (lib/wt.mjs)
 //        desk stream <slug> <task-file> [--todo T-n] [--desk] [--repo <id>] [--max-turns 80] [--budget <usd>] [--dry-run]
 //        desk init [--repo <id>=<path> ...]  |  desk sync [<checkout> ...]  |  desk workspace
 //        desk settings [--json]      the resolved model, effort and cache keys, and the layer each came from
@@ -304,9 +304,15 @@ export function tally(text) {
       brief = typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => b?.text || '').join('\n') : '';
     }
     const u = j.message?.usage;
-    if (u && j.type === 'assistant') calls.set(j.requestId || j.uuid, { u, model: j.message.model });
+    // lines without requestId are client-made '<synthetic>' ones (zero usage), not API calls; any other keeps its uuid
+    if (u && j.type === 'assistant' && !j.message.model?.startsWith('<')) {
+      const key = j.requestId || j.uuid;
+      // compaction copies earlier lines under the same requestId with zero usage: they must not wipe the real count
+      if (!calls.has(key) || u.input_tokens || u.cache_read_input_tokens || u.cache_creation_input_tokens || u.output_tokens) calls.set(key, { u, model: j.message.model });
+    }
   }
-  const t = { calls: calls.size, peak: 0, input: 0, read: 0, write: 0, out: 0, model: '', first, last, cwd, brief: brief || '', title: clean(customTitle || aiTitle) }; // the name the owner gave wins
+  const [head] = calls.values(); // a Map keeps the first insertion's place, so this is the run's first call
+  const t = { calls: calls.size, peak: 0, input: 0, read: 0, write: 0, out: 0, firstFresh: (head?.u.input_tokens || 0) + (head?.u.cache_creation_input_tokens || 0), firstRead: head?.u.cache_read_input_tokens || 0, model: '', first, last, cwd, brief: brief || '', title: clean(customTitle || aiTitle) }; // the name the owner gave wins
   for (const { u, model } of calls.values()) {
     const ctx = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
     t.peak = Math.max(t.peak, ctx);
@@ -344,7 +350,7 @@ export function tokenRows(hours = 24, onlySession = '', prefixes = projectPrefix
       if (onlySession && id !== onlySession) continue;
       const { cwd, brief, ...main } = tally(readFileSync(join(dir, f), 'utf8'));
       const mainKey = wt(cwd) || wt(brief) || '(desk)';
-      rows.push({ session: id, agent: 'main', file: f, ...main, worktree: mainKey }); // title: the session's name
+      rows.push({ session: id, agent: 'main', file: f, ...main, worktree: mainKey, depth: 0, parent: '' }); // title: the session's name
       const sub = join(dir, f.replace('.jsonl', ''), 'subagents');
       if (!existsSync(sub)) continue;
       for (const s of readdirSync(sub).filter((s) => s.endsWith('.jsonl'))) {
@@ -354,14 +360,36 @@ export function tokenRows(hours = 24, onlySession = '', prefixes = projectPrefix
         const { cwd: _, brief: b, title: __, ...t } = tally(readFileSync(join(sub, s), 'utf8'));
         // type and about: what `desk status` names the agent by; the plugin prefix (`agent-desk:`) says nothing.
         const type = `${agentType.replace(/^.*:/, '')}${effort ? '/' + effort : ''}`;
-        rows.push({ session: id, agent: label, type, about: clean(meta.description, 120), file: s, ...t, worktree: wt(b) || mainKey });
+        // shortcut: a transcript with no spawnDepth in its .meta.json counts as depth 1 unless it names a parent; older Claude Code may lack the field
+        rows.push({ session: id, agent: label, type, about: clean(meta.description, 120), file: s, ...t, worktree: wt(b) || mainKey, depth: Number(meta.spawnDepth) || (meta.parentAgentId ? 2 : 1), parent: clean(meta.parentAgentId, 40) || 'main' });
       }
     }
+  }
+  // Seconds since the last spawn of the same agent type and model, in any session of the window: they share a cache prefix
+  const lastSpawn = new Map();
+  for (const r of rows.filter((r) => r.type && r.calls && r.first).sort((a, b) => a.first.localeCompare(b.first))) {
+    const key = `${r.type.split('/')[0]} ${r.model}`, at = Date.parse(r.first);
+    r.sinceSpawn = lastSpawn.has(key) ? Math.round((at - lastSpawn.get(key)) / 1000) : null;
+    lastSpawn.set(key, at);
   }
   return rows;
 }
 
 export const k = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n));
+
+// A warm start: the first call reads at least this much from cache (T-122, 48h: first reads cluster at 0, 3-5k, 5-8k and 11-25k).
+const WARM_READ = 5000;
+// Subagents only: main sessions are not spawned and keep a different cache lifetime.
+function tokenPatterns(rows) {
+  const subs = rows.filter((r) => r.type && r.calls), sum = (f) => subs.reduce((a, r) => a + f(r), 0);
+  const warm = { '<5m': [0, 0], '5-60m': [0, 0], '>60m': [0, 0], first: [0, 0] };
+  for (const r of subs) {
+    const b = warm[r.sinceSpawn == null ? 'first' : r.sinceSpawn < 300 ? '<5m' : r.sinceSpawn < 3600 ? '5-60m' : '>60m'];
+    b[0]++; if (r.firstRead >= WARM_READ) b[1]++;
+  }
+  const fresh = sum((r) => r.input + r.write);
+  return { runs: subs.length, nested: subs.filter((r) => r.depth > 1).length, firstShare: fresh ? Math.round((100 * sum((r) => r.firstFresh)) / fresh) : 0, readsPerCall: Math.round(sum((r) => r.read) / (sum((r) => r.calls) || 1)), warm };
+}
 
 function tokens(argv) {
   if (argv.includes('--self-test')) return report(tokensTest());
@@ -385,10 +413,15 @@ function tokens(argv) {
       console.log([w.padEnd(24), String(a.calls).padStart(5), k(a.input + a.write).padStart(5), k(a.out).padStart(4), pct(a).padStart(6)].join('  '));
   } else {
     console.log(`Last ${hours}h  (peak ctx = fullest prompt; fresh = uncached input; cache% = share served from cache)`);
-    console.log(['session ', 'agent'.padEnd(52), 'model'.padEnd(12), 'calls', 'peak', 'fresh', 'out', 'cache%', 'time'].join('  '));
+    console.log(['session ', 'agent'.padEnd(52), 'model'.padEnd(12), 'calls', 'peak', 'fresh', 'out', 'cache%', 'time', 'depth', 'parent'].join('  '));
     for (const r of rows.filter((r) => r.calls)) {
       console.log([r.session, r.agent.slice(0, 52).padEnd(52), r.model.slice(0, 12).padEnd(12), String(r.calls).padStart(5),
-        k(r.peak).padStart(4), k(r.input + r.write).padStart(5), k(r.out).padStart(4), pct(r).padStart(6), mins(r).padStart(4)].join('  '));
+        k(r.peak).padStart(4), k(r.input + r.write).padStart(5), k(r.out).padStart(4), pct(r).padStart(6), mins(r).padStart(4), String(r.depth).padStart(5), r.parent.slice(0, 8) || '-'].join('  '));
+    }
+    const p = tokenPatterns(rows);
+    if (p.runs) {
+      console.log(`subagents: ${p.runs} runs (${p.nested} nested), first call ${p.firstShare}% of fresh, ${k(p.readsPerCall)} cache reads per call`);
+      console.log(`warm starts (first call reads ${k(WARM_READ)}+ from cache), by gap since the last spawn of that type and model: ${Object.entries(p.warm).map(([g, [n, w]]) => `${g} ${w}/${n}`).join(', ')}`);
     }
   }
   const sum = (f) => rows.reduce((a, r) => a + f(r), 0);
@@ -397,10 +430,20 @@ function tokens(argv) {
 
 function tokensTest() {
   const line = (rid, i, r, w, o) => JSON.stringify({ type: 'assistant', requestId: rid, message: { model: 'claude-x', usage: { input_tokens: i, cache_read_input_tokens: r, cache_creation_input_tokens: w, output_tokens: o } } });
+  const syn = (uuid) => JSON.stringify({ type: 'assistant', uuid, message: { id: uuid, model: '<synthetic>', usage: { input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 0 } } });
+  const plain = (uuid) => JSON.stringify({ type: 'assistant', uuid, message: { model: 'claude-x', usage: { input_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1 } } });
   const t = tally([line('a', 1, 100, 10, 5), line('a', 1, 100, 10, 5), line('b', 2, 200, 0, 7), 'garbage'].join('\n'));
   const title = (...lines) => tally(lines.map((l) => JSON.stringify(l)).join('\n')).title;
   const ai = (aiTitle) => ({ type: 'ai-title', aiTitle }), custom = { type: 'custom-title', customTitle: 'Mine' };
+  const compacted = tally([line('a', 1, 100, 10, 5), line('b', 2, 200, 0, 7), line('a', 0, 0, 0, 0)].join('\n')); // the compaction's copy of call a
+  const sub = (sinceSpawn, firstRead, depth = 1) => ({ type: 'x', calls: 2, input: 10, write: 0, read: 100, firstFresh: 5, firstRead, sinceSpawn, depth });
+  const p = tokenPatterns([{ calls: 1, input: 99, write: 0, read: 0, firstFresh: 99, firstRead: 0 }, sub(null, 0), sub(299, WARM_READ), sub(300, WARM_READ - 1), sub(3600, 0, 2)]);
   return [t.calls === 2 && t.peak === 202 && t.out === 12 && t.write === 10,
+    compacted.calls === 2 && compacted.read === 300 && compacted.out === 12 && compacted.firstFresh === 11 && compacted.firstRead === 100,
+    p.runs === 4 && p.nested === 1 && p.firstShare === 50 && p.readsPerCall === 50,
+    p.warm['<5m'].join() === '1,1' && p.warm['5-60m'].join() === '1,0' && p.warm['>60m'].join() === '1,0' && p.warm.first.join() === '1,0',
+    tally([line('a', 1, 100, 10, 5), syn('s1'), syn('s2')].join('\n')).calls === 1, // synthetic lines are not calls
+    tally([plain('u1'), plain('u2'), plain('u1')].join('\n')).calls === 2, // no requestId, not synthetic: uuid
     t.title === '', title(ai('first'), ai('last\n line')) === 'last line', title(custom, ai('later')) === 'Mine'];
 }
 

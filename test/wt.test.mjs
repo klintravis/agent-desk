@@ -168,6 +168,30 @@ test('stream --dry-run writes the brief and prints the claude command', () => {
   fails(desk(home, 'stream', 'Bad Slug', 'task.md', '--dry-run'), /slug must be/);
 });
 
+test('wt new copies the repo\'s copy paths from the main checkout, skips a missing one, refuses an escaping one', () => {
+  const { root, home } = multiDesk();
+  const cfgFile = join(home, 'desk.config.json');
+  const cfg = JSON.parse(readFileSync(cfgFile, 'utf8'));
+  const setCopy = (copy) => { cfg.repos.find((r) => r.id === 'a').copy = copy; writeFileSync(cfgFile, JSON.stringify(cfg)); };
+  cfg.repos.find((r) => r.id === 'a').install = `node -e "process.exit(require('fs').existsSync('types/sub/x.d.ts')?0:1)"`; // copy must run before install
+  mkdirSync(join(root, 'a', 'types', 'sub'), { recursive: true });
+  writeFileSync(join(root, 'a', 'types', 'sub', 'x.d.ts'), 'declare const x: 1\n');
+
+  setCopy(['types', 'absent/file.txt']);
+  const made = ok(desk(home, 'wt', 'new', 'cp', '--repo', 'a'));
+  assert.match(made, /copy: absent\/file\.txt not in .*, skipped/);
+  assert.equal(readFileSync(join(root, 'worktrees', 'a-cp', 'types', 'sub', 'x.d.ts'), 'utf8'), 'declare const x: 1\n');
+  assert.equal(existsSync(join(root, 'worktrees', 'a-cp', 'absent')), false);
+
+  setCopy(['../outside']);
+  fails(desk(home, 'wt', 'new', 'esc', '--repo', 'a'), /copy path must be relative/);
+  assert.equal(existsSync(join(root, 'worktrees', 'a-esc')), false);
+  for (const bad of [[join(root, 'abs')], ['.'], [''], '.env']) {
+    setCopy(bad);
+    fails(desk(home, 'wt', 'new', 'esc', '--repo', 'a'), /copy (path must be relative|must be an array)/);
+  }
+});
+
 test('wt and stream reject an unknown flag and a value flag without its value', () => {
   const { home } = multiDesk();
   writeFileSync(join(home, 'task.md'), 'x\n');
@@ -310,4 +334,159 @@ test('watchRuns gives each watch only the time left of the bound', () => {
   watchRuns({ gh: 'o/r' }, [1, 2, 3], 200, fake);
   assert.equal(seen.length, 2);
   assert.ok(seen[0] <= 200 && seen[1] < seen[0], String(seen));
+});
+
+// A worktree `rb` with one commit editing line N of a 10-line f.txt, reviewed at that commit, then
+// origin/main moves on: ['g'] adds an unrelated file, [n, text] edits line n of f.txt.
+function rebaseFixture(branchEdit, mainEdit, verdict = true) {
+  const { root, home } = multiDesk();
+  const wt = join(root, 'worktrees', 'a-rb'), main = join(root, 'a');
+  const put = (n, v) => Array.from({ length: 10 }, (_, i) => (i + 1 === n ? v : `l${i + 1}`)).join('\n') + '\n';
+  commit(main, 'f.txt', put(0, '')); git(main, 'push', '-q', 'origin', 'main');
+  ok(desk(home, 'wt', 'new', 'rb', '--repo', 'a'));
+  const reviewed = commit(wt, 'f.txt', put(...branchEdit));
+  ok(desk(home, 'wt', 'finish', 'rb'));
+  if (verdict) ok(desk(home, 'board', 'post', 'verdict', 'rb', `MERGE @${reviewed.slice(0, 7)}`));
+  if (mainEdit[0] === 'g') commit(main, 'g.txt', 'g\n'); else commit(main, 'f.txt', put(...mainEdit));
+  git(main, 'push', '-q', 'origin', 'main');
+  return { root, home, wt, reviewed };
+}
+
+test('wt rebase: only context changed reports the same patches, pushes, posts no verdict', () => {
+  const { root, home, wt, reviewed } = rebaseFixture([8, 'B8'], ['g']);
+  const out = ok(desk(home, 'wt', 'rebase', 'rb'));
+  const head = git(wt, 'rev-parse', 'HEAD');
+  assert.notEqual(head, reviewed);
+  assert.match(out, /Only context changed/);
+  assert.match(out, new RegExp(`Reviewed commit \\(newest board verdict MERGE\\): ${reviewed.slice(0, 7)}`));
+  assert.ok(out.includes(`New head ${head}`) && out.includes(`Old head ${reviewed}`));
+  assert.equal(git(join(root, 'a.git'), 'rev-parse', 'agent/rb'), head, 'pushed with force-with-lease');
+  assert.equal(board(home).at(-1).kind, 'verdict', 'no verdict posted');
+  fails(desk(home, 'wt', 'merge', 'rb'), /commits after the review/);
+});
+
+test('wt rebase: a patch whose context changed is reported as different', () => {
+  const { home } = rebaseFixture([6, 'B6'], [4, 'M4']);
+  const out = ok(desk(home, 'wt', 'rebase', 'rb'));
+  assert.match(out, /Patches differ from the reviewed commit:\n\s+1:\s+\w+ ! 1:/);
+  assert.doesNotMatch(out, /Only context changed/);
+});
+
+test('wt rebase: a conflict aborts the rebase and leaves the worktree at its old head', () => {
+  const { home, wt, reviewed } = rebaseFixture([6, 'B6'], [6, 'M6']);
+  fails(desk(home, 'wt', 'rebase', 'rb'), /conflicts; aborted/);
+  assert.equal(git(wt, 'rev-parse', 'HEAD'), reviewed);
+  assert.equal(git(wt, 'status', '--porcelain'), '');
+  assert.equal(git(wt, 'branch', '--show-current'), 'agent/rb', 'no rebase in progress');
+});
+
+test('wt rebase refuses a dirty worktree', () => {
+  const { home, wt } = rebaseFixture([8, 'B8'], ['g']);
+  writeFileSync(join(wt, 'dirty.txt'), 'x');
+  fails(desk(home, 'wt', 'rebase', 'rb'), /uncommitted changes/);
+});
+
+test('wt rebase: with no verdict it compares with the head before the rebase and says so', () => {
+  const { home, reviewed } = rebaseFixture([8, 'B8'], ['g'], false);
+  const out = ok(desk(home, 'wt', 'rebase', 'rb'));
+  assert.match(out, new RegExp(`No usable board verdict; compared with the head before the rebase: ${reviewed.slice(0, 7)}`));
+  assert.match(out, /Only context changed/);
+});
+
+test('wt rebase: a commit pushed to the branch from elsewhere is not overwritten', () => {
+  const { root, home } = rebaseFixture([8, 'B8'], ['g']);
+  const bare = join(root, 'a.git'), other = join(root, 'other');
+  git(root, 'clone', '-q', bare, other);
+  git(other, 'checkout', '-q', 'agent/rb');
+  const theirs = commit(other, 'theirs.txt', 't\n');
+  git(other, 'push', '-q', 'origin', 'agent/rb');
+  assert.notEqual(desk(home, 'wt', 'rebase', 'rb').status, 0);
+  assert.equal(git(bare, 'rev-parse', 'agent/rb'), theirs, 'their commit is still on origin');
+});
+
+test('wt rebase: a patch whose subject contains " = " still counts as changed', () => {
+  const { home, wt } = rebaseFixture([6, 'B6'], [4, 'M4']); // the patch differs after the rebase
+  git(wt, 'commit', '--amend', '-q', '-m', 'set x = 1'); // range-diff prints the reviewed commit's subject
+  ok(desk(home, 'wt', 'finish', 'rb', '--rebased'));
+  ok(desk(home, 'board', 'post', 'verdict', 'rb', `MERGE @${git(wt, 'rev-parse', 'HEAD')}`));
+  const out = ok(desk(home, 'wt', 'rebase', 'rb'));
+  assert.match(out, /Patches differ/);
+  assert.doesNotMatch(out, /Only context changed/);
+});
+
+test('wt rebase: already rebased but not pushed still pushes; once pushed it pushes nothing', () => {
+  const { root, home, wt } = rebaseFixture([8, 'B8'], ['g']);
+  git(wt, 'rebase', '-q', 'origin/main');
+  const head = git(wt, 'rev-parse', 'HEAD'), bare = join(root, 'a.git');
+  assert.notEqual(git(bare, 'rev-parse', 'agent/rb'), head);
+  ok(desk(home, 'wt', 'rebase', 'rb'));
+  assert.equal(git(bare, 'rev-parse', 'agent/rb'), head, 'pushed');
+  assert.match(ok(desk(home, 'wt', 'rebase', 'rb')), /Already up to date: nothing to push/);
+});
+
+test('wt rebase: a verdict sha not in this repo is named, a FIXES NEEDED verdict is shown as such', () => {
+  const { home } = rebaseFixture([8, 'B8'], ['g'], false);
+  ok(desk(home, 'board', 'post', 'verdict', 'rb', 'MERGE @deadbeef'));
+  assert.match(ok(desk(home, 'wt', 'rebase', 'rb')), /No usable board verdict \(deadbeef is not in this repo\)/);
+  const f = rebaseFixture([8, 'B8'], ['g'], false);
+  ok(desk(f.home, 'board', 'post', 'verdict', 'rb', `FIXES NEEDED @${f.reviewed.slice(0, 7)}`));
+  assert.match(ok(desk(f.home, 'wt', 'rebase', 'rb')), /newest board verdict FIXES NEEDED\): /);
+});
+
+test('wt rebase: a failing check exits non-zero and the report is still printed', () => {
+  const { home } = rebaseFixture([8, 'B8'], ['g']);
+  const p = join(home, 'desk.config.json'), cfg = JSON.parse(readFileSync(p, 'utf8'));
+  cfg.repos[0].check = 'node -e "process.exit(1)"';
+  writeFileSync(p, JSON.stringify(cfg));
+  const r = desk(home, 'wt', 'rebase', 'rb');
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /Only context changed/);
+});
+
+// Unmoved head that origin lacks, no verdict: reviewed == head, so the range is empty (range-diff would die).
+function unmovedFixture(failCheck) {
+  const f = rebaseFixture([8, 'B8'], ['g'], false);
+  git(f.wt, 'rebase', '-q', 'origin/main');
+  if (failCheck) {
+    const p = join(f.home, 'desk.config.json'), cfg = JSON.parse(readFileSync(p, 'utf8'));
+    cfg.repos[0].check = 'node -e "process.exit(1)"';
+    writeFileSync(p, JSON.stringify(cfg));
+  }
+  return f;
+}
+
+test('wt rebase: an empty range skips range-diff and says the reviewed commit is unchanged', () => {
+  const { home } = unmovedFixture(false);
+  const out = ok(desk(home, 'wt', 'rebase', 'rb'));
+  assert.match(out, /unchanged, with 0 commits on top/);
+  assert.doesNotMatch(out, /range-diff failed|Only context changed/);
+});
+
+test('wt rebase: a failing check still exits non-zero when the comparison is skipped', () => {
+  const { home } = unmovedFixture(true);
+  const r = desk(home, 'wt', 'rebase', 'rb');
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /unchanged, with 0 commits on top/);
+});
+
+test('wt rebase: a short verdict sha at the head or an ancestor also skips range-diff', () => {
+  const { home, wt } = unmovedFixture(false);
+  const short = git(wt, 'rev-parse', 'HEAD').slice(0, 7);
+  ok(desk(home, 'board', 'post', 'verdict', 'rb', `MERGE @${short}`));
+  assert.match(ok(desk(home, 'wt', 'rebase', 'rb')), /unchanged, with 0 commits on top/);
+  commit(wt, 'fix.txt', 'fix\n');
+  ok(desk(home, 'board', 'post', 'verdict', 'rb', `FIXES NEEDED @${short}`));
+  const out = ok(desk(home, 'wt', 'rebase', 'rb'));
+  assert.match(out, /unchanged, with 1 commit on top/);
+  assert.doesNotMatch(out, /range-diff failed/);
+});
+
+test('wt rebase: a failing range-diff prints one line, and a failing check still exits non-zero', () => {
+  const { home, wt } = unmovedFixture(true);
+  const orphan = git(wt, 'commit-tree', '-m', 'orphan', git(wt, 'rev-parse', 'HEAD^{tree}')); // exists, shares no history: merge-base fails
+  ok(desk(home, 'board', 'post', 'verdict', 'rb', `MERGE @${orphan}`));
+  const r = desk(home, 'wt', 'rebase', 'rb');
+  assert.notEqual(r.status, 0);
+  assert.match(r.stdout, /^range-diff failed: \S.*$/m);
+  assert.doesNotMatch(r.stdout, /usage:/);
 });

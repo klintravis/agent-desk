@@ -3,7 +3,7 @@
 ## Purpose
 
 One worktree per piece of work, and unattended headless sessions that work in them. Implemented in
-`lib/wt.mjs` (`desk wt new|finish|merge|remove|discard` and `desk stream`). Uses `git` and `gh` only,
+`lib/wt.mjs` (`desk wt new|finish|rebase|merge|remove|discard` and `desk stream`). Uses `git` and `gh` only,
 the same on every OS.
 
 ## Requirements
@@ -35,6 +35,12 @@ kind `folder` SHALL be refused by every `wt` command with a message pointing at 
 - **AND** the repo's `install` and `build` commands run from the worktree, each skipped when empty and `build` skipped by `--no-build`
 - **AND** it prints `Ready: <dir> (branch <branch> from <base>)`
 
+#### Scenario: Copy
+- **WHEN** the repo config lists `copy` paths and the worktree exists
+- **THEN** each path that exists in the repo's main checkout is copied to the same path in the worktree, before `install` and `build`, also with `--no-build`
+- **AND** a path missing in the main checkout is skipped without failing, with a `copy: <path> not in <repo>, skipped` line
+- **AND** a `copy` that is not an array, or a path that is absolute, contains `..` or is the repo root, makes `wt new` fail
+
 #### Scenario: Folder exists
 - **WHEN** the folder exists or the slug is already open in any repo
 - **THEN** it fails
@@ -53,7 +59,7 @@ kind `folder` SHALL be refused by every `wt` command with a message pointing at 
 #### Scenario: Preconditions and push
 - **WHEN** `wt finish` runs
 - **THEN** the worktree must exist, be on its branch and have no uncommitted changes
-- **AND** the repo's `check` command runs, then the branch is pushed with `-u origin <branch>` (`--force-with-lease` with `--rebased`)
+- **AND** the repo's `check` command runs, then the branch is pushed with `-u origin <branch>` (`--force-with-lease --force-if-includes` with `--rebased`)
 
 #### Scenario: Early stop
 - **WHEN** the repo has no `origin` remote
@@ -96,7 +102,7 @@ On a repo with `merge: "direct"`, `wt merge <slug>` SHALL fast-forward the defau
 
 #### Scenario: Not a fast-forward
 - **WHEN** the default branch has moved past the branch's base
-- **THEN** merge fails telling the caller to rebase, finish `--rebased` and re-run CI
+- **THEN** merge fails telling the caller to run `desk wt rebase <slug>`, then get a new review
 
 #### Scenario: No verdict
 - **WHEN** the board has no verdict for the slug
@@ -350,3 +356,31 @@ On a `review` repo, when `wt remove` fails because the branch is not in `origin/
 #### Scenario: Held by another session
 - **WHEN** either slug is claimed by another live session
 - **THEN** it exits 1 unless `--force` is given
+
+### Requirement: wt rebase
+`wt rebase <slug> [--no-wait]` SHALL rebase the branch on the repo's default branch, push it as `wt finish --rebased` does, and report whether the patches changed since the reviewed commit. It SHALL post no verdict.
+
+#### Scenario: Refusals
+- **WHEN** the worktree is missing, off its branch or has uncommitted changes
+- **THEN** it fails as `wt finish` does, before fetching or rebasing
+
+#### Scenario: Conflict
+- **WHEN** the rebase on `origin/<defaultBranch>` (after a fetch) conflicts
+- **THEN** the rebase is aborted, the worktree is back at its old head, and the exit code is non-zero with a message saying so
+
+#### Scenario: Push and CI
+- **WHEN** the rebase moved the head
+- **THEN** the `wt finish --rebased` path runs (check, `--force-with-lease --force-if-includes` push, CI wait and report), and red CI exits non-zero
+- **AND** only when the head did not move and origin's branch already equals it does it say so and push nothing; an unmoved head origin lacks is checked and pushed
+
+#### Scenario: Push guard
+- **WHEN** origin's branch holds a commit the local branch never contained (pushed from elsewhere)
+- **THEN** the `--rebased` push is refused (`--force-with-lease --force-if-includes`, Git 2.30 or newer) and that commit stays on origin
+
+#### Scenario: Range-diff report
+- **WHEN** the command rebased or pushes the branch
+- **THEN** `git range-diff` compares the reviewed commit with the new head, the reviewed commit being the sha in the slug's newest board verdict
+- **AND** with no usable verdict the head before the rebase is used and the report says so
+- **AND** when the reviewed commit is the head or an ancestor of it (empty range) no range-diff runs and the report says the reviewed commit is unchanged, with N commits on top; a range-diff that fails prints its first error line and never hides the check or CI result
+- **AND** it prints `Only context changed` when every patch is equal, else the differing commits, and the old and new head
+- **AND** the merge gate is unchanged: `wt merge` still needs `MERGE @<head sha>`

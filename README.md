@@ -17,7 +17,7 @@ It ships in two parts that share one version number:
   init and sync. `desk sync` also writes the session and subagent context hook (Ponytail, the desk
   rules, the board), which Claude Code and Copilot both read.
 - **Claude Code plugin**:
-  - skills: `kickoff`, `handoff`, `orchestrate`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`
+  - skills: `kickoff`, `handoff`, `orchestrate`, `walkthrough`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`
   - agents: `implementer`, `reviewer`, `verifier`, `archiver`, `scribe`, `ci-triage`
   - a mod: the Desk pane, the owner-decisions band, `/desk` and `/decide`, auto-compaction prune,
     cache warm-hold, the edit guard and the session meters (plan quota, context), secret redaction
@@ -234,7 +234,7 @@ that holds `desk.config.json`. `desk init` ignores `DESK_HOME` and always uses t
 | `desk board post\|claims\|check\|merge-ok\|tail` | The claim board. Its text is data, never approval. See [Board](#board). |
 | `desk decide [T-n <ruling> \| --list [n]]` | Owner decisions, one at a time; `--list` prints the recorded rulings. See [Owner decisions](#owner-decisions). |
 | `desk tidy [--apply] [--json]` | Reports what finished work left behind; `--apply` clears dead owners, deletes orphans and asks the owner once. See [Tidy](#tidy). |
-| `desk wt new\|finish\|merge\|remove\|discard <slug> [--repo <id>] [--base <ref>] [--no-build] [--no-wait] [--rebased] [--force] [--into <slug>] [--findings <file>]` | Worktrees. See [Worktree flow](#worktree-flow). |
+| `desk wt new\|finish\|rebase\|merge\|remove\|discard <slug> [--repo <id>] [--base <ref>] [--no-build] [--no-wait] [--rebased] [--force] [--into <slug>] [--findings <file>]` | Worktrees. See [Worktree flow](#worktree-flow). |
 | `desk stream <slug> <task-file> [--todo T-n] [--desk] [--repo <id>] [--max-turns <n>] [--budget <usd>] [--dry-run]` | Starts a detached headless Claude session that claims, implements, reviews and stops before merge. See [Streams](#streams). |
 | `desk tokens [hours] [--json] [--session <id8>\|self] [--by-worktree]`, `desk overlap` | Token use from Claude transcripts. Files changed by two open worktrees. See [Tokens and overlaps](#tokens-and-overlaps). |
 | `desk init [--repo <id>=<path> ...] [--worktrees <dir>] [--harness claude,copilot] [--no-install]` | Makes the current folder a desk. See [Quickstart](#quickstart). |
@@ -254,11 +254,12 @@ its value.
   - Branches `<branchPrefix><slug>` from `origin/<defaultBranch>` (`--base <ref>` starts from another
     ref; a repo with no `origin` starts from its local default branch).
   - Writes the settings and posts a claim.
+  - Copies the repo's optional `copy` paths (relative; gitignored files such as `.claude-plugin/types`) from the main checkout, skipping any that is missing.
   - Runs `install`, then `build`. `--no-build` skips the build.
   - Slugs are desk-wide: a slug already open in another repo is refused.
 - **`wt finish`**:
   - Refuses uncommitted changes, and refuses a worktree that is not on `<branchPrefix><slug>`.
-  - Runs `check`, then pushes. Use `--rebased` (force-with-lease) after a rebase; a push git rejects as
+  - Runs `check`, then pushes. Use `--rebased` (`--force-with-lease --force-if-includes`) after a rebase; a push git rejects as
     non-fast-forward says so.
   - `--no-wait` pushes and prints the `gh run list` command instead of waiting.
   - Waits for every GitHub Actions run on the pushed head through `gh`. CI is green only when
@@ -266,6 +267,14 @@ its value.
     (`on: push: branches: ['**']`), not just `main`: otherwise there is no run to wait for.
   - Gives up after 30 minutes for all runs together (a dead runner): CI is reported `running`, with
     the `gh run watch` command per open run, and the exit code is 1.
+- **`wt rebase`**: refuses what `wt finish` refuses, fetches, rebases on `origin/<defaultBranch>`, then runs the
+  `wt finish --rebased` path (check, `--force-with-lease --force-if-includes` push, CI wait). A conflict aborts the rebase and leaves the
+  worktree at its old head. It runs `git range-diff` from the reviewed commit (the sha of the newest board verdict,
+  else the head before the rebase, said so) to the new head and prints whether only context changed or which
+  commits differ, plus the old and new head (when the reviewed commit is the head or an ancestor of it, it skips range-diff and says it is unchanged), and names the verdict word (`MERGE`, `FIXES NEEDED`) of the reviewed commit.
+  It posts no verdict: `wt merge` still needs `MERGE @<head>`. It says "Already up to date" and pushes nothing only
+  when the head did not move and origin's branch already equals it; otherwise it checks and pushes. The push uses
+  `--force-with-lease --force-if-includes` (Git 2.30 or newer), so a commit pushed to the branch from elsewhere makes it fail.
 - **`wt merge`** needs all of these:
   - the branch is pushed
   - CI is green
@@ -391,6 +400,9 @@ and never writes `board.jsonl`.
   `scratchDir`, directly in those folders, never a link. Deleted for good, and only with all of: no worktree for the
   slug, no open todo for it, at least 24 hours old, and a board line (`<slug>` or `desk-<slug>`) or closed todo naming it. A failed stream's log
   therefore survives while its todo is open. With no worktrees folder, every file is kept and listed.
+- **Stray worktree folders.** A folder in the worktrees folder whose name is a repo's worktree prefix plus a valid slug,
+  and that `git worktree list` does not name, is listed (`strayFolders` in `--json`). Tidy never deletes one, even with
+  `--apply`: it may hold files. If the listing fails for a repo, that repo's folders are listed as kept, not stray.
 - **The owner question.** Tidy lists todos that look finished (merged slug with no worktree, or a parent whose children
   are all closed), stale (not area `owner` or `idea`, not updated for 14 days, with no open child or claim) or forgotten (area `watch`, 14 days). It
   raises them as one `owner` todo with `source` and `tidyIds` for `desk decide`; while that todo is open it raises no
@@ -403,9 +415,12 @@ The 24 hours and 14 days are constants in `lib/tidy.mjs`, not config.
 `desk tokens [hours] [--json] [--session <id8>|self] [--by-worktree]` reads the Claude transcripts of sessions run in
 the desk, its repos and its worktrees, for the last `hours` (default 24). Per session and subagent: calls,
 peak context (the fullest prompt), fresh input (input plus cache writes), output, cache percent
-(cache read over all input) and time. `--session self` limits it to the current session
+(cache read over all input), time, depth (0 a main session, 1 its subagent, 2 a subagent's subagent) and parent (`main`, or the
+spawning agent's id, matching `agent-<id>.jsonl` in `file` of `--json`). Two lines before the total cover the subagents: runs and nested runs, the first call's share of fresh
+tokens, cache reads per call, and warm starts (a first call that reads 5k or more from cache) as `warm/runs` by the gap
+since the last spawn of that agent type and model, in the listed rows. `--session self` limits it to the current session
 (`CLAUDE_CODE_SESSION_ID`). `--by-worktree` prints one row per worktree instead (calls, fresh, output, cache
-percent; largest fresh first), so what one change cost needs no adding up. `--json` rows always carry a `worktree` field; a main session's row also has `title`, a subagent's `type` and `about`.
+percent; largest fresh first), so what one change cost needs no adding up. `--json` rows always carry `worktree`, `depth`, `parent`, `firstFresh` and `firstRead`; a main session's row also has `title`, a subagent's `type` and `about`, and a subagent row with calls `sinceSpawn` (seconds since that last spawn, null on the first).
 
 A transcript's worktree is the slug (`<repo>:<slug>` with several repos) from `desk.config.json` alone, so removed
 worktrees count: a main session takes the worktree of its first working folder, else the one its first message names;
@@ -515,11 +530,11 @@ warn. Removing a value removes the key at the next full `desk sync`. A key writt
 | Part | Files |
 |---|---|
 | Plugin | `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `hooks/hooks.json` (registers `./register.ts`) |
-| Skills | `kickoff`, `handoff`, `orchestrate`, and the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt` |
+| Skills | `kickoff`, `handoff`, `orchestrate`, `walkthrough`, and the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt` |
 | Agents | `implementer`, `reviewer`, `verifier`, `archiver`, `scribe`, `ci-triage` |
 | Templates for `desk init` | `templates/AGENTS.md`, `templates/agent-rules.md` |
 | JSON Schemas of the desk files | `schemas/desk-config.schema.json`, `schemas/todo.schema.json`, `schemas/board.schema.json`, `schemas/decisions.schema.json` |
-| Hook scripts | `scripts/subagent-context.mjs` (session and subagent context), `scripts/edit-guard.mjs` (the edit guard as a `PreToolUse` script), `scripts/friction-scan.mjs [--since <ISO time>] [--json]` (workflow friction in the desk's transcripts: tool errors, denials, oversized outputs, repeated commands; default last 2 hours), `scripts/docs-check.mjs [<checkout>]` (no model; runs in `npm test`; compares the README's links, Node version, Commands table with its actions and flags against `bin/desk.mjs` and `lib/`, and `openspec/inventory.md` against the code and the README; prints each gap, exit 1) |
+| Hook scripts | `scripts/subagent-context.mjs` (session and subagent context), `scripts/edit-guard.mjs` (the edit guard as a `PreToolUse` script), `scripts/friction-scan.mjs [--since <ISO time>] [--json]` (workflow friction in the desk's transcripts: tool errors, denials, oversized outputs, repeated commands; default last 2 hours), `scripts/test.mjs` (what `npm test` runs: every `test/*.test.mjs`, no file list to keep), `scripts/docs-check.mjs [<checkout>]` (no model; runs in `npm test`; compares the README's links, Node version, Commands table with its actions and flags against `bin/desk.mjs` and `lib/`, and `openspec/inventory.md` against the code and the README; prints each gap, exit 1) |
 
 `scribe` (haiku, low effort) writes a branch's CHANGELOG entry, `openspec/inventory.md` rows and README command-table
 rows from its diff and edits nothing else; prose that describes behaviour comes back unwritten, listed in its report.
@@ -573,6 +588,7 @@ Paths are relative to the desk folder.
 | `repos[].merge` | `direct` | `direct`: `desk wt merge` fast-forwards the default branch and pushes it. `review`: it opens or updates a pull request and a person merges on the server (see [Merge policy](#merge-policy)). `review` needs `kind: git`, a non-empty `branchPrefix` that `defaultBranch` does not start with, `gh` and an `origin`. Any other value is an error. |
 | `repos[].worktreePrefix` | `<id>-` | Prefix of each worktree's directory name. An older desk keeps its directory names by setting this, for example `"old-"`. No prefix may start another repo's prefix (`a-` and `a-b-` are refused), so every directory names one repo. |
 | `repos[].install`, `repos[].build`, `repos[].check` | empty | Shell command lines run in the worktree. Empty means the step is skipped. |
+| `repos[].copy` | empty | Relative paths (no absolute path, no `..`) that `wt new` copies from the main checkout into the worktree before `install` and `build`, also with `--no-build`. A missing path is skipped (with a message). List gitignored paths only; anything else dirties the worktree and `wt finish` refuses it. |
 
 ### Many repos, local repos and plain folders
 
@@ -698,8 +714,8 @@ desk's `.claude/settings.json` and from each checkout's settings. `desk sync` wr
 Claude Code and Copilot would otherwise run both.
 
 Development: `npm test` (node:test, no dependencies). `desk check` adds the plugin's own tests and
-validation. `npm run typecheck` type-checks `hooks/`, tests included, with `tsc` (settings in `hooks/tsconfig.json`: strict plus `noUncheckedIndexedAccess`) through `npx` against the engine types in `.claude-plugin/types/` (gitignored, written once an interactive `claude --plugin-dir .` session loads the hooks, not by `claude -p`, `claude plugin test` or `claude plugin validate`; or load the plugin-authoring skill (it names the path of its `types/claude-code.d.ts`) and copy that file to `.claude-plugin/types/claude-code/index.d.ts`, creating the folder); it exits 1 when they are missing and is not part of `npm test` or `desk check`. Day-to-day work happens in a private development repo (git remote `origin`); this public
-repo (git remote `public`) receives one commit per release, on `main`, with its tag. CI (`.github/workflows/ci.yml`) runs `npm test` with Node 20 and 22, on hosted Linux, Windows and macOS here
+validation. `npm run typecheck` type-checks `hooks/`, tests included, with `tsc` (settings in `hooks/tsconfig.json`: strict plus `noUncheckedIndexedAccess`) through `npx` against the engine types in `.claude-plugin/types/` (gitignored, written once an interactive `claude --plugin-dir .` session loads the hooks, not by `claude -p`, `claude plugin test` or `claude plugin validate`; or load the plugin-authoring skill (it names the path of its `types/claude-code.d.ts`) and copy that file to `.claude-plugin/types/claude-code/index.d.ts`, creating the folder); the main checkout must hold the file and the repo must list it in `copy` for `wt new` to bring it into a worktree; it exits 1 when they are missing and is not part of `npm test` or `desk check`. Day-to-day work happens in a private development repo (git remote `origin`); this public
+repo (git remote `public`) receives one commit per release, on `main`, with its tag. CI (`.github/workflows/ci.yml`) runs `npm test` with Node 20 and 22 and, on Node 22 only, `claude plugin test` with a pinned Claude Code CLI installed under the job's temp folder (no API key), on hosted Linux, Windows and macOS here
 and on one self-hosted Linux runner in the private repo, where Windows is covered by the check in
 `desk wt finish`. No runner is ever registered on this repo: a fork's pull request can edit the
 workflow, and it must find nothing of the owner's to run on.
@@ -710,8 +726,8 @@ A release is a git tag `v<version>` on `main` plus a GitHub release on the publi
 publish.
 
 1. On a branch, run `node scripts/release.mjs bump <x.y.z>`. It needs `x.y.z` greater than the current
-   version and entries under `## Unreleased`; it sets the version in `package.json` and
-   `.claude-plugin/plugin.json` and moves the entries to `## <x.y.z> - <date>`.
+   version and entries under `## Unreleased`; it sets the version in `package.json`,
+   `.claude-plugin/plugin.json` and `vscode/package.json` and moves the entries to `## <x.y.z> - <date>`.
 2. Review the branch, merge it to `develop`, wait for CI.
 3. Fast-forward `main` to that `develop` commit, push it, tag it and push the tag:
    `git tag vX.Y.Z && git push origin main vX.Y.Z`.
@@ -723,7 +739,7 @@ publish.
    GitHub release from it.
 
 `node scripts/release.mjs notes vX.Y.Z` prints that section and exits 1 unless the tag is `v` plus the
-version in both files and the CHANGELOG has the section. To create a release by hand after step 4, run
+version in all three files and the CHANGELOG has the section. To create a release by hand after step 4, run
 `node scripts/release.mjs notes vX > n.md && gh release create vX --repo klintravis/agent-desk --verify-tag --title vX -F n.md`.
 
 ## License

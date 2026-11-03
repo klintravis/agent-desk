@@ -75,8 +75,8 @@ closes the slug's todos. New work found on the way: `add` it with `--summary "<a
    owner decisions go to the owner before any code,
    raised as `desk todo add "<question>" --area owner --why "<options; recommendation first>"` (the
    owner answers with `/decide` or `desk decide`, which closes the todo and records the ruling in `decisions.jsonl`).
-2. **Implement** (`implementer`, model/effort from Pick by task): one step per call. Docs ship in the
-   same branch: after the implementer's commit, `scribe` writes the bookkeeping docs and the
+2. **Implement** (`implementer`, model/effort from Pick by task): one step per call. A change expected to change over about 150 lines gets one `implementer` run per code task group, in order, in the same worktree; each run commits before the next starts. Split a single group, or a todo with none, first, and keep tests with the code they check: a group that cannot pass the check alone joins its neighbour. A smaller change keeps one run, however many groups it has. Docs ship in the
+   same branch: after the last implementer's commit, `scribe` writes the bookkeeping docs and the
    implementer writes what it hands back.
 3. **Finish**: `desk wt finish <slug>` runs the repo's check, pushes, waits for CI and reports the
    result. CI red → `ci-triage`, at the `ci-summary` value, reads the run ids `desk wt finish` printed, fix with an implementer, finish again.

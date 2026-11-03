@@ -18,7 +18,7 @@ Section names are README headings.
 | `desk tidy` | `lib/tidy.mjs` `tidy` | Tidy |
 | `desk wt` | `lib/wt.mjs` `wt` | Worktree flow |
 | `desk stream` | `lib/wt.mjs` `stream`, `brief`, `taskFile`, `claudeLauncher` | Streams |
-| `desk tokens` | `bin/desk.mjs` `tokens`, `tokenRows`, `tally`, `worktreeMatcher` | Tokens and overlaps |
+| `desk tokens` | `bin/desk.mjs` `tokens`, `tokenRows`, `tally`, `tokenPatterns`, `worktreeMatcher` | Tokens and overlaps |
 | `desk overlap` | `bin/desk.mjs` `overlap`, `currentOverlaps` | Tokens and overlaps |
 | `desk init` | `lib/init.mjs` `initCmd`, `init`, `pinKit` | Quickstart |
 | `desk sync` | `lib/sync.mjs` `sync` | Quickstart, Claude Code and GitHub Copilot |
@@ -63,6 +63,7 @@ Section names are README headings.
 |---|---|---|
 | `wt new` | `lib/wt.mjs` `wtNew` | Worktree flow |
 | `wt finish` | `lib/wt.mjs` `finish` | Worktree flow |
+| `wt rebase` | `lib/wt.mjs` `rebase` | Worktree flow |
 | `wt merge` | `lib/wt.mjs` `merge` | Worktree flow |
 | `wt remove` | `lib/wt.mjs` `remove` | Worktree flow |
 | `wt discard` | `lib/wt.mjs` `discard` | Worktree flow |
@@ -154,6 +155,7 @@ Section names are README headings.
 | `repos[].worktreePrefix` | `lib/config.mjs` `loadConfig`, `worktreeList` | Config reference |
 | `repos[].install` | `lib/wt.mjs` `wtNew` | Config reference |
 | `repos[].build` | `lib/wt.mjs` `wtNew` | Config reference |
+| `repos[].copy` | `lib/wt.mjs` `wtNew` | Config reference |
 | `repos[].check` | `lib/wt.mjs` `finish` | Config reference |
 
 ## Mod (hooks/register.ts) and UI
@@ -212,12 +214,13 @@ Section names are README headings.
 | `scripts/merge-guard.mjs` | PreToolUse hook script (`--self-test`) | Merge policy |
 | `scripts/friction-scan.mjs` | transcript scan | What is in the kit |
 | `scripts/docs-check.mjs` | README and this file against the code; run by `npm test` | What is in the kit |
+| `scripts/test.mjs` | `npm test`: runs every `test/*.test.mjs` | What is in the kit |
 | `npm run typecheck` | `scripts/typecheck-hooks.mjs`: developer type check of `hooks/` | Versioning and upgrade |
 | `hooks/tsconfig.json` | compiler settings for `npm run typecheck` (hooks and their tests, strict, `noUncheckedIndexedAccess`) | Versioning and upgrade |
 | `scripts/release.mjs bump` | `scripts/release.mjs` `bump` | Versioning and upgrade |
 | `scripts/release.mjs notes` | `scripts/release.mjs` `notes` | Versioning and upgrade |
 | `scripts/release.mjs publish` | `scripts/release.mjs` `publish`: one commit from the tag's tree on the public `main`, with the tag | Versioning and upgrade |
-| `.github/workflows/ci.yml` | push and pull request: `npm test` on a self-hosted runner on a private repo, hosted Linux, Windows and macOS otherwise | Versioning and upgrade |
+| `.github/workflows/ci.yml` | push and pull request: `npm test` with Node 20 and 22, and `claude plugin test` on Node 22 with a pinned Claude Code CLI; self-hosted runner on a private repo, hosted Linux, Windows and macOS otherwise | Versioning and upgrade |
 | `.github/workflows/release.yml` | tag `v*` push (skipped on a private repo): `npm test`, gate on `main`, GitHub release | Versioning and upgrade |
 
 ## Skills, agents, templates
@@ -231,6 +234,7 @@ Section names are README headings.
 | `ponytail-review` | `skills/ponytail-review/SKILL.md` | What is in the kit |
 | `ponytail-audit` | `skills/ponytail-audit/SKILL.md` | What is in the kit |
 | `ponytail-debt` | `skills/ponytail-debt/SKILL.md` | What is in the kit |
+| `walkthrough` | `skills/walkthrough/SKILL.md` | What is in the kit |
 | `implementer` | `agents/implementer.md` | What is in the kit |
 | `reviewer` | `agents/reviewer.md` | What is in the kit |
 | `verifier` | `agents/verifier.md` | What is in the kit |
@@ -297,6 +301,18 @@ Section names are README headings.
 | `OVERLAP:` | `bin/desk.mjs` `watchDiff` | Status watch |
 | `OWNER+:` | `bin/desk.mjs` `watchDiff` | Status watch |
 | `PR:` | `bin/desk.mjs` `watchDiff` | Status watch |
+
+## VS Code extension
+
+| item | where in code | README section |
+|---|---|---|
+| Agent Desk view (Desk, shown when a root holds `desk.config.json`) | `vscode/package.json` `contributes.views`, `vscode/extension.js` `activate` | VS Code extension |
+| Refresh command (`agentDesk.refresh`), every 60 seconds and on the view button | `vscode/extension.js` `activate` | VS Code extension |
+| Decide command (`agentDesk.decide`), quick pick over waiting decisions | `vscode/extension.js` `activate`, `askRuling` | VS Code extension |
+| Waiting-decisions badge | `vscode/extension.js` `activate` | VS Code extension |
+| Desk lookup and CLI run | `vscode/desk.js` `findDesk`, `run` | VS Code extension |
+| Status tree from `desk status --json` | `vscode/desk.js` `parseStatus`, `statusTree` | VS Code extension |
+| Ruling recorded with `desk decide`, secret refused | `vscode/desk.js` `printedDecision`, `record` | VS Code extension |
 
 ## README check
 

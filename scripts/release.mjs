@@ -6,12 +6,17 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const FILES = ['package.json', '.claude-plugin/plugin.json'];
+const FILES = ['package.json', '.claude-plugin/plugin.json', 'vscode/package.json'];
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
 const VERSION = /("version"\s*:\s*")([^"]*)(")/;
 
 const read = (root, f) => readFileSync(join(root, f), 'utf8');
 export const versions = (root = ROOT) => FILES.map((f) => VERSION.exec(read(root, f))?.[2]);
+function agreed(root) {
+  const v = versions(root);
+  if (new Set(v).size > 1) throw new Error(`versions disagree: ${FILES.map((f, i) => `${f} (${v[i]})`).join(', ')}`);
+  return v[0];
+}
 const gt = (a, b) => { const [x, y] = [a, b].map((v) => SEMVER.exec(v).slice(1).map(Number)); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
 
 // The text of `## <title>` up to the next `## ` heading (null if there is no such section).
@@ -27,8 +32,7 @@ export function section(changelog, title) {
 
 export function bump(version, root = ROOT, date = new Date().toLocaleDateString('sv')) {
   if (!SEMVER.test(version)) throw new Error(`version must be x.y.z, got ${version}`);
-  const [pkg, plugin] = versions(root);
-  if (pkg !== plugin) throw new Error(`package.json (${pkg}) and plugin.json (${plugin}) disagree`);
+  const pkg = agreed(root);
   if (!gt(version, pkg)) throw new Error(`${version} is not greater than the current ${pkg}`);
   const log = read(root, 'CHANGELOG.md');
   if (!section(log, 'Unreleased')) throw new Error('CHANGELOG.md has no entries under ## Unreleased');
@@ -37,8 +41,7 @@ export function bump(version, root = ROOT, date = new Date().toLocaleDateString(
 }
 
 export function notes(tag, root = ROOT) {
-  const [pkg, plugin] = versions(root);
-  if (pkg !== plugin) throw new Error(`package.json (${pkg}) and plugin.json (${plugin}) disagree`);
+  const pkg = agreed(root);
   if (tag !== `v${pkg}`) throw new Error(`tag ${tag} is not v${pkg}`);
   const body = section(read(root, 'CHANGELOG.md'), pkg);
   if (body === null) throw new Error(`CHANGELOG.md has no section for ${pkg}`);

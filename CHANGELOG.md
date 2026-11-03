@@ -1,11 +1,26 @@
 # Changelog
 
 agent-desk follows [Semantic Versioning](https://semver.org). One version covers the `desk` CLI and
-the Claude plugin (`package.json` and `.claude-plugin/plugin.json` always agree). Each entry says
+the Claude plugin (`package.json`, `.claude-plugin/plugin.json` and `vscode/package.json` always agree). Each entry says
 what an existing desk must do on upgrade; `desk check` warns while `kitVersion` in
 `desk.config.json` differs from the kit installed in the desk's `node_modules`.
 
 ## Unreleased
+
+## 0.5.0 - 2026-11-03
+
+- Changed: the `orchestrate` skill runs one `implementer` per code task group (in order, same worktree, each committing) for a change over about 150 lines. Nothing to do.
+- Added: `desk wt rebase <slug> [--no-wait]` fetches and rebases the branch on `origin/<defaultBranch>`, pushes it like `wt finish --rebased` (check, CI wait), and runs `git range-diff` against the commit of the slug's newest board verdict, reporting whether only context changed. It posts no verdict; the merge gate is unchanged. A conflict aborts the rebase. Nothing to do on upgrade.
+- Fixed: `desk tokens` and the token figures in `desk status` undercounted compacted runs: a compaction's zero-usage copy of a call overwrote its real count (42% of subagent fresh tokens over 48h on this desk). Figures rise after the upgrade. Nothing to do.
+- Added: `desk tokens` shows each run's depth and parent, with two lines before the total: first-call share, cache reads per call, nested runs, and warm starts by the gap since the last spawn of an agent type and model. `--json` rows gain `depth`, `parent`, `firstFresh`, `firstRead` and `sinceSpawn`. Nothing to do.
+- Fixed: `desk tokens` counted subagent calls several times over (the client's `<synthetic>` assistant lines were one call each; one reviewer showed 511 calls for 79 real ones); they are now skipped. Nothing to do.
+- Changed: `npm test` discovers `test/*.test.mjs` (through `scripts/test.mjs`) instead of a file list in `package.json`. Nothing to do.
+- Added: CI runs `claude plugin test` on Node 22, with a pinned Claude Code CLI installed under the job's temp folder (developer only; no API key). Nothing to do.
+- Added: skill `walkthrough` walks the owner through the open `watch` todos about the Desk pane, one check at a time, and records each `pass` or `fail` on its todo. Nothing to do on upgrade.
+- Added: `desk tidy` reports stray worktree folders: a folder in the worktrees folder that a configured repo's worktree
+  prefix names but `git worktree list` does not. They show in a new text section and as `strayFolders` in `--json`.
+  Tidy never deletes or moves them, with or without `--apply`. Nothing to do on upgrade.
+- Added: per-repo `copy` in `desk.config.json`, a list of relative paths (for example `.claude-plugin/types`) that `desk wt new` copies from the repo's main checkout into the new worktree before `install` and `build`, so gitignored, machine-local files reach it. A missing path is skipped; an absolute path or one with `..` is refused. Optional; nothing to do on upgrade.
 
 ## 0.4.0 - 2026-11-02
 

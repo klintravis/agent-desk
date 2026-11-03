@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { tmp, env, BIN } from './helpers.mjs';
+import { tmp, env, BIN, git, repo } from './helpers.mjs';
 import { fold } from '../bin/desk.mjs';
 import { deleteOrphans } from '../lib/tidy.mjs';
 
@@ -66,7 +66,7 @@ test('report: --json has the keys, and applied is empty without --apply', () => 
   const fx = fixture();
   todo(fx, 'T-1', {}, 15 * DAY);
   const j = report(fx);
-  assert.deepEqual(Object.keys(j).sort(), ['applied', 'candidates', 'dead', 'kept', 'orphans', 'unknownOwners']);
+  assert.deepEqual(Object.keys(j).sort(), ['applied', 'candidates', 'dead', 'kept', 'orphans', 'strayFolders', 'unknownOwners']);
   assert.deepEqual(j.applied, []);
   assert.deepEqual(ids(j.candidates), ['T-1']);
 });
@@ -189,8 +189,9 @@ test('orphans: each guard alone keeps the file', () => {
     const j = report(fx, '--apply');
     assert.ok(existsSync(f), `${name}: file survives`);
     assert.deepEqual(j.orphans, [], name);
-    if (listed) assert.match(j.kept[0].reason, listed, name);
-    else assert.deepEqual(j.kept, [], `${name}: normal, not listed`);
+    const kept = j.kept.filter((k) => k.file === f); // the fake worktree's folder is kept too: git cannot list the missing repo
+    if (listed) assert.match(kept[0].reason, listed, name);
+    else assert.deepEqual(kept, [], `${name}: normal, not listed`);
   }
 });
 
@@ -386,4 +387,46 @@ test('--apply on everything at once leaves board.jsonl byte-identical', () => {
   assert.equal(readFileSync(join(fx.home, 'board.jsonl'), 'utf8'), before);
   // The snapshot before the writes: clearing T-1 resets `updated`, yet this run still asks about it.
   assert.equal(folded(fx).get('T-2').tidyIds, 'T-1');
+});
+
+// ---- stray worktree folders ----
+
+function gitFixture() {
+  const fx = fixture(), dir = repo(fx.root, 'a', { remote: false });
+  git(dir, 'worktree', 'add', '-q', '-b', 'agent/live', join(fx.home, 'wts', 'a-live'));
+  return fx;
+}
+
+test('strays: an unknown folder is reported, a known worktree is not, and --apply keeps the files', () => {
+  const fx = gitFixture();
+  const keep = aged(join(fx.home, 'wts', 'a-gone', 'mine.txt'), 30 * DAY);
+  mkdirSync(join(fx.home, 'wts', 'notes')); // outside the naming scheme
+  writeFileSync(join(fx.home, 'wts', 'a-file'), 'x'); // a file, not a folder
+  mkdirSync(join(fx.home, 'wts', 'a-Bad_Name')); // not a valid slug
+  for (const args of [[], ['--apply']]) {
+    const j = report(fx, ...args);
+    assert.deepEqual(j.strayFolders.map((s) => s.dir.replace(/\\/g, '/').split('/').pop()), ['a-gone']);
+    assert.deepEqual(j.kept, []);
+    assert.equal(existsSync(keep), true);
+  }
+  assert.match(tidy(fx).stdout, /a-gone/);
+});
+
+test('strays: a failing git worktree list keeps the folders instead of flagging them', () => {
+  const fx = fixture(); // repo path ../a does not exist
+  mkdirSync(join(fx.home, 'wts', 'a-gone'));
+  const j = report(fx, '--apply');
+  assert.deepEqual(j.strayFolders, []);
+  assert.equal(j.kept.length, 1);
+  assert.match(j.kept[0].reason, /git worktree list failed/);
+  assert.equal(existsSync(join(fx.home, 'wts', 'a-gone')), true);
+});
+
+test('strays: a worktrees folder under a linked parent flags only the stray', () => {
+  const fx = fixture({ wts: false, cfg: { worktreesDir: '../lnk/wts' } }), dir = repo(fx.root, 'a', { remote: false });
+  const real = join(fx.root, 'real'), wts = join(real, 'wts');
+  mkdirSync(wts, { recursive: true }); symlinkSync(real, join(fx.root, 'lnk'), 'junction');
+  git(dir, 'worktree', 'add', '-q', '-b', 'agent/live', join(wts, 'a-live'));
+  mkdirSync(join(wts, 'a-gone'));
+  assert.deepEqual(report(fx).strayFolders.map((s) => s.dir.replace(/\\/g, '/').split('/').pop()), ['a-gone']);
 });
