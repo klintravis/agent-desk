@@ -1,4 +1,5 @@
-import type { Engine, On, PromptContextBlock } from 'claude-code'
+import type { EngineInterface as Engine, On, PromptContextBlock } from 'claude-code'
+import { PRIVATE_KEY, TEMPLATE_PASSWORD, URL_PASSWORD, VENDOR } from './secretpatterns.mjs'
 
 // Secret redaction, ported from secret-redactor (MIT, see THIRD-PARTY.md) with its defaults fixed
 // and its options dropped. Secrets, email addresses and public IP addresses are swapped for a stable
@@ -16,7 +17,7 @@ const TAG = /\[REDACTED-(?:SECRET|EMAIL|IP)-[0-9a-f]{8}\]/g
 
 // A random id, not a hash of the value: a hash can collide, and for a low-entropy value (an IP) it can be enumerated.
 function randomId(): string {
-  const [n] = crypto.getRandomValues(new Uint32Array(1))
+  const n = crypto.getRandomValues(new Uint32Array(1))[0]! // length 1
   return n.toString(16).padStart(8, '0')
 }
 
@@ -37,42 +38,6 @@ export function restore(text: string): string {
 }
 
 // ---- secrets
-
-// Shapes that belong to one vendor and mean one thing: hidden on sight, whatever their entropy.
-const VENDOR = new RegExp(
-  [
-    'sk-ant-[A-Za-z0-9_-]{16,}',
-    'sk-[A-Za-z0-9_-]{20,}',
-    'gh[pousr]_[A-Za-z0-9]{20,}',
-    'github_pat_[A-Za-z0-9_]{20,}',
-    'xox[baprse]-[A-Za-z0-9-]{10,}',
-    'xapp-[0-9]-[A-Za-z0-9-]{10,}',
-    'A(?:KIA|SIA)[0-9A-Z]{16}',
-    '[sr]k_(?:live|test)_[A-Za-z0-9]{16,}',
-    'whsec_[A-Za-z0-9]{16,}',
-    'AIza[0-9A-Za-z_-]{30,}',
-    'ya29\\.[A-Za-z0-9_-]{20,}',
-    'npm_[A-Za-z0-9]{30,}',
-    'dop_v1_[a-f0-9]{40,}',
-    'glpat-[A-Za-z0-9_-]{16,}',
-    'shpat_[a-f0-9]{32,}',
-    'SG\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}',
-    'eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}',
-    'https://hooks\\.slack\\.com/services/[A-Za-z0-9/+_-]{16,}',
-    'https://discord(?:app)?\\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]{16,}',
-  ].join('|'),
-  'g',
-)
-
-const PRIVATE_KEY = /-----BEGIN[^\n-]{0,40}PRIVATE KEY-----[\s\S]*?-----END[^\n-]{0,40}PRIVATE KEY-----/g
-
-// The password inside a connection string (scheme://user:password@host).
-const URL_PASSWORD = /\b([a-z][a-z0-9+.-]{1,20}:\/\/[^\s/@:]{1,80}):([^\s/@]{3,200})@/gi
-// A password that is one template placeholder and nothing else (`${pass}`, `{{pass}}`) is source text,
-// not a secret. Inside: a bare name or dotted path only, so a default value (`${P:-pw}`,
-// `${a||"pw"}`, `{{p|default('pw')}}`) and `${a}${b}` stay hidden.
-// `<...>`, `%VAR%` and `$VAR` are left out: `<SuperSecret>` and `$ecret99` are real passwords.
-const TEMPLATE_PASSWORD = /^(?:\$\{[\w.]+\}|\{\{[\w.]+\}\})$/
 
 // A run of the characters a key is made of. `/` and `.` are left out: with them every path is a candidate.
 // `=` padding rides along, but is kept out of the run so a `name=value` pair does not read as one token.
@@ -159,14 +124,14 @@ const IPV6_SHORT = /(?<![0-9A-Za-z:])[23][0-9A-Fa-f]{3}(?::[0-9A-Fa-f]{1,4}){0,5
 
 // Private, loopback, link-local, CGNAT, multicast, benchmarking and documentation ranges: never a person.
 function isPrivateV4(ip: string): boolean {
-  const p = ip.split('.').map(Number)
-  if (p[0] === 10 || p[0] === 127 || p[0] === 0 || p[0] >= 224) return true
-  if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true
-  if (p[0] === 192 && p[1] === 168) return true
-  if (p[0] === 169 && p[1] === 254) return true
-  if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true
-  if (p[0] === 198 && (p[1] === 18 || p[1] === 19)) return true
-  return (p[0] === 192 && p[1] === 0 && p[2] === 2) || (p[0] === 198 && p[1] === 51 && p[2] === 100) || (p[0] === 203 && p[1] === 0 && p[2] === 113)
+  const [a = NaN, b = NaN, c = NaN] = ip.split('.').map(Number) // a missing octet is NaN: every comparison is false, as undefined was
+  if (a === 10 || a === 127 || a === 0 || a >= 224) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 192 && b === 168) return true
+  if (a === 169 && b === 254) return true
+  if (a === 100 && b >= 64 && b <= 127) return true
+  if (a === 198 && (b === 18 || b === 19)) return true
+  return (a === 192 && b === 0 && c === 2) || (a === 198 && b === 51 && c === 100) || (a === 203 && b === 0 && c === 113)
 }
 
 // Addresses that only stand in for a real one (forms, docs, fixtures, noreply): hiding them is noise.

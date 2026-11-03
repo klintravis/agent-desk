@@ -1,13 +1,15 @@
 import { atom, read, update } from 'claude-code'
-import type { Engine, On } from 'claude-code'
+import type { EngineInterface as Engine, On } from 'claude-code'
 
 import type { AgentRow, DeskMeters, DeskStatus, WarmState } from '../types'
-import { bar, cacheLine, ctxLine, CTX_HINT, line, paint } from './meters'
+import { bar, cacheLine, ctxLine, CTX_HINT, line, paint, tok } from './meters'
+import { prText } from './prtext.mjs'
 import { durationOf, quotaLine } from './quota'
+import { scrub } from './redact'
 
 // The desk pane: session rows, then `desk status` (--json), refreshed every minute, beside the chat in
 // interactive sessions, or once a surface attaches. The band above the prompt counts the owner decisions in that same status and
-// warns near a full context (any session); /decide runs `desk decide`.
+// warns near a full context (any session); /decide and the Decide Button run `desk decide`.
 // The CLI is this plugin's own bin/desk.mjs; it finds the desk by DESK_HOME (desk sync sets it in each
 // checkout's settings) or by walking up from the session's folder to desk.config.json.
 export const PANE = 'desk-status'
@@ -18,7 +20,7 @@ function desk($: Engine) { return `${$.plugin.root}/bin/desk.mjs` }
 export async function inDesk($: Engine) {
   return $.process.run(['node', desk($), 'home'], { timeoutMs: 15_000 }).then((p) => p.exitCode === 0, () => false)
 }
-const status = atom({ plugin: 'agent-desk', key: 'status' } as const, null, { shape: 'status-2' })
+const status = atom({ plugin: 'agent-desk', key: 'status' } as const, null, { shape: 'status-3' })
 const err = atom({ plugin: 'agent-desk', key: 'err' } as const, '', { shape: 'err-1' })
 // The session's meters as numbers: every surface formats them (status line, band, pane).
 const meters = atom({ plugin: 'agent-desk', key: 'meters' } as const, {}, { shape: 'meters-2' })
@@ -26,6 +28,7 @@ const meters = atom({ plugin: 'agent-desk', key: 'meters' } as const, {}, { shap
 const warm = atom({ plugin: 'agent-desk', key: 'warm' } as const, { off: false }, { shape: 'warm-1' })
 const style = atom({ plugin: 'agent-desk', key: 'style' } as const, null, { shape: 'style-1' })
 const agents = atom({ plugin: 'agent-desk', key: 'agents' } as const, [], { shape: 'agents-1' })
+const tab = atom({ plugin: 'agent-desk', key: 'tab' } as const, 'work', { shape: 'tab-1' })
 export async function showMeters($: Engine, m: DeskMeters) {
   await update($, meters, () => m)
 }
@@ -65,17 +68,108 @@ export async function startPane($: Engine, isInteractive: boolean | undefined) {
   void $.ui.open({ id: PANE, title: 'Desk' }).catch(() => {})
 }
 
-// A Decide press shows the first waiting decision's options, then leaves `/decide T-n ` in the prompt for the ruling:
-// printing the question alone left the owner nothing to press or type into. The id comes from what /decide printed:
-// the button's id can be a minute old, and a ruling must land on the question the owner read. A draft is never overwritten.
-function ask($: Engine) {
-  void $.command.run({ command: 'decide' }).then(async (r) => {
-    const id = /^(T-\d+) /.exec(r.text ?? '')?.[1]
-    if (id && !(await $.prompt.read()).text.trim()) await $.prompt.fill({ text: `/decide ${id} ` })
-  }).catch(() => {})
+// `/decide` and a press both come here: $.command.run skips the calling plugin's own hook, so a press cannot go through it.
+async function runDecide($: Engine, args: string) {
+  const m = /^(T-\d+)\s+([\s\S]+)$/.exec(args)
+  // m[1] and m[2] are both mandatory groups of the regex.
+  const r = await $.process.run(['node', desk($), 'decide', ...(m ? [m[1]!, m[2]!] : args.split(/\s+/).filter(Boolean))], { timeoutMs: 30_000 })
+    .then((p) => ({ ok: p.exitCode === 0, text: (p.stdout || p.stderr).trim() }), (err) => ({ ok: false, text: `desk decide failed: ${err}` }))
+  if (m) void refresh($).catch(() => {}) // the band drops the decision now, not at the next minute
+  return r
+}
+
+// The lines of decideText in bin/desk.mjs; a record prints `Recorded T-n: <ruling>` on one line, then the next decision.
+function printedDecision(text: string) {
+  const head = /^(T-\d+) \(\d+ of \d+\): .*$/m.exec(text)
+  return head && { id: head[1]!, head: head[0], options: [...text.matchAll(/^ {2}(?:Recommended|Or): (.*)$/gm)].map((o) => o[1]!) }
+}
+
+// A Decide press walks the waiting decisions in the engine's dialog and records each answer after redaction, on one line, cut to 1000 characters. The id is the one
+// `desk decide` printed: the Button's can be a minute old, and a ruling must land on the question the owner read.
+// The dialog takes 2-4 options and pads fewer with Yes/No, which would record `Yes`: the others get the toast and `/decide T-n `.
+// shortcut: a dialog the engine never settles keeps the guard set until the mod reloads; add a timeout if a live press shows that.
+let walking = false
+async function ask($: Engine) {
+  if (walking) return
+  walking = true
+  try {
+    let r = await runDecide($, '')
+    for (;;) {
+      const d = r.ok ? printedDecision(r.text) : null
+      if (!d) { if (r.text) $.ui.toast(r.text, { timeoutMs: 30_000 }); return }
+      if (d.options.length < 2 || d.options.length > 4) {
+        $.ui.toast(r.text, { timeoutMs: 30_000 })
+        await $.prompt.read().then((p) => (p.text.trim() ? undefined : $.prompt.fill({ text: `/decide ${d.id} ` }))).catch(() => {})
+        return
+      }
+      // The marker sits in the question: on a label it would be recorded with the ruling.
+      const answer = await $.ui.ask(`${d.head}\nRecommended: ${d.options[0]}\nYour ruling?`, { options: d.options, header: 'Decision' })
+      // scrub: a dialog answer passes no redaction hook on the way to decisions.jsonl.
+      r = await runDecide($, `${d.id} ${scrub(answer)}`)
+    }
+  } catch (e) {
+    $.ui.toast((e as Error)?.message ?? String(e), { timeoutMs: 30_000 })
+  } finally {
+    walking = false
+  }
 }
 const ago = (now: number, ts: number | string) => durationOf(Math.max(0, now - (typeof ts === 'string' ? Date.parse(ts) : ts)))
 const ctxColor = (pct: number) => (pct >= CTX_HINT ? 'red' : pct >= 60 ? 'orange' : 'green')
+// Green only for a result that covers the head: a pass on an older commit or for an older head proves nothing.
+export const ciColor = (ci: string) => (/failure|cancelled|timed_out/.test(ci) ? 'red' : /success$/.test(ci) ? 'green' : 'orange')
+export const verdictColor = (verdict: string | null, head: string) => {
+  // The same test as the merge gate (mergeOk in bin/desk.mjs): a verdict names 7 to 40 characters of the head.
+  const merge = verdict && /^MERGE @([0-9a-f]{7,40})\b/.exec(verdict)
+  return merge ? (head.startsWith(merge[1]!) ? 'green' : 'orange') : verdict && /^(FIXES|DO NOT)/.test(verdict) ? 'red' : 'orange'
+}
+// What a row names, so a scan finds it; a theme key, so it reads on light and dark. Status keeps red, orange and green.
+const ACCENT = 'suggestion'
+export const quotaColor = (q: NonNullable<DeskMeters['quota']>) => ctxColor(Math.max(0, ...q.rows.map((r) => r.pct)))
+export const prColor = (p: NonNullable<DeskStatus['prs']>[number]) =>
+  p.decision === 'CHANGES_REQUESTED' ? 'red' : p.decision === 'APPROVED' && !p.unresolved && !p.sinceHead ? 'green' : 'orange'
+// A card's border: the worst status inside it, undefined when there is none.
+export const worst = (colors: readonly (string | undefined)[]) => (['red', 'orange', 'green'] as const).find((c) => colors.includes(c))
+type Branch = DeskStatus['branches'][number]
+// True when the verdict is about the head; one that names no commit cannot be stale.
+const verdictOnHead = (b: Branch) => { const m = /@([0-9a-f]{7,40})\b/.exec(b.verdict ?? ''); return m ? b.head.startsWith(m[1]!) : true }
+// One word for where a branch stands. rank: 0 and 1 need action, 2 is ready, 3 is in progress.
+export function branchState(b: Branch): { word: string; color: string; rank: number } {
+  const ci = ciColor(b.ci), fixes = b.verdict && verdictOnHead(b) && /^(FIXES|DO NOT|MERGE AFTER)/.test(b.verdict)
+  if (ci === 'red' && !/not the head/.test(b.ci)) return { word: 'CI failed', color: 'red', rank: 0 } // a run on an older commit is not a failure of this one
+  if (fixes) return { word: 'fixes needed', color: verdictColor(b.verdict, b.head), rank: 0 }
+  if (b.behind) return { word: 'rebase', color: 'orange', rank: 1 }
+  // `CI -`: a repo without gh has no CI to wait for, so only the verdict is left.
+  if (ci === 'green' || b.ci === 'CI -') return verdictColor(b.verdict, b.head) === 'green' ? { word: 'ready', color: 'green', rank: 2 } : { word: 'needs review', color: 'orange', rank: 1 }
+  const word = /not the head/.test(b.ci) ? 'CI stale' : /queued|in_progress|requested|waiting|pending/.test(b.ci) ? 'CI running' : b.ci === 'no CI run' ? 'no CI yet' : 'CI unknown'
+  return { word, color: 'orange', rank: 3 }
+}
+// The dim second line of a branch row, empty when the state word says it all.
+export function branchNote(b: Branch) {
+  const word = branchState(b).word
+  return [b.pr && prText(b.slug, b.pr), // first: the row truncates at its end
+    b.behind && `behind ${b.behind.base} by ${b.behind.n}`,
+    b.verdict && word !== 'ready' && word !== 'fixes needed' && `verdict ${b.verdict.replace(/@([0-9a-f]{7})[0-9a-f]+/, '@$1')}${verdictOnHead(b) ? '' : ', older commit'}`,
+    (word === 'CI stale' || word === 'CI unknown') && b.ci].filter(Boolean).join(' · ')
+}
+export const branchColor = (b: Branch) => branchState(b).color
+// The count line above the tabs; null when nothing is ready or waits on someone. In-progress branches are not counted.
+export function headline(branches: readonly Branch[]) {
+  const states = branches.map(branchState).filter((x) => x.rank < 3)
+  const n = (word: string) => states.filter((x) => x.word === word).length
+  const parts = [[n('ready'), 'ready to merge'], [n('needs review'), n('needs review') === 1 ? 'needs review' : 'need review'], [n('rebase'), 'to rebase'], [n('fixes needed'), 'fixes needed'], [n('CI failed'), 'CI failed']] as const
+  return states.length ? { text: parts.filter(([c]) => c).map(([c, w]) => `${c} ${w}`).join(' · '), color: worst(states.map((x) => x.color))! } : null
+}
+// `a + b: file, file (+1)` lines as files, most-contended first.
+// shortcut: files hidden behind `(+n)` are not counted, carry structured overlaps in the status JSON if a count looks wrong.
+export function overlapRows(lines: readonly string[]) {
+  const slugs = new Map<string, Set<string>>()
+  for (const l of lines) {
+    const m = /^(.+?) \+ (.+?): (.*)$/.exec(l)
+    if (!m) continue
+    for (const f of m[3]!.replace(/\s\(\+\d+\)$/, '').split(', ')) slugs.set(f, (slugs.get(f) ?? new Set()).add(m[1]!).add(m[2]!))
+  }
+  return [...slugs].map(([file, s]) => ({ file, n: s.size })).sort((a, b) => b.n - a.n || a.file.localeCompare(b.file))
+}
 
 export function registerPane(on: On) {
   on('command.run', { command: 'desk' }, async ($) => {
@@ -85,12 +179,7 @@ export function registerPane(on: On) {
 
   // `/decide` shows the next waiting decision; `/decide T-n <ruling>` records it (the ruling is one argv element).
   on('command.run', { command: 'decide' }, async ($, e) => {
-    const args = (e.args ?? '').trim()
-    const m = /^(T-\d+)\s+([\s\S]+)$/.exec(args)
-    const out = await $.process.run(['node', desk($), 'decide', ...(m ? [m[1], m[2]] : args.split(/\s+/).filter(Boolean))], { timeoutMs: 30_000 })
-      .then((p) => p.stdout || p.stderr, (err) => `desk decide failed: ${err}`)
-    if (m) void refresh($).catch(() => {}) // the band drops the decision now, not at the next minute
-    return { text: out.trim() }
+    return { text: (await runDecide($, (e.args ?? '').trim())).text }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -105,7 +194,7 @@ export function registerPane(on: On) {
         {n > 0 && (
           <Box>
             <Text color="yellow" bold>⚑ {n} decision{n === 1 ? '' : 's'} waiting </Text>
-            <Button key="decide" variant="primary" onPress={() => ask($)}>{`Decide ${ds[0].id}`}</Button>
+            <Button key="decide" variant="primary" onPress={() => void ask($).catch(() => {})}>{`Decide ${ds[0]?.id}`}</Button>
           </Box>
         )}
         {near && <Text color="red">ctx {bar(ctx.pct, 8)} {ctx.pct}%  near full: handoff or /compact</Text>}
@@ -122,26 +211,98 @@ export function registerPane(on: On) {
     const style_ = await read($, style)
     const ag: AgentRow[] = await read($, agents)
     const now = await $.clock.now()
-    const row = (label: string, ...kids: unknown[]) => <Box key={label}><Text dimColor>{label.padEnd(8)}</Text>{kids as never}</Box>
+    const cols = e.props.bodyColumns
+    const open = await read($, tab)
+    const me = await $.session.id().catch(() => '')
+    // mono: the padded labels only line up in a fixed-width face, and an editor's pane is not one by default.
+    const row = (label: string, ...kids: unknown[]) => <Box key={label}><Text dimColor mono>{label.padEnd(8)}</Text>{kids as never}</Box>
+    const card = { flexDirection: 'column', paddingX: 1, borderStyle: 'round' } as const
+    const section = (title: string, kids: unknown, borderColor?: string) => <Box key={title} {...card} marginTop={1} {...(borderColor ? { borderColor } : { borderDimColor: true })}><Text size="heading" weight="semibold">{title}</Text>{kids as never}</Box>
+    // The id row of an active todo: id + summary (the title when unset) and one label, `wt:<slug>` else the owner.
+    // The head is what gets cut; the label keeps its width unless it alone is wider than the pane
+    // (the card's border and padding take 4 columns, the gap 1).
+    const oneRow = (x: DeskStatus['active'][number]) => {
+      const about = typeof x.summary === 'string' && x.summary ? x.summary : x.title, label = x.slug ? `wt:${x.slug}` : x.owner ? String(x.owner) : ''
+      return (
+        <Box gap={1}>
+          <Box flexShrink={1}><Text weight="medium" wrap="truncate-end"><Text color={ACCENT}>{x.id}</Text> {about}</Text></Box>
+          {label ? <Box flexShrink={label.length + 5 <= cols ? 0 : 1}><Text {...(x.slug ? { color: ACCENT } : { dimColor: true })} size="footnote" wrap="truncate-end">{label}</Text></Box> : null}
+        </Box>
+      )
+    }
+    const none = (what = 'none') => <Text dimColor>{what}</Text>
+    const count = (n: number) => (n < 1e3 ? String(n) : tok(n)) // tok rounds 350 to 0k
+    // The dot lets a status be found at a glance; the words stay so color is never the only signal.
+    const status_ = (color: string, text: string) => <Box gap={1}><Text color={color}>●</Text><Text color={color}>{text}</Text></Box>
+    const tabs = s ? [['work', `Work ${s.active.length + ag.length}`], ['branches', `Branches ${s.branches.length}`], ['desk', s.sessions ? `Sessions ${s.sessions.length}` : 'Sessions']] : []
+    const head = s && headline(s.branches)
+    const holder = (slug: string) => { const c = s?.claims.find((x) => x.slug === slug); return c && (s?.sessions?.find((x) => x.session === c.from)?.title || c.from) }
+    const loose = s?.claims.filter((c) => !s.branches.some((b) => b.slug === c.slug)) ?? []
+    const contended = overlapRows(s?.overlaps ?? [])
     // Pressing writes the toggle, then repaints the status line's warm slot; a press is not a render.
     const flip = () => void update($, warm, (x) => ({ ...x, off: !x.off })).then(async () => { line.off = await warmOff($); paint($) }).catch(() => {})
     const why = w.off ? 'off for this session' : w.why?.replace(/^warm-hold: /, '') || 'idle'
+    const branchBorder = worst((s?.branches ?? []).map(branchColor)), prBorder = worst((s?.prs ?? []).map(prColor)), overlapBorder = s?.overlaps?.length ? 'orange' : undefined
+    // The cards are hidden on the other tabs, so red shows on the tab; orange would be lit by any branch in progress.
+    const branchRed = branchBorder === 'red' || prBorder === 'red'
     return (
       <Box flexDirection="column">
-        {m.ctx && row('Context', <Text color={ctxColor(m.ctx.pct)}>{ctxLine(m.ctx)}</Text>)}
-        {m.quota && row('Quota', <Text>{quotaLine(m.quota)}</Text>)}
-        {m.cache !== undefined && row('Cache', <Text>{cacheLine(m.cache)}</Text>)}
-        {row('Style', <Text>{style_ ?? 'default'}</Text>)}
-        {row('Warm', <Button key="warm" onPress={flip}>{w.off ? 'off' : 'auto'}</Button>, <Text dimColor> {why}</Text>)}
-        {row('Agents', ag.length ? <Box flexDirection="column">{ag.map((a) => <Text key={a.id}>{a.type} · {a.description} · {ago(now, a.since)}</Text>)}</Box> : <Text dimColor>none</Text>)}
-        {s && row('Trees', s.claims.length ? <Box flexDirection="column">{s.claims.map((c) => <Text key={c.slug}>{c.slug} · {c.from} · claimed {ago(now, c.ts)}</Text>)}</Box> : <Text dimColor>none</Text>)}
-        {s && row('Decide', s.decisions.length
-          ? <Box flexDirection="column">{s.decisions.map((d) => <Text key={d.id}>{d.id} {d.title}</Text>)}<Box><Button key="decide" variant="primary" onPress={() => ask($)}>{`Decide ${s.decisions[0].id}`}</Button></Box></Box>
-          : <Text dimColor>none</Text>)}
-        <Text dimColor>── desk status ──</Text>
+        <Box {...card} borderDimColor>
+          {m.ctx && row('Context', <Text tabular color={ctxColor(m.ctx.pct)}>{ctxLine(m.ctx)}</Text>)}
+          {m.quota && row('Quota', <Text tabular color={quotaColor(m.quota)}>{quotaLine(m.quota)}</Text>)}
+          {m.cache !== undefined
+            ? row('Cache', <Text tabular>{cacheLine(m.cache)}</Text>, <Text dimColor> · style </Text>, <Text wrap="truncate-end">{style_ ?? 'default'}</Text>)
+            : row('Style', <Text wrap="truncate-end">{style_ ?? 'default'}</Text>)}
+          {row('Warm', <Button key="warm" onPress={flip}>{w.off ? 'off' : 'auto'}</Button>, <Text {...(w.off ? { color: 'orange' } : { dimColor: true })}> {why}</Text>)}
+        </Box>
         {!s && <Text dimColor>{bad || 'Loading desk status…'}</Text>}
         {s && bad && <Text color="red">{bad}</Text>}
-        {s && s.text.split('\n').filter(Boolean).map((l) => <Text bold={l.startsWith('#')}>{l}</Text>)}
+        {s && s.decisions.length > 0 && section('Owner decisions', <Box flexDirection="column">{s.decisions.map((d) => <Text key={d.id} color="yellow">{d.id} {d.title}</Text>)}<Box><Button key="decide" variant="primary" onPress={() => void ask($).catch(() => {})}>{`Decide ${s.decisions[0]?.id}`}</Button></Box></Box>, 'yellow')}
+        {head && <Box marginTop={1} paddingX={1}><Text color={head.color} weight="medium" wrap="truncate-end">{head.text}</Text></Box>}
+        {s && <Box marginTop={1} gap={1}>{tabs.flatMap(([id, label]) => [<Button key={`tab-${id}`} {...(open === id ? { variant: 'primary' as const } : { dimColor: true })} onPress={() => void update($, tab, () => id).catch(() => {})}>{label}</Button>, ...(id === 'branches' && branchRed ? [<Text key="tab-mark" color="red">●</Text>] : [])])}</Box>}
+        {s && open === 'work' && section('Active todos', s.active.length ? <Box flexDirection="column" gap={1}>{s.active.map((x) => (
+          <Box key={x.id} flexDirection="column">
+            {oneRow(x)}
+            {x.state ? <Text dimColor size="footnote" wrap="truncate-end">state: {String(x.state)}</Text> : null}
+            {x.next ? <Text size="footnote" wrap="truncate-end">next: {String(x.next)}</Text> : null}
+          </Box>
+        ))}</Box> : none())}
+        {s && open === 'work' && section('Agents', ag.length ? ag.map((a) => <Text key={a.id}><Text color={ACCENT}>{a.type}</Text> · {a.description} · {ago(now, a.since)}</Text>) : none())}
+        {s && open === 'branches' && section('Open branches', s.branches.length ? [...s.branches].sort((a, b) => branchState(a).rank - branchState(b).rank).map((b) => {
+          const st = branchState(b), who = holder(b.slug), note = branchNote(b)
+          return (
+            <Box key={b.slug} flexDirection="column">
+              <Box justifyContent="space-between" gap={1}>
+                <Box flexShrink={1}><Text wrap="truncate-end"><Text weight="medium" color={ACCENT}>{b.slug}</Text> <Text color={st.color}>● {st.word}</Text>{who ? <Text dimColor> · {who}</Text> : null}</Text></Box>
+                <Box flexShrink={0}><Text dimColor mono>@{b.head.slice(0, 7)}</Text></Box>
+              </Box>
+              {note ? <Text dimColor size="footnote" wrap="truncate-end">{note}</Text> : null}
+            </Box>
+          )
+        }) : none(), branchBorder)}
+        {s && open === 'branches' && loose.length > 0 && section('Trees', loose.map((c) => <Text key={c.slug} wrap="truncate-end"><Text color={ACCENT}>{c.slug}</Text> · {c.from} · claimed {ago(now, c.ts)}{c.last ? ` · last post ${ago(now, c.last)}` : ''}</Text>))}
+        {s && open === 'branches' && s.prs && section('Pull requests', s.prs.length ? s.prs.map((p) => <Box key={p.slug}>{status_(prColor(p), `${p.slug} #${p.number} · review ${p.decision.toLowerCase().replace(/_/g, ' ')} · ${p.comments} comment(s) · ${p.unresolved} unresolved · ${p.sinceHead} new since the head commit`)}</Box>) : none(), prBorder)}
+        {s && open === 'branches' && section('Overlaps (second to merge rebases)', s.overlaps === null ? none('unavailable') : contended.length ? [
+          ...contended.slice(0, 3).map((o) => <Text key={o.file} color="orange" wrap="truncate-end">{o.file} · {o.n} branches</Text>),
+          ...(contended.length > 3 ? [<Text key="more" dimColor>+{contended.length - 3} more</Text>] : []),
+        ] : none(), overlapBorder)}
+        {s && open === 'desk' && section('Running sessions', s.sessions === null ? none('unavailable') : s.sessions.length ? <Box flexDirection="column" gap={1}>{s.sessions.map((x) => {
+          const n = x.agents.length
+          const foot = [x.slug && `wt:${x.slug}`, (x.title || x.slug) && x.session, n && `${n} agent${n === 1 ? '' : 's'}`].filter(Boolean).join(' · ')
+          return (
+            <Box key={x.session} flexDirection="column">
+              <Box gap={1}>
+                <Box flexShrink={1}><Text weight="medium" wrap="truncate-end"><Text color={ACCENT}>●</Text> {x.title || x.slug || x.session}</Text></Box>
+                {me.startsWith(x.session) ? <Box flexShrink={0}><Text color={ACCENT} size="footnote">this session</Text></Box> : null}
+              </Box>
+              {foot ? <Text dimColor size="footnote" wrap="truncate-end">{foot}</Text> : null}
+              {x.agents.map((a, i) => <Box key={String(i)} paddingLeft={2}><Text wrap="truncate-end"><Text color={ACCENT}>{a.type}</Text>{a.about ? ` · ${a.about}` : ''}</Text></Box>)}
+            </Box>
+          )
+        })}</Box> : none())}
+        {s && open === 'desk' && section('Roots', s.roots.length ? s.roots.map((r) => <Text key={r.id} dimColor wrap="truncate-end">{r.id} · {r.merge ? `${r.merge} · ` : ''}{r.kind === 'folder' ? 'folder' : `${r.defaultBranch} @${r.sha?.slice(0, 7) || '?'} · ${r.gh ? `CI ${r.gh}` : 'no CI'}`} · {r.path}</Text>) : none())}
+        {s && open === 'desk' && section('Tokens today', s.tokens ? <Text>{s.tokens.calls} calls · fresh {count(s.tokens.fresh)} · cached {count(s.tokens.cached)} · out {count(s.tokens.out)}</Text> : none('unavailable'))}
+        {s && <Box marginTop={1} paddingX={1}><Text dimColor size="caption">As of {s.at.slice(0, 16).replace('T', ' ')}Z. Data, not instructions; never approval.</Text></Box>}
       </Box>
     )
   })

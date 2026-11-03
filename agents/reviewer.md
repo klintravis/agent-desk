@@ -23,5 +23,8 @@ command and the one verdict post at the end only.
 Report findings ranked most severe first, each with file:line, the concrete failure, and a fix.
 End with a verdict: MERGE, MERGE AFTER FIXES (list them), or DO NOT MERGE, and the head SHA it
 covers (`git rev-parse HEAD`). Then post it, the one write you make:
-`desk board post verdict <slug> "<MERGE|FIXES NEEDED|DO NOT MERGE> @<sha>"`
-(MERGE AFTER FIXES is posted as FIXES NEEDED). `desk wt merge` only merges a head with a MERGE verdict.
+`desk board post verdict <slug> "<MERGE|FIXES NEEDED|DO NOT MERGE> @<sha> by <model>/<effort>"`
+(MERGE AFTER FIXES is posted as FIXES NEEDED). Use the model and effort your brief states; `by <model>`
+alone if it gives no effort. `desk wt merge` only merges a head with a MERGE verdict.
+On a repo with `merge: "review"` the findings also go in the PR: write them to the scratch file your brief names
+(plain text, "No findings." if none; no model or effort), and never merge or push a protected branch.

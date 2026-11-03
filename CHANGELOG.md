@@ -7,6 +7,87 @@ what an existing desk must do on upgrade; `desk check` warns while `kitVersion` 
 
 ## Unreleased
 
+## 0.4.0 - 2026-11-02
+
+- Added: per-repo `merge: "direct" | "review"` in `desk.config.json` (default `direct`, today's behaviour; nothing to do
+  on upgrade). Under `review`, `desk wt merge <slug> --findings <file>` keeps its gates and opens or updates a pull
+  request instead of merging; after a person merges on the server, re-running it closes the work. New
+  `desk wt merge <slug> --into <other-slug>` merges between agent branches (both policies). New merge guard
+  (`hooks/mergeguard.mjs`, `scripts/merge-guard.mjs`) refuses agent pushes and merges to protected branches;
+  `desk sync` denies the edit tools on `desk.config.json`; `desk check` warns about missing server protection and a
+  changed setting; `desk status` and the Desk pane show the PR state. **Only a server branch-protection rule is a
+  guarantee**; the guard and the deny are best effort. The review path is tested against a `gh` stub and has not met a
+  real server: try it on a throwaway pull request before relying on it.
+- Changed: the Desk pane says what is working on what. Its Desk tab is now `Sessions <n>`: each session by its transcript
+  title, with worktree, id and agents, the agent types without the plugin prefix (`implementer/medium`, no longer
+  `agent-desk`). Open branches are one row each with one state word, most urgent first; overlaps are grouped by file,
+  the top three and `+N more`; a line above the tabs counts what waits; Cache and Style share a row.
+  **BREAKING:** `desk status --json` is now `v: 2`: a session gains `title` and `slug`, and `agents` changes from strings
+  to `{type, about}`, so a script reading `agents` must follow. `desk tokens --json` rows gain `title`, `type` and `about`. `desk status` lists sessions the same way. Nothing else to do on upgrade.
+- Added: `.gitattributes` sets `CHANGELOG.md merge=union`, so parallel branches adding entries at the same spot merge
+  and rebase without a conflict (developer only). Union keeps both sides' lines, so read the result. Nothing to do on
+  upgrade.
+- Changed: the `orchestrate` skill and the `implementer` agent spend fewer tokens. Briefs point to todos, specs and files
+  instead of pasting them; a proposal reads what its brief names and stops at about 40 tool calls; reports run about 20
+  lines plus the raw verify output; the orchestrator reads the proposal and its open questions, not every artifact.
+  Nothing to do on upgrade.
+- Added: agent `scribe` (haiku, low effort) writes a branch's CHANGELOG entry, `openspec/inventory.md` rows and README
+  command-table rows from its diff, edits nothing else and hands explanatory prose back unwritten. The `orchestrate`
+  table routes those docs to it; compare its first few runs against Sonnet. `desk sync` writes it for Copilot. A desk's
+  own `AGENTS.md` keeps its old agent list until edited by hand; nothing else to do on upgrade.
+- Added: `desk tidy [--apply] [--json]` reports what finished work left behind. `--apply` clears the `owner` of proved-dead
+  sessions, deletes proved orphan stream files and scratch logs for good, and raises one `owner` todo for todos that look
+  finished, stale or forgotten; it never closes a todo. The `handoff` skill runs `--apply` and `kickoff` reads the report.
+  Nothing to do on upgrade: `desk sync` copies the skills for Copilot. The first `--apply` may clear several owners and
+  raise one owner todo. An existing desk keeps its `AGENTS.md`, so add `tidy` to the command list there by hand.
+- Added: `scripts/docs-check.mjs [<checkout>]` compares the README (links, Node version, Commands table with its actions
+  and flags) and `openspec/inventory.md` with the code; `npm test` runs it. No action on upgrade.
+- Added: the read-only `ci-triage` agent (Haiku, low effort) takes a red CI run and returns the failing step, the failing
+  test and the first error, and fixes nothing. The `orchestrate` skill sends CI logs to it; a long local check output
+  stays with `general-purpose`. On upgrade: run `desk sync` in a desk with the `copilot` harness to get its
+  `.github/agents/ci-triage.agent.md`.
+- Added: per-user model, effort and cache choices in `~/.agent-desk/settings.json` (`AGENT_DESK_SETTINGS` overrides the
+  path), and `desk settings [--json]` to show each resolved value and its source. `desk sync` writes user cache keys to
+  git-ignored `.claude/settings.local.json` only; nothing from the file reaches a committed file, and removing a key from
+  it never touches a file git tracks. `.claude/synced-permissions.json` gains `user`, the names of those keys. `desk status`
+  and `desk check` show an active user layer. Nothing to do on upgrade.
+- Added: `tasks` and `floor` in `desk.config.json`: a desk's values per task id, and minimums that only raise. Nothing to
+  do on upgrade.
+- Changed: `reviewer` and `verifier` post `<VERDICT> @<sha> by <model>/<effort>`. The merge gate reads verdicts as before,
+  and `desk status --json` keeps 120 characters of a verdict, not 60. Handoff quotes verdicts in a todo without the `by`
+  part. The record reaches only people who can read that desk's board. Nothing to do on upgrade.
+- Changed: the `orchestrate` table's architecture memo row now says `opus` instead of "the strongest model". Set `memo` to
+  `fable` in your user file if you want Fable there.
+- Changed: Desk pane colour follows attention. Quota takes Context's colours, Warm's reason turns orange while off, ids
+  and slugs take one accent, a todo's `next:` is no longer dim, pull request rows are statuses, the Open branches, Pull
+  requests and Overlaps cards take the border of their worst status, and the Branches tab shows a red dot while one is
+  red. Nothing to do on upgrade.
+- Changed: the `NEXT.md` migration prints each todo it moves to `watch` and the command that moves it back, since an
+  item can name a todo it only cites. Nothing to do on upgrade.
+- Added: `npm run typecheck` type-checks `hooks/` and their tests (strict plus `noUncheckedIndexedAccess`) against the
+  engine types (developer only). Nothing to do on upgrade.
+- Added: `desk tokens --by-worktree` prints one row per worktree (calls, fresh, output, cache share); every
+  `desk tokens --json` row gains a `worktree` field. Nothing to do on upgrade.
+- Fixed: the `archiver` agent and the `orchestrate` skill called spec close-out post-merge; a spec change is archived
+  inside its change branch, before merge. Nothing to do on upgrade.
+- Fixed: `desk status --watch` printed `CTX>250k:` once per session and agent label, so a relaunched agent with the same
+  label stayed silent. It is now once per agent run (its transcript file). New `ctx` board notes start with
+  `[<file name>] `; older notes match nothing and make no past agent announce again (bar an old agent that drops
+  below 250k and crosses again: once more). Nothing to do on upgrade.
+- Fixed: the `NEXT.md` migration in `desk sync` no longer adds a duplicate `watch` todo for a "Not yet verified live" item that names one open todo (`T-n`): it moves that todo to area `watch`. An item naming a done, dropped, missing, `owner` or `idea` todo, or several ids, still adds a new `watch` todo. Nothing to do on upgrade.
+- Added: an optional todo `summary` (`desk todo add|set --summary "<about 50 characters>"`, cut to 60). The Desk pane
+  shows each active todo as an id row (id and summary, the title when none), then `state:` and `next:`, each cut to
+  one row at the edge (the full text stays in `desk todo show`), with one label on the id row: `wt:<slug>`, else the owner (the summary is cut first; model, area, size and priority are not shown there). `desk status --json` carries `summary`. Nothing to do on upgrade; existing todos need no field.
+- Fixed: `desk wt finish` no longer hangs when CI never finishes (a dead runner): it stops watching after 30 minutes
+  for all runs together, reports CI `running` and exits 1. Nothing to do on upgrade.
+- Fixed: a `Decide T-n` press did nothing, since the engine's command chain skips the plugin's own `/decide` hook. A
+  press now asks each waiting decision in a dialog, records the answer after redaction, on one line, cut to 1000 characters, and goes on to the next. A decision with
+  fewer than 2 or more than 4 options keeps the toast and the `/decide T-n ` fill. Typed `/decide` and `desk decide` do
+  not change. Nothing to do on upgrade.
+- Desk pane: the raw status text is gone. Owner decisions stay above three tabs (Work, Branches, Desk), every
+  status field is on a tab, and CI and verdicts are coloured; green only for a result on the branch head.
+  Nothing to do on upgrade.
+
 ## 0.3.0 - 2026-11-01
 
 - agent-desk is public at `github:klintravis/agent-desk`. CI uses hosted Linux, Windows and macOS on a public repo and a self-hosted runner on a private one; the release workflow runs only on a public repo. The public history starts at this release: older versions below have no public tag. Nothing to do on upgrade, and no read access is needed to install.
@@ -54,8 +135,8 @@ what an existing desk must do on upgrade; `desk check` warns while `kitVersion` 
   mangled code. A password that is exactly one placeholder is now kept: `${...}` or `{{...}}` holding a
   bare name or dotted path, no default value. Any other password, including a placeholder with a default
   value (`${P:-pw}`), one that only contains `$` or a placeholder among other text, is still hidden.
-  `<...>` (`<password>`, `<SuperSecret>`), `$VAR` and `%VAR%` are not exempted: a real password was
-  written in angle brackets. Nothing to do on upgrade.
+  `<...>` (`<password>`, `<SuperSecret>`) is not exempted because a real password can be written in
+  angle brackets; `$VAR` and `%VAR%` are not because `$ecret99` and `%ecret99%` are real passwords. Nothing to do on upgrade.
 
 ## 0.2.0 - 2026-11-01
 

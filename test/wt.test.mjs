@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, cop
 import { spawnSync } from 'node:child_process';
 import { join, delimiter } from 'node:path';
 import { multiDesk, desk, git, commit, env, BIN } from './helpers.mjs';
-import { conclusion, SESSION_ENV } from '../lib/wt.mjs';
+import { conclusion, watchRuns, SESSION_ENV } from '../lib/wt.mjs';
 
 const ok = (r) => { assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`); return r.stdout; };
 const fails = (r, re) => { assert.notEqual(r.status, 0, r.stdout); assert.match(r.stderr, re); };
@@ -302,4 +302,12 @@ test('status: a branch in a repo without origin counts behind the local default 
   ok(desk(home, 'wt', 'new', 'nb', '--repo', 'b'));
   commit(join(root, 'b'), 'one.txt', '1');
   assert.match(ok(desk(home, 'status')), /- nb @\w{7}: .*; behind main by 1, rebase\n/);
+});
+
+test('watchRuns gives each watch only the time left of the bound', () => {
+  const seen = [];
+  const fake = (_cmd, _args, opts) => { seen.push(opts.timeout); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120); };
+  watchRuns({ gh: 'o/r' }, [1, 2, 3], 200, fake);
+  assert.equal(seen.length, 2);
+  assert.ok(seen[0] <= 200 && seen[1] < seen[0], String(seen));
 });

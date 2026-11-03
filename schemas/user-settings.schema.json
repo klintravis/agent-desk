@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "agent-desk user settings",
+  "description": "One user's model, effort and cache choices, in ~/.agent-desk/settings.json. The kit reads this file and never writes it. Hold no secrets here.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "tasks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "model": { "enum": ["haiku", "sonnet", "opus", "fable"] },
+          "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] }
+        }
+      }
+    },
+    "cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "promptCacheTtl": { "enum": ["5m", "1h"] },
+        "subagentPromptCacheTtl": { "enum": ["5m", "1h"] },
+        "idleCompaction": { "type": "boolean" }
+      }
+    }
+  }
+}

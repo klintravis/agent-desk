@@ -22,4 +22,5 @@ Report one line per finding, then any new defects (file:line, failure, fix), the
 MERGE (every finding FIXED, no new defect), or FIXES NEEDED (list them). If the fix diff is large
 (new files or >~150 changed lines), say so and recommend a full `reviewer` pass instead.
 Then post it, the one write you make:
-`desk board post verdict <slug> "<MERGE|FIXES NEEDED> @<sha>"` with the SHA from step 5.
+`desk board post verdict <slug> "<MERGE|FIXES NEEDED> @<sha> by <model>/<effort>"` with the SHA from
+step 5 and the model and effort your brief states; `by <model>` alone if it gives no effort.

@@ -1,4 +1,4 @@
-import type { Engine } from 'claude-code'
+import type { EngineInterface as Engine } from 'claude-code'
 
 import type { DeskMeters } from '../types'
 import { showMeters, warmOff } from './pane'
@@ -26,7 +26,7 @@ export const cachePct = (t = io): number | undefined => (t.all ? Math.round((t.r
 export const cacheLine = (pct: number) => `${pct}% hit`
 export const CTX_HINT = 80
 
-const tok = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1e3)}k`)
+export const tok = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1e3)}k`)
 // After context-lens (MIT, THIRD-PARTY.md). Nothing before the first response.
 export function ctxOf(c: { tokens?: number; window: number; percent?: number }): DeskMeters['ctx'] {
   if (!c.tokens || !c.window) return undefined

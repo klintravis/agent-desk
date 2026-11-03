@@ -114,3 +114,57 @@ exists, otherwise the running kit.
 #### Scenario: Pinned kit
 - **WHEN** `<desk>/node_modules/agent-desk/package.json` exists
 - **THEN** skills, agents and the version come from that folder
+
+### Requirement: Tasks and floor keys
+`desk.config.json` MAY hold `tasks` and `floor`, each mapping a task id to optional `model` and `effort`. `loadConfig` SHALL throw `${file}: ...` for a value outside the accepted model names and efforts, and for `fable` in `floor`. It SHALL NOT check task ids, which the resolver warns about.
+
+#### Scenario: Valid keys
+- **WHEN** the config sets `floor.review` to `opus` and `high`
+- **THEN** the config loads and the keys are passed through
+
+#### Scenario: Full model id refused
+- **WHEN** `tasks.review.model` is `claude-opus-4-5`
+- **THEN** `loadConfig` throws with the file and the key
+
+#### Scenario: Fable as a floor refused
+- **WHEN** `floor.review.model` is `fable`
+- **THEN** `loadConfig` throws, because not every account has it and it can bill to usage credits
+
+#### Scenario: Fable as a desk value
+- **WHEN** `tasks.memo.model` is `fable`
+- **THEN** the config loads
+
+#### Scenario: Schema
+- **WHEN** `desk check` validates a config with these keys
+- **THEN** valid values pass `schemas/desk-config.schema.json` and a floor of `fable` prints a warning line
+
+### Requirement: Merge policy key
+A `git` repo entry MAY set `merge` to `direct` or `review`. It SHALL default to `direct`. The value SHALL be read only from the committed `desk.config.json`: no user-layer file or environment variable SHALL set or override it.
+
+#### Scenario: Default
+- **WHEN** a repo entry has no `merge`
+- **THEN** its `merge` is `direct` and every command behaves as it did before the key existed
+
+#### Scenario: Bad value
+- **WHEN** `merge` is any other value
+- **THEN** loading the config fails naming the repo and the two values
+
+#### Scenario: Review on a folder
+- **WHEN** an entry with `kind: "folder"` sets `merge: "review"`
+- **THEN** loading the config fails
+
+#### Scenario: Review with no prefix
+- **WHEN** an entry sets `merge: "review"` with an empty `branchPrefix`
+- **THEN** loading the config fails, because nothing would be protected
+
+#### Scenario: Review with the default branch inside the prefix
+- **WHEN** an entry sets `merge: "review"` and its `defaultBranch` starts with its `branchPrefix`
+- **THEN** loading the config fails, because the default branch would count as an agent branch
+
+#### Scenario: No gh or origin does not fail the load
+- **WHEN** an entry sets `merge: "review"` and has no `gh` value or no `origin`
+- **THEN** the config loads, and `wt merge` and `desk check` report it
+
+#### Scenario: User file cannot switch the policy
+- **WHEN** a user-layer settings file holds `merge` or `repos`
+- **THEN** the repo's `merge` stays what `desk.config.json` says

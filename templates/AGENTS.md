@@ -4,7 +4,7 @@ The orchestration folder for the repos in `desk.config.json`, run with agent-des
 here, plan and delegate, and make every code change in a worktree of a repo's main checkout. This
 file is read by Claude Code (through `CLAUDE.md`) and by GitHub Copilot (as `AGENTS.md`).
 
-One command: `desk status|board|todo|tokens|overlap|decide|check|wt|stream|sync|workspace ...`.
+One command: `desk status|board|todo|tokens|overlap|decide|tidy|settings|check|wt|stream|sync|workspace ...`.
 `desk` is the shim in this folder, not on PATH: `./desk ...` (`.\desk.cmd ...` in PowerShell or cmd)
 here, `<desk>/desk ...` from a worktree. The session context names the full path. Not `npx desk`.
 `desk status` is the one screen (owner decisions, active todos, claims, running sessions, CI and
@@ -23,7 +23,9 @@ stopping, run the `handoff` skill: it writes only your own todos.
 - Never edit a repo's main checkout directly. Start work with `desk wt new <slug> [--repo <id>]`,
   finish with `desk wt finish <slug>` (repo check, push, wait for CI), merge with
   `desk wt merge <slug>` (CI green, board verdict `MERGE @<head sha>`, fast-forward only, push,
-  worktree removed). Throw one away with `desk wt discard <slug>`.
+  worktree removed). A repo with `merge: "review"` instead gets a pull request from
+  `desk wt merge <slug> --findings <file>`; a person merges on the server, then re-run it to close.
+  Never push or merge a protected branch yourself. Throw one away with `desk wt discard <slug>`.
 - If a repo uses a spec workflow (its own `CLAUDE.md` / `AGENTS.md` says so), every change follows it.
 - Checks: the repo's `check` command from `desk.config.json`; read only the exit code and the
   failure blocks.
@@ -31,7 +33,7 @@ stopping, run the `handoff` skill: it writes only your own todos.
   that claims, implements, reviews and stops before merge (log in the scratch folder); the desk
   session watches (`desk status --watch`) and merges.
 - Delegate with the `orchestrate` skill (agents `implementer`, `reviewer`, `verifier`,
-  `archiver`). Review with a fresh `reviewer` before merging.
+  `archiver`, `scribe`, `ci-triage`). Review with a fresh `reviewer` before merging.
 - Ask the owner first for owner decisions (rulings, breaking changes): add them as todos with
   `--area owner --why "<recommended>; <other>"`; the owner rules with `/decide` or `desk decide`.
 - One session per worktree. The board (`desk board`, `board.jsonl`) says who holds what:

@@ -1,8 +1,8 @@
 # Inventory
 
 Every user-visible item of agent-desk, taken from the code (not from the README), with the README
-section that documents it. The first column is a literal string: the README check greps for it
-(see the loop at the end). Keep this file in step with the code when a command, flag, variable,
+section that documents it. A first column that starts with a backtick is a literal string:
+`scripts/docs-check.mjs` looks for it in the README (see the last section). Keep this file in step with the code when a command, flag, variable,
 config key, hook or written file is added.
 
 Section names are README headings.
@@ -15,13 +15,15 @@ Section names are README headings.
 | `desk todo` | `bin/desk.mjs` `todo` | Todos |
 | `desk board` | `bin/desk.mjs` `board` | Board |
 | `desk decide` | `bin/desk.mjs` `decide`, `decideText`, `rulingsText` | Owner decisions |
+| `desk tidy` | `lib/tidy.mjs` `tidy` | Tidy |
 | `desk wt` | `lib/wt.mjs` `wt` | Worktree flow |
 | `desk stream` | `lib/wt.mjs` `stream`, `brief`, `taskFile`, `claudeLauncher` | Streams |
-| `desk tokens` | `bin/desk.mjs` `tokens`, `tokenRows`, `tally` | Tokens and overlaps |
+| `desk tokens` | `bin/desk.mjs` `tokens`, `tokenRows`, `tally`, `worktreeMatcher` | Tokens and overlaps |
 | `desk overlap` | `bin/desk.mjs` `overlap`, `currentOverlaps` | Tokens and overlaps |
 | `desk init` | `lib/init.mjs` `initCmd`, `init`, `pinKit` | Quickstart |
 | `desk sync` | `lib/sync.mjs` `sync` | Quickstart, Claude Code and GitHub Copilot |
 | `desk workspace` | `lib/sync.mjs` `workspace` | Commands |
+| `desk settings` | `lib/sync.mjs` `settings`, `lib/config.mjs` `resolveSettings` | Commands, User settings |
 | `desk check` | `bin/desk.mjs` `check` | Commands |
 | `desk home` | `bin/desk.mjs` `main` | Commands |
 | `desk --version` | `bin/desk.mjs` `main` | Commands |
@@ -70,7 +72,10 @@ Section names are README headings.
 | item | where in code | README section |
 |---|---|---|
 | `--watch` | `bin/desk.mjs` `status`, `watch` | Status watch |
-| `--json` | `bin/desk.mjs` `status`, `statusData` | Status watch |
+| `--json` | `bin/desk.mjs` `status`, `statusData`; `lib/tidy.mjs` `tidy` | Status watch, Tidy |
+| `--apply` | `lib/tidy.mjs` `tidy` | Tidy |
+| `tidyIds` | `lib/tidy.mjs` `raiseQuestion` (with `source`) | Tidy |
+| `--json` | `lib/sync.mjs` `settings` | Commands |
 | `--area` | `bin/desk.mjs` `todo` | Todos |
 | area `watch` | `bin/desk.mjs` `next`, `lib/sync.mjs` `migrateDesk` | Todos |
 | area `idea` | `bin/desk.mjs` `next`, `tree` | Todos |
@@ -79,6 +84,7 @@ Section names are README headings.
 | `--prio` | `bin/desk.mjs` `flags` | Todos |
 | `--` (end of flags) | `bin/desk.mjs` `flags` | Todos |
 | `--why` | `bin/desk.mjs` `todo`, `decideText` | Todos, Owner decisions |
+| `--summary` | `bin/desk.mjs` `flags`, `hooks/pane.tsx` `oneRow` | Todos |
 | `--parent` | `bin/desk.mjs` `todo add` | Todos |
 | `--change` | `bin/desk.mjs` `todoLine` | Todos |
 | `--tasks` | `bin/desk.mjs` `todoLine` | Todos |
@@ -92,6 +98,8 @@ Section names are README headings.
 | `--no-build` | `lib/wt.mjs` `wtNew` | Worktree flow |
 | `--no-wait` | `lib/wt.mjs` `finish` | Worktree flow |
 | `--rebased` | `lib/wt.mjs` `finish` | Worktree flow |
+| `--into` | `lib/wt.mjs` `mergeInto` | Worktree flow |
+| `--findings` | `lib/wt.mjs` `mergeReview` | Worktree flow |
 | `--force` | `lib/wt.mjs` `discard` | Worktree flow |
 | `--todo` | `lib/wt.mjs` `brief` | Streams |
 | `--desk` | `lib/wt.mjs` `brief` | Streams |
@@ -100,6 +108,7 @@ Section names are README headings.
 | `--dry-run` | `lib/wt.mjs` `stream` | Streams |
 | `--json` | `bin/desk.mjs` `tokens`; `scripts/friction-scan.mjs` | Tokens and overlaps, Commands |
 | `--session` | `bin/desk.mjs` `tokens` | Tokens and overlaps |
+| `--by-worktree` | `bin/desk.mjs` `tokens`, `worktreeMatcher` | Tokens and overlaps |
 | `--worktrees` | `lib/init.mjs` `init` | Commands |
 | `--harness` | `lib/init.mjs` `init` | Commands |
 | `--no-install` | `lib/init.mjs` `initCmd` | Commands |
@@ -113,6 +122,11 @@ Section names are README headings.
 | `CLAUDE_CODE_SESSION_ID` | `bin/desk.mjs` `me`, `tokens`; `lib/wt.mjs` `SESSION_ENV` | Environment variables |
 | `CLAUDE_PROJECT_DIR` | `scripts/subagent-context.mjs` | Environment variables |
 | `AGENT_DESK_COLD_GUARD` | `hooks/register.ts` `prompt.submit` | Cold-cache guard, Environment variables |
+| `AGENT_DESK_SETTINGS` | `lib/config.mjs` `userSettingsPath` | User settings, Environment variables |
+| `CLAUDE_CODE_EFFORT_LEVEL` | `lib/config.mjs` `resolveSettings` | User settings |
+| `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` | `lib/config.mjs` `resolveSettings` | User settings |
+| `CLAUDE_CODE_PROMPT_CACHE_TTL` | `lib/sync.mjs` `settings` | User settings |
+| `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` | `lib/sync.mjs` `settings` | User settings |
 | `CLAUDECODE` | `lib/wt.mjs` `SESSION_ENV` | Environment variables |
 | `CLAUDE_CODE_ENTRYPOINT` | `lib/wt.mjs` `SESSION_ENV` | Environment variables |
 | `CLAUDE_CODE_SSE_PORT` | `lib/wt.mjs` `SESSION_ENV` | Environment variables |
@@ -126,6 +140,8 @@ Section names are README headings.
 | `scratchDir` | `lib/config.mjs` `loadConfig`, `lib/wt.mjs` `stream` | Config reference |
 | `harnesses` | `lib/config.mjs`, `lib/sync.mjs` `sync` | Config reference |
 | `outputStyle` | `lib/config.mjs` `loadConfig`, `lib/sync.mjs` `claudeSettings`, `scripts/subagent-context.mjs` | Config reference |
+| `tasks` | `lib/config.mjs` `loadConfig`, `resolveSettings` | Config reference, User settings |
+| `floor` | `lib/config.mjs` `loadConfig`, `resolveSettings` | Config reference, User settings |
 | `permissions` | `lib/config.mjs`, `lib/sync.mjs` `claudeSettings` | Config reference |
 | `additionalDirectories` | `lib/sync.mjs` `claudeSettings` | Config reference |
 | `repos[].id` | `lib/config.mjs` `loadConfig` | Config reference |
@@ -134,6 +150,7 @@ Section names are README headings.
 | `repos[].gh` | `lib/config.mjs`, `bin/desk.mjs` `ghRuns`, `ghPrs` | Config reference |
 | `repos[].defaultBranch` | `lib/config.mjs` `baseRef` | Config reference |
 | `repos[].branchPrefix` | `lib/config.mjs`, `lib/wt.mjs` | Config reference |
+| `repos[].merge` | `lib/config.mjs` `loadConfig`, `lib/wt.mjs` `merge`, `lib/sync.mjs`, `bin/desk.mjs` `check` | Config reference |
 | `repos[].worktreePrefix` | `lib/config.mjs` `loadConfig`, `worktreeList` | Config reference |
 | `repos[].install` | `lib/wt.mjs` `wtNew` | Config reference |
 | `repos[].build` | `lib/wt.mjs` `wtNew` | Config reference |
@@ -147,22 +164,26 @@ Section names are README headings.
 | Auto-compaction prune | `hooks/register.ts` `session.compact`, `hooks/prune.ts` | Auto-compaction prune |
 | Warm-hold | `hooks/warmhold.ts` `tick`, `register.ts` `session.start`; status shown in the pane Warm row | Warm-hold (in a desk) |
 | keep-warm toggle | `hooks/pane.tsx` Warm row Button, `warm` atom, `Deps.off` | Warm-hold (in a desk) |
-| pane rows Style, Agents | `hooks/pane.tsx`, `register.ts` `prompt.compose`, minute tick `trackAgents` | Desk pane |
+| pane row Style, Work tab Agents | `hooks/pane.tsx`, `register.ts` `prompt.compose`, minute tick `trackAgents` | Desk pane |
+| pane attention colours | `hooks/pane.tsx` `quotaColor`, `prColor`, `worst`, `branchColor`, `ACCENT` | Desk pane |
+| pane branch rows, headline, overlaps | `hooks/pane.tsx` `branchState`, `branchNote`, `headline`, `overlapRows`; `hooks/prtext.mjs` `prText` (also `desk status`) | Desk pane |
 | Cold-cache guard | `hooks/warmhold.ts` `coldSend`, `register.ts` `prompt.submit` | Cold-cache guard |
 | Edit guard | `hooks/editguard.mjs` `verdict`, `register.ts` `tool.call` | Claude Code and GitHub Copilot |
-| `turn.complete` | `hooks/register.ts` `on('turn.complete')`: session meters, warm-hold arming | Session meters, Warm-hold (in a desk) |
-| `turn.step` | `hooks/register.ts` `on('turn.step')`: warm-hold request clock | Warm-hold (in a desk) |
-| `prompt.context` | `hooks/redact.ts` `on('prompt.context')`: secret scrub of first-message blocks | Secret redaction |
+| Merge guard | `hooks/mergeguard.mjs` `verdict`, `register.ts` `tool.call` | Merge policy |
+| turn.complete handler | `hooks/register.ts` `on('turn.complete')`: session meters, warm-hold arming | Session meters, Warm-hold (in a desk) |
+| turn.step handler | `hooks/register.ts` `on('turn.step')`: warm-hold request clock | Warm-hold (in a desk) |
+| prompt.context handler | `hooks/redact.ts` `on('prompt.context')`: secret scrub of first-message blocks | Secret redaction |
 | Desk pane | `hooks/pane.tsx` `startPane`, `registerPane`; `register.ts` `session.start`, `session.attach` | Desk pane |
 | owner-decisions band | `hooks/pane.tsx` `ui.render` `AbovePrompt` | Desk pane |
 | `/desk` | `hooks/pane.tsx` `command.run` desk | Desk pane |
-| `/decide` | `hooks/pane.tsx` `command.run` decide | Desk pane |
+| `/decide` | `hooks/pane.tsx` `command.run` decide, `runDecide` | Desk pane |
+| `Decide T-n` press | `hooks/pane.tsx` `ask`, `printedDecision`, `runDecide` | Desk pane |
 | status line | `hooks/meters.ts` `paint`, `line`, `bar` | Session meters |
 | `desk-status` schema | `schemas/desk-status.schema.json`, `lib/schema.mjs` `schemaTest` | Status watch |
 | Plan quota | `hooks/quota.ts` `quotaLine` | Session meters |
 | Context fullness | `hooks/meters.ts` `ctxLine` | Session meters |
 | Cache | `hooks/meters.ts` `cacheLine` | Session meters |
-| Secret redaction | `hooks/redact.ts` | Secret redaction |
+| Secret redaction | `hooks/redact.ts`, `hooks/secretpatterns.mjs` (also `lib/wt.mjs` `prBody`) | Secret redaction |
 | toast | `hooks/register.ts` (prune), `hooks/redact.ts` `redactPrompt` | Secret redaction, Auto-compaction prune |
 | notice | `hooks/redact.ts` `registerRedact` | Secret redaction |
 | `[REDACTED-SECRET-` | `hooks/redact.ts` `mint` | Secret redaction |
@@ -180,7 +201,7 @@ Section names are README headings.
 | 80% | `hooks/meters.ts` `CTX_HINT` | Session meters |
 | `desk-status` | `hooks/pane.tsx` `PANE` | Desk pane |
 | `quota-samples` (plugin store key) | `hooks/meters.ts` `QUOTA_KEY` | Session meters |
-| `types/index.d.ts` | `DeskStatus`, `DeskMeters`, `WarmState`, `AgentRow` atom shapes | Desk pane |
+| `types/index.d.ts` | `DeskStatus`, `DeskMeters`, `WarmState`, `AgentRow`, `tab` atom shapes | Desk pane |
 
 ## Scripts
 
@@ -188,7 +209,11 @@ Section names are README headings.
 |---|---|---|
 | `scripts/subagent-context.mjs` | SessionStart and SubagentStart hook | What is in the kit, Claude Code and GitHub Copilot |
 | `scripts/edit-guard.mjs` | PreToolUse hook script | What is in the kit, Claude Code and GitHub Copilot |
+| `scripts/merge-guard.mjs` | PreToolUse hook script (`--self-test`) | Merge policy |
 | `scripts/friction-scan.mjs` | transcript scan | What is in the kit |
+| `scripts/docs-check.mjs` | README and this file against the code; run by `npm test` | What is in the kit |
+| `npm run typecheck` | `scripts/typecheck-hooks.mjs`: developer type check of `hooks/` | Versioning and upgrade |
+| `hooks/tsconfig.json` | compiler settings for `npm run typecheck` (hooks and their tests, strict, `noUncheckedIndexedAccess`) | Versioning and upgrade |
 | `scripts/release.mjs bump` | `scripts/release.mjs` `bump` | Versioning and upgrade |
 | `scripts/release.mjs notes` | `scripts/release.mjs` `notes` | Versioning and upgrade |
 | `scripts/release.mjs publish` | `scripts/release.mjs` `publish`: one commit from the tag's tree on the public `main`, with the tag | Versioning and upgrade |
@@ -210,8 +235,13 @@ Section names are README headings.
 | `reviewer` | `agents/reviewer.md` | What is in the kit |
 | `verifier` | `agents/verifier.md` | What is in the kit |
 | `archiver` | `agents/archiver.md` | What is in the kit |
+| `scribe` | `agents/scribe.md` | What is in the kit |
+| `ci-triage` | `agents/ci-triage.md` | What is in the kit |
 | `templates/AGENTS.md` | `lib/init.mjs` `init` | What is in the kit |
-| `schemas/*.schema.json` | `lib/schema.mjs` `deskFileWarnings` | What is in the kit, Commands |
+| `schemas/desk-config.schema.json` | `lib/schema.mjs` `deskFileWarnings` | What is in the kit, Commands |
+| `schemas/todo.schema.json` | `lib/schema.mjs` `deskFileWarnings` | What is in the kit, Commands |
+| `schemas/board.schema.json` | `lib/schema.mjs` `deskFileWarnings` | What is in the kit, Commands |
+| `schemas/decisions.schema.json` | `lib/schema.mjs` `deskFileWarnings` | What is in the kit, Commands |
 | `templates/agent-rules.md` | `lib/init.mjs` `init`, read by `scripts/subagent-context.mjs` | What is in the kit |
 | `.claude-plugin/plugin.json` | plugin manifest | What is in the kit |
 | `.claude-plugin/marketplace.json` | marketplace entry | What is in the kit |
@@ -227,7 +257,7 @@ Section names are README headings.
 | `decisions.jsonl` | `lib/init.mjs`, `bin/desk.mjs` `decide`, `lib/sync.mjs` `migrateDesk` | Quickstart, Owner decisions |
 | `NEXT.md.bak` | `lib/sync.mjs` `migrateDesk` | Versioning and upgrade |
 | `agent-rules.md` | `lib/init.mjs` | Quickstart |
-| `todo.jsonl` | `lib/init.mjs`, `bin/desk.mjs` | Todos |
+| `todo.jsonl` | `lib/init.mjs`, `bin/desk.mjs`; `lib/tidy.mjs` appends | Todos, Tidy |
 | `board.jsonl` | `lib/init.mjs`, `bin/desk.mjs` | Board |
 | `.gitignore` | `lib/init.mjs` | Quickstart |
 | `.code-workspace` | `lib/sync.mjs` `workspace` | Quickstart |
@@ -241,10 +271,12 @@ Section names are README headings.
 | `.github/skills/<name>/` | `lib/sync.mjs` `syncCopilot` | Claude Code and GitHub Copilot |
 | `.github/agents/<name>.agent.md` | `lib/sync.mjs` `copilotAgent` | Claude Code and GitHub Copilot |
 | `.github/hooks/agent-desk.json` | removed by `syncCopilot` | Claude Code and GitHub Copilot |
-| `streams/` | `bin/desk.mjs` `summary`, `lib/wt.mjs` `dropStream` | Board |
-| `<slug>-prompt.txt` | `lib/wt.mjs` `stream` | Streams |
+| `streams/` | `bin/desk.mjs` `summary`, `lib/wt.mjs` `dropStream`; `lib/tidy.mjs` deletes | Board, Tidy |
+| `<slug>-prompt.txt` | `lib/wt.mjs` `stream`; `lib/tidy.mjs` deletes (with the `<slug>-run.jsonl` logs in `scratchDir`) | Streams, Tidy |
 | `<slug>-run.jsonl` | `lib/wt.mjs` `stream` | Streams |
 | `.claude/settings.json` | carried by `lib/sync.mjs` `deskShared` | Quickstart |
+| `~/.agent-desk/settings.json` | read only, `lib/config.mjs` `readUserSettings` | User settings |
+| `user-settings.schema.json` | `lib/schema.mjs` `schemaTest` | User settings |
 | `notes.md` | `.github/workflows/release.yml` (CI scratch file, the release body) | Versioning and upgrade |
 
 ## Status screen sections and watch lines
@@ -252,6 +284,7 @@ Section names are README headings.
 | item | where in code | README section |
 |---|---|---|
 | Owner decisions waiting | `bin/desk.mjs` `statusText` | Status watch |
+| User settings | `bin/desk.mjs` `statusText`, `statusData` field `user`; `lib/config.mjs` `userLayer` | User settings |
 | Active todos | `bin/desk.mjs` `statusText` | Status watch |
 | Running sessions | `bin/desk.mjs` `statusText` | Status watch |
 | Open branches | `bin/desk.mjs` `statusText` | Status watch |
@@ -267,11 +300,11 @@ Section names are README headings.
 
 ## README check
 
-Run from the repository root. It prints each item the README does not contain, and nothing when
-every item is there.
+`node scripts/docs-check.mjs` (run by `npm test`) prints each gap and exits 1 on any. It checks that:
 
-```sh
-sed -n 's/^| `\([^`]*\)` |.*/\1/p;s/^| \([^`|][^|]*[^ |]\) |.*/\1/p' openspec/inventory.md \
-  | grep -vE '^(item|-+)$' \
-  | while IFS= read -r item; do grep -qF -- "$item" README.md || echo "MISS: $item"; done
-```
+- the README's relative links resolve and its Node version matches `engines`
+- the README's Commands table lists every command, action and flag the code has, and nothing else
+- each row of this file whose first column starts with a backtick is a literal in the README
+- every command, action and flag of the code is in this file's first column
+
+A first column that does not start with a backtick (a name or a label) is not checked.

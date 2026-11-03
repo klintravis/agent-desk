@@ -13,6 +13,8 @@ default `agent/<slug>`). The desk's agent rules reach you through the SubagentSt
    exit 1 means another session holds the worktree: stop and report.
 2. Read the worktree's own instructions (`CLAUDE.md`, `AGENTS.md`, contributing docs) and the todo
    (`desk todo show T-n`). If the repo uses a spec workflow (OpenSpec, ADRs, design docs), follow it.
+   Start from the files the brief or task list names; explore only what they leave open. Find a docs
+   section with grep or the repo's inventory, don't read a long doc whole.
 3. Add or update a test for every behaviour you change, where the repo has tests. Docs ship in the
    same branch: a changed command, option, config field or install step needs matching docs.
 4. The repo's check command (`check` in the desk's `desk.config.json`, or the one its docs name)
@@ -20,4 +22,5 @@ default `agent/<slug>`). The desk's agent rules reach you through the SubagentSt
 5. Commit with a message in the repo's style, ending with the Co-Authored-By trailer you were given.
    Do not push; the orchestrator runs `desk wt finish`.
 
-Report: what is done, files changed, the check result, anything you skipped or are unsure of.
+Report in about 20 lines, plus the raw output of any verify command the brief asks for: what is done,
+files changed, the check result, anything you skipped or are unsure of.

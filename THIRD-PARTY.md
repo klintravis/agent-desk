@@ -9,7 +9,7 @@ The vendored Ponytail skills keep their own `skills/ponytail/LICENSE` and `UPSTR
 | `hooks/warmhold.ts` (cold-cache guard, auto-arm after a cold write) | cache-tax | Copyright (c) 2026 Karan Bansal |
 | `hooks/meters.ts` `ctxLine` (context fullness) | context-lens 0.1.0, github.com/Arunjay4213/claude-mods | Arunjay. MIT per the plugin's `plugin.json`; the repo has no LICENSE file. |
 | `hooks/meters.ts` `cacheLine` (cache hit) | token-ledger 0.1.0, github.com/Arunjay4213/claude-mods | Arunjay. MIT per the plugin's `plugin.json`; the repo has no LICENSE file. |
-| `hooks/redact.ts` (secret redaction) | secret-redactor 1.0.0, github.com/ray-amjad/awesome-claude-code-function-hooks | Copyright (c) 2026 Ray Amjad |
+| `hooks/redact.ts`, `hooks/secretpatterns.mjs` (secret redaction) | secret-redactor 1.0.0, github.com/ray-amjad/awesome-claude-code-function-hooks | Copyright (c) 2026 Ray Amjad |
 | `bin/desk.mjs` `ghPrs`, `prState` (PR review state in `desk status`) | pr-pulse 0.1.0 | Copyright (c) 2026 Gerric Chaplin |
 
 The MIT license, as it applies to each port above:

@@ -136,11 +136,14 @@ plain JSON SHALL be left unchanged with exit code 1.
 - **THEN** it survives the rewrite
 
 ### Requirement: Plumbing hidden in VS Code
-`desk sync` and `desk workspace` SHALL add `files.exclude` entries set to `true` to the desk folder's `.vscode/settings.json` for `desk`, `desk.cmd`, `node_modules`, `package.json`, `package-lock.json`, `.github`, `.claude`, `.gitignore`, `*.code-workspace` and `NEXT.md.bak`. They SHALL keep every other key and every `files.exclude` entry already present (a `false` included), write nothing when all are present, skip `.claude` when the desk keeps its rules at `.claude/agent-rules.md`, and leave a file that is not plain JSON unchanged with a warning and without failing the command. They SHALL NOT put the excludes in the `.code-workspace` file.
+`desk sync` and `desk workspace` SHALL add `files.exclude` entries set to `true` to the desk folder's `.vscode/settings.json` for `desk`, `desk.cmd`, `node_modules`, `package.json`, `package-lock.json`, `.github`, `.claude`, `.gitignore`, `*.code-workspace` and `NEXT.md.bak`. They SHALL skip `.claude` when the desk keeps its rules at `.claude/agent-rules.md`, and SHALL NOT put the excludes in the `.code-workspace` file.
 
 #### Scenario: Excludes written
 - **WHEN** `desk sync` runs and `.vscode/settings.json` is missing
 - **THEN** it holds `files.exclude` with the ten entries `true`
+
+### Requirement: VS Code settings kept
+For the desk folder's `.vscode/settings.json`, `desk sync` and `desk workspace` SHALL keep every other key and every `files.exclude` entry already present (a `false` included), write nothing when all are present, and leave a file that is not plain JSON unchanged with a warning and without failing the command.
 
 #### Scenario: User choice kept
 - **WHEN** the file has another key and `"package.json": false`
@@ -154,10 +157,7 @@ The kit copied from SHALL be the desk's `node_modules/agent-desk` when present, 
 - **THEN** the hook commands point into the running kit's `scripts/`
 
 ### Requirement: Migrate NEXT.md
-A sync with no arguments SHALL turn each item of `NEXT.md`'s `## Rulings recorded` section into a
-`decisions.jsonl` record (`source` `NEXT.md`) and each item of `## Not yet verified live` into an open
-todo with area `watch` (first 160 characters as title, full text as `why`), then rename `NEXT.md` to
-`NEXT.md.bak`. It SHALL be idempotent and SHALL never overwrite an existing `NEXT.md.bak`.
+A sync with no arguments SHALL turn each item of `NEXT.md`'s `## Rulings recorded` section into a `decisions.jsonl` record (`source` `NEXT.md`) and each item of `## Not yet verified live` into an open todo with area `watch` (first 160 characters as title, full text as `why`), then rename `NEXT.md` to `NEXT.md.bak`. A watch item naming exactly one open todo SHALL move that todo to `watch` instead. It SHALL be idempotent and SHALL never overwrite an existing `NEXT.md.bak`.
 
 #### Scenario: Migrated
 - **WHEN** a full `desk sync` runs in a desk with `NEXT.md` holding two rulings and one watch item
@@ -172,6 +172,22 @@ todo with area `watch` (first 160 characters as title, full text as `why`), then
 - **WHEN** a ruling item is `- Owner, 2026-11-01 (T-40): drop NEXT.md`
 - **THEN** its record has `date` `2026-11-01`, `todo` `T-40` and the whole item as `text`
 - **AND** an item with no date gets no `date` field
+
+#### Scenario: Watch item names an open todo
+- **WHEN** a watch item names only `T-26` and T-26 is open in area `plugin`
+- **THEN** T-26 moves to area `watch` with the item as a note, and no new todo is added
+- **AND** it prints `moved T-26 to watch; if the item only cites it: desk todo set T-26 --area plugin`, once per moved todo
+- **AND** an active or blocked todo moves the same way
+- **AND** a second run changes nothing and prints no such line, also when the printed command moved the todo back
+
+#### Scenario: Todo already in watch
+- **WHEN** a watch item names only a todo that is already in area `watch`
+- **THEN** no new todo is added and the item is added as a note unless that note is already there, so a second item for one todo is kept
+- **AND** it prints no moved line, as for a second item for a todo the first item moved
+
+#### Scenario: Other ids
+- **WHEN** a watch item names a done, dropped or missing todo, an `owner` or `idea` todo, or several ids
+- **THEN** a new `watch` todo is added as for an item with no id
 
 #### Scenario: Second run
 - **WHEN** `desk sync` runs again
@@ -212,14 +228,26 @@ The migration SHALL NOT migrate `NEXT.md` sections other than `## Rulings record
 `## Not yet verified live` (Work, Efficiency notes, Waiting on the owner, free text). They stay in
 `NEXT.md.bak`, and the summary line SHALL name each such `## ` section whose body is non-blank, plus
 `preamble` when the text before the first `## ` holds more than the `# ` title and one paragraph.
-A migrated section SHALL be named too when a non-blank line in it was not migrated (a lead-in line, a
-second paragraph, a subheading) or an item was cut at 1000 characters. A ruling's `todo` SHALL come only
-from the `Owner, <date> (T-<n>):` prefix `desk decide` writes.
 
 #### Scenario: Other sections named
 - **WHEN** `NEXT.md` has a non-blank `## Work`, a non-blank `## Efficiency notes`, an empty `## Waiting on the owner` and a sha paragraph after the intro
 - **THEN** the summary ends with `(NEXT.md.bak keeps: preamble, Work, Efficiency notes)`
 - **AND** none of their text is written to `decisions.jsonl` or `todo.jsonl`
+
+### Requirement: Migrated sections named when partly kept
+A migrated section SHALL be named in the migration summary too when a non-blank line in it was not migrated (a lead-in line, a
+second paragraph, a subheading) or an item was cut at 1000 characters.
+
+#### Scenario: Migrated section partly kept
+- **WHEN** a migrated section holds a non-blank line that was not migrated, or an item was cut at 1000 characters
+- **THEN** the summary names that section
+
+### Requirement: Ruling todo from the prefix
+A ruling's `todo` SHALL come only from the `Owner, <date> (T-<n>):` prefix `desk decide` writes.
+
+#### Scenario: Prefix only
+- **WHEN** a migrated ruling item has no `Owner, <date> (T-<n>):` prefix
+- **THEN** its `todo` is not taken from any other text
 
 ### Requirement: Patch AGENTS.md
 A sync with no arguments SHALL replace each line of the desk's `AGENTS.md` that is identical
@@ -244,3 +272,81 @@ patch SHALL be idempotent.
 #### Scenario: Partial sync leaves it
 - **WHEN** `desk sync ../wt` runs
 - **THEN** `AGENTS.md` is untouched
+
+### Requirement: User layer never committed
+The user file SHALL have no effect on any file git tracks or could commit. `desk sync` and `desk wt new` SHALL write user values only as the `cache` keys in `.claude/settings.local.json`, and `.claude/synced-permissions.json` SHALL hold their names only. `syncCopilot` SHALL NOT read the user file.
+
+#### Scenario: Nothing to commit after a sync
+- **WHEN** a desk with the `claude` and `copilot` harnesses, its repo and a worktree are synced and committed, a user file with distinctive `tasks` and `cache` values is added, and `desk sync` runs again
+- **THEN** `git status --porcelain` is empty in the desk, the repo and the worktree
+- **AND** `.claude/settings.local.json` in each holds the `cache` values
+
+#### Scenario: Copilot files identical
+- **WHEN** `desk sync` runs with and without a user file
+- **THEN** `.github/agents/*.agent.md` and `.github/skills/` are byte-identical
+- **AND** the `model` and `reasoning-effort` of each agent file come from kit frontmatter
+
+#### Scenario: Task values written nowhere
+- **WHEN** a user file sets `tasks` and `desk sync` runs
+- **THEN** no file written by the sync holds them
+
+#### Scenario: Record holds names only
+- **WHEN** a full sync writes user cache keys
+- **THEN** `.claude/synced-permissions.json` lists the key names under `user`, apart from what the desk carries, and none of the values
+
+### Requirement: User cache keys in local settings
+`desk sync` and `desk wt new` SHALL overlay the user file's `cache` keys on the keys written to `.claude/settings.local.json` of the desk folder, each checkout and each worktree, above the desk's carried keys. They SHALL do so only where `git check-ignore` reports the file ignored or the folder is not in a git work tree. A malformed user file SHALL write nothing from the user layer and SHALL NOT fail the sync.
+
+#### Scenario: User beats the desk
+- **WHEN** the desk's `.claude/settings.json` sets `promptCacheTtl` to `1h` and the user file sets `5m`
+- **THEN** each `.claude/settings.local.json` holds `5m`
+- **AND** the desk's `.claude/settings.json` is unchanged
+
+#### Scenario: Other keys kept
+- **WHEN** a `.claude/settings.local.json` holds a key the user added by hand
+- **THEN** that key survives the overlay
+
+#### Scenario: Value removed
+- **WHEN** a key is removed from the user file and a full `desk sync` runs
+- **THEN** a checkout's file holds the desk's carried value, or no key if the desk has none
+- **AND** the desk folder's file holds no such key, so its `.claude/settings.json` applies again
+
+#### Scenario: Partial sync
+- **WHEN** `desk sync <path>` runs
+- **THEN** the user's cache keys are written to that path and the record file is unchanged
+
+#### Scenario: Tracked settings file
+- **WHEN** a repo tracks `.claude/settings.local.json`
+- **THEN** no user value is written to that file and a warning names it
+- **AND** the rest of the sync proceeds
+
+#### Scenario: Tracked key outlives the user's name
+- **WHEN** a repo's tracked `.claude/settings.local.json` holds a key, the record lists that name from the user file, and the key is removed from the user file or its `cache` is emptied
+- **THEN** the next full `desk sync` leaves the key in that file and `git status --porcelain` empty there
+- **AND** the key leaves a checkout's ignored file
+
+#### Scenario: Malformed user file
+- **WHEN** the user file does not parse and `desk sync` runs
+- **THEN** it warns, writes the carried keys as usual and exits as it would without the file
+
+### Requirement: Deny config edits under review
+With the `claude` harness, when any repo has `merge: "review"`, `desk sync` SHALL add permission rules to `permissions.deny` in the settings files it writes, denying Claude's file-edit tools on the desk's `desk.config.json`. When no repo has it, the rules SHALL be absent.
+
+#### Scenario: Review repo present
+- **WHEN** `desk sync` runs on a desk with a `review` repo
+- **THEN** each written `.claude/settings.local.json` denies the file-edit tools on that file, and the desk's own permissions are kept
+
+#### Scenario: Switching back
+- **WHEN** the last `review` repo returns to `direct` and `desk sync` runs
+- **THEN** the rules are gone and the user's own rules are kept
+
+#### Scenario: Direct desk
+- **WHEN** every repo is `direct`
+- **THEN** the written files are the same as before this requirement
+
+### Requirement: Sync output under review
+`desk sync` SHALL print one line per `review` repo naming the policy, the deny, and that the default branch needs protecting on the server. It SHALL print no such line for a `direct` repo.
+
+#### Scenario: One review repo
+- **WHEN** a desk has one `review` repo and one `direct` repo
+- **THEN** one `merge` line is printed, for the `review` repo

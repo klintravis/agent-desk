@@ -9,6 +9,28 @@
     "scratchDir": { "type": "string", "minLength": 1 },
     "harnesses": { "type": "array", "items": { "enum": ["claude", "copilot"] } },
     "outputStyle": { "type": "string" },
+    "tasks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "model": { "enum": ["haiku", "sonnet", "opus", "fable"] },
+          "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] }
+        }
+      }
+    },
+    "floor": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "model": { "enum": ["haiku", "sonnet", "opus"] },
+          "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] }
+        }
+      }
+    },
     "permissions": {
       "type": "object",
       "properties": {
@@ -30,6 +52,7 @@
           "gh": { "type": "string" },
           "defaultBranch": { "type": "string", "minLength": 1 },
           "branchPrefix": { "type": "string" },
+          "merge": { "enum": ["direct", "review"] },
           "worktreePrefix": { "type": "string" },
           "install": { "type": "string" },
           "build": { "type": "string" },

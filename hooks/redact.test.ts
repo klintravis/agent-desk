@@ -78,7 +78,7 @@ test('redact: two distinct values never share a placeholder, and each restores t
   const tags = values.map((v) => scrub(`ip ${v}`).slice(3))
   expect(tags.every((t) => TAG.test(t))).toBe(true)
   expect(new Set(tags).size).toBe(values.length)
-  values.forEach((v, i) => expect(restore(tags[i])).toBe(v))
+  values.forEach((v, i) => expect(restore(tags[i]!)).toBe(v))
 })
 
 test('redact: the walker reads data objects and withholds what is too deep or too large', async ($, on) => {
@@ -109,7 +109,7 @@ test('a tool result is redacted, its placeholder restored in the next tool input
   const key = `${'gh' + 'p_'}${rnd(36)}`
   const seen: string[] = []
   on('process.run', () => ({ value: { exitCode: 0, stdout: '/desk', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
-  on('clock.every', () => ({ value: () => {} }))
+  on('clock.every', () => ({ value: undefined }))
   on('clock.now', () => ({ value: 0 }))
   on('ui.notice', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
@@ -154,7 +154,7 @@ test('Agent, SendMessage and AskUserQuestion keep placeholders; deny and context
 test('a toast that throws does not let the prompt through unredacted', async ($, on) => {
   const key = `${'gh' + 'p_'}${rnd(36)}`
   on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
-  on('clock.every', () => ({ value: () => {} }))
+  on('clock.every', () => ({ value: undefined }))
   on('clock.now', () => ({ value: 0 }))
   on('store.get', () => ({ value: undefined }))
   on('ui.toast', () => { throw new Error('no ui') })

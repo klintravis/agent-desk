@@ -117,7 +117,7 @@ test('cold guard: warns by default, refuse drops only the first send per cold sp
 test('in a desk the first cold send is logged, or dropped under AGENT_DESK_COLD_GUARD=refuse', async ($, on) => {
   const at = { t: 0 }, logs: string[] = [], env: Record<string, string> = {}
   on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
-  on('clock.every', () => ({ value: () => {} }))
+  on('clock.every', () => ({ value: undefined }))
   on('clock.now', () => ({ value: at.t }))
   on('store.get', () => ({ value: undefined }))
   on('env.get', (_$, e) => ({ value: env[e.name] }))
@@ -147,7 +147,7 @@ test('a resumed session (context at start) is cold until its first main request,
 test('in a desk, a send into a session that started with a big context warns at once', async ($, on) => {
   const logs: string[] = []
   on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
-  on('clock.every', () => ({ value: () => {} }))
+  on('clock.every', () => ({ value: undefined }))
   on('clock.now', () => ({ value: 5 * 60e3 }))
   on('store.get', () => ({ value: undefined }))
   on('env.get', () => ({ value: undefined }))

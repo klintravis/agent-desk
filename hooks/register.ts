@@ -1,6 +1,7 @@
-import type { Register, SessionCompacted } from 'claude-code'
+import type { EngineInterface as Engine, Register, SessionCompacted } from 'claude-code'
 
 import { reason, verdict } from './editguard.mjs'
+import { mentions } from './mergeguard.mjs'
 import { addTurn, meter, startMeters } from './meters'
 import { inDesk, recordStyle, registerPane, setWhy, startPane, trackAgents, warmOff } from './pane'
 import { prune } from './prune'
@@ -10,6 +11,15 @@ import { AUTO_WARM, coldSend, mainRequest, mainTurn, newHold, tick, TICK } from 
 // Below this the cut is not worth it; the engine's summary runs instead.
 export const MIN_SAVING = 0.3
 const ACTIVE = new Set(['pending', 'running'])
+
+// The script's own folder is the session root: a subagent's worktree sits outside the desk, so findDesk cannot walk up from it.
+// A declaration, not an arrow: the engine follows $ across a call only into a function declaration.
+async function mergeDenial($: Engine, tool: string, command: string): Promise<string | null> {
+  if (!mentions(command)) return null
+  const stdin = JSON.stringify({ cwd: await $.session.cwd(), tool_name: tool, tool_input: { command } })
+  const p = await $.process.run(['node', `${$.plugin.root}/scripts/merge-guard.mjs`], { cwd: await $.session.root(), stdin, timeoutMs: 15_000 })
+  return JSON.parse(p.stdout).hookSpecificOutput?.permissionDecisionReason ?? null
+}
 
 export const register: Register = (on) => {
   // Prune: on automatic compaction, in the main session and in subagents, cut re-readable tool
@@ -126,6 +136,17 @@ export const register: Register = (on) => {
     let why: string | null = null
     try { why = desk ? verdict(e.command) : null } catch {}
     return why ? { deny: reason(why) } : next(e)
+  })
+
+  // Merge guard: under merge "review", no push or merge into a protected branch (scripts/merge-guard.mjs,
+  // on both shell tools: PowerShell is the main shell on Windows). Fails open, like the edit guard.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const why = desk ? await mergeDenial($, 'Bash', e.command).catch(() => null) : null
+    return why ? { deny: why } : next(e)
+  })
+  on('tool.call', { tool: 'PowerShell' }, async ($, e, next) => {
+    const why = desk ? await mergeDenial($, 'PowerShell', e.command).catch(() => null) : null
+    return why ? { deny: why } : next(e)
   })
 
   registerPane(on)

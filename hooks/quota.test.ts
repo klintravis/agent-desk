@@ -37,7 +37,7 @@ test('the status line carries the quota after a turn, outside a desk too', async
   const shown: (string | undefined)[] = []
   const stored: Record<string, unknown> = {}
   on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
-  on('clock.every', () => ({ value: () => {} }))
+  on('clock.every', () => ({ value: undefined }))
   on('clock.now', () => ({ value: Date.parse('2026-11-01T02:00:00Z') }))
   on('store.get', (_$, e) => ({ value: stored[e.key] }))
   on('store.set', (_$, e) => { stored[e.key] = e.value; return { value: undefined } })

@@ -11,6 +11,10 @@ export const BIN = join(KIT, 'bin', 'desk.mjs');
 // realpath: macOS hands out /var/... for a /private/var/... folder, and git reports the real one.
 export const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'agent-desk-')));
 
+// Outside every desk, repo and worktree a test makes, and never created: no test, in this process or a
+// child (process.env is what they all inherit), reads a real user file.
+export const NO_USER_SETTINGS = join(tmp(), 'settings.json');
+process.env.AGENT_DESK_SETTINGS = NO_USER_SETTINGS;
 export const env = (home) => ({
   ...process.env, DESK_HOME: home, CLAUDE_CODE_SESSION_ID: 'testsess',
   GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid',

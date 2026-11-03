@@ -42,6 +42,7 @@ test('auto compaction cuts re-readable output and keeps the rest word for word',
   const r = await $.session.compact({ trigger: 'auto', messages: before })
 
   expect(seen.length).toBe(0) // the engine's summary never ran
+  if (r.messages === undefined) throw new Error('compaction was skipped')
   const results = r.messages?.[2]?.toolResults ?? []
   const text = (id: string) => results.find((x) => x.tool_use_id === id)?.text ?? ''
   expect(text('read').length < 1000).toBe(true)

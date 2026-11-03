@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, cpSync, rmSync, renameSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { copilotAgent, parseFrontmatter, claudeSettings, mergeSettings, AGENTS_PATCH, parseNext } from '../lib/sync.mjs';
 import { ghName } from '../lib/init.mjs';
+import { fold } from '../bin/desk.mjs';
 import { multiDesk, desk, git, tmp, KIT, BIN, env } from './helpers.mjs';
 
 const KIT_VERSION = JSON.parse(readFileSync(join(KIT, 'package.json'), 'utf8')).version;
@@ -26,6 +28,15 @@ test('every kit agent converts with a name and a description', () => {
     const { meta } = parseFrontmatter(copilotAgent(readFileSync(join(KIT, 'agents', f), 'utf8')));
     assert.ok(JSON.parse(meta.name) && JSON.parse(meta.description), f);
   }
+});
+
+test('ci-triage cannot edit: Claude tools and their Copilot form', () => {
+  const src = readFileSync(join(KIT, 'agents', 'ci-triage.md'), 'utf8');
+  const { meta } = parseFrontmatter(src);
+  assert.equal(meta.tools, 'Read, Grep, Glob, Bash');
+  assert.equal(meta.model, 'haiku');
+  assert.equal(meta.effort, 'low');
+  assert.deepEqual(JSON.parse(parseFrontmatter(copilotAgent(src)).meta.tools), ['read', 'search', 'execute']);
 });
 
 test('claudeSettings: DESK_HOME plus the desk and worktrees readable, user permissions kept', () => {
@@ -281,7 +292,15 @@ test('sync: Claude settings per checkout, Copilot files in the desk only, worksp
   assert.ok(!existsSync(join(root, 'notes', '.claude')), 'a plain folder gets no settings file');
   assert.equal(git(join(root, 'a'), 'status', '--porcelain'), '', 'settings ignored via info/exclude');
   for (const s of readdirSync(join(KIT, 'skills'))) assert.ok(existsSync(join(home, '.github', 'skills', s, 'SKILL.md')), s);
-  for (const a of ['archiver', 'implementer', 'reviewer', 'verifier']) assert.ok(existsSync(join(home, '.github', 'agents', `${a}.agent.md`)), a);
+  for (const a of ['archiver', 'ci-triage', 'implementer', 'reviewer', 'scribe', 'verifier']) assert.ok(existsSync(join(home, '.github', 'agents', `${a}.agent.md`)), a);
+  const scribe = parseFrontmatter(readFileSync(join(KIT, 'agents', 'scribe.md'), 'utf8')).meta;
+  assert.deepEqual([scribe.model, scribe.effort], ['haiku', 'low']);
+  const scribeCopilot = readFileSync(join(home, '.github', 'agents', 'scribe.agent.md'), 'utf8');
+  assert.match(scribeCopilot, /reasoning-effort: "low"/);
+  assert.doesNotMatch(scribeCopilot, /^model:/m);
+  assert.match(scribeCopilot, /^tools: \["read", "search", "edit", "execute"\]$/m);
+  assert.equal(parseFrontmatter(readFileSync(join(KIT, 'agents', 'archiver.md'), 'utf8')).meta.model, 'sonnet');
+  assert.match(readFileSync(join(KIT, 'skills', 'orchestrate', 'SKILL.md'), 'utf8'), /\| `scribe` \| haiku \| low \|/);
   assert.ok(!existsSync(join(home, '.github', 'hooks')), 'no second hook source: Copilot reads the settings hooks');
   const sl = (p) => p.replace(/\\/g, '/'), kitCtx = sl(join(KIT, 'scripts', 'subagent-context.mjs'));
   for (const d of [home, join(root, 'worktrees', 'a-demo')]) {
@@ -374,14 +393,245 @@ test('mergeSettings: a null or string record of synced permissions removes nothi
   assert.deepEqual(mergeSettings(user, claudeSettings({ home: '/d', worktreesDir: '/w' }), null).permissions.allow, ['Bash(mine)']);
 });
 
-test('desk check on a kit without test/ (the npm-installed copy) skips the kit tests and exits 0', () => {
+const shippedKit = () => {
   const kit = join(tmp(), 'agent-desk');
   for (const d of [...JSON.parse(readFileSync(join(KIT, 'package.json'), 'utf8')).files, 'package.json']) {
     if (existsSync(join(KIT, d))) cpSync(join(KIT, d), join(kit, d), { recursive: true });
   }
-  const r = spawnSync(process.execPath, [join(kit, 'bin', 'desk.mjs'), 'check'], { cwd: tmp(), env: { ...process.env, DESK_HOME: '' }, encoding: 'utf8', timeout: 400e3 });
+  return kit;
+};
+
+test('desk check on a kit without test/ (the npm-installed copy) skips the kit tests and exits 0', () => {
+  const r = spawnSync(process.execPath, [join(shippedKit(), 'bin', 'desk.mjs'), 'check'], { cwd: tmp(), env: { ...process.env, DESK_HOME: '' }, encoding: 'utf8', timeout: 400e3 });
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
   assert.match(r.stdout, /skip kit tests: not shipped/);
+});
+
+test('desk check warns about the user layer and keeps its exit code', () => {
+  const { home } = multiDesk(), kit = shippedKit();
+  // Only node on PATH: the plugin checks skip, so this stays quick.
+  const check = (file) => spawnSync(process.execPath, [join(kit, 'bin', 'desk.mjs'), 'check'], { cwd: home, env: { ...env(home), AGENT_DESK_SETTINGS: file, PATH: dirname(process.execPath), Path: dirname(process.execPath) }, encoding: 'utf8', timeout: 400e3 });
+  const active = userFile({ tasks: { review: { effort: 'medium' } } }), active_ = check(active);
+  assert.equal(active_.status, 0, `${active_.stdout}\n${active_.stderr}`);
+  assert.ok(active_.stdout.split('\n').some((l) => l.startsWith('warn user settings active') && l.includes(active)), active_.stdout);
+  const bad = check(userFile('{nope'));
+  assert.equal(bad.status, 0, `${bad.stdout}\n${bad.stderr}`);
+  assert.match(bad.stdout, /^warn .*not valid JSON/m);
+  assert.doesNotMatch(bad.stdout, /user settings active/);
+});
+
+// ---- merge "review": the deny on desk.config.json ----
+test('claudeSettings: the deny under review, in the form the permission docs give for an absolute path', () => {
+  const deny = (home, repos, permissions) => claudeSettings({ home, worktreesDir: '/w', repos, permissions }).permissions.deny;
+  const review = [{ id: 'a' }, { id: 'b', merge: 'review' }];
+  assert.deepEqual(deny('C:\\Desk\\d', review), ['Edit(//c/Desk/d/desk.config.json)']);
+  assert.deepEqual(deny('/home/me/d', review), ['Edit(//home/me/d/desk.config.json)']);
+  assert.deepEqual(deny('/d', review, { deny: ['Bash(rm:*)'] }), ['Bash(rm:*)', 'Edit(//d/desk.config.json)']);
+  const direct = { home: '/d', worktreesDir: '/w', repos: [{ id: 'a' }, { id: 'b', merge: 'direct' }] };
+  assert.deepEqual(claudeSettings(direct), claudeSettings({ ...direct, repos: [{ id: 'a' }] }), 'direct writes what a desk without the key writes');
+  assert.equal(claudeSettings(direct).permissions.deny, undefined);
+});
+
+test('desk sync: the deny and one line per review repo come and go; the user keeps their own rule', () => {
+  const { home } = multiDesk();
+  const merge = (value) => {
+    const file = join(home, 'desk.config.json'), cfg = JSON.parse(readFileSync(file, 'utf8'));
+    cfg.repos.find((r) => r.id === 'a').merge = value;
+    writeFileSync(file, JSON.stringify(cfg, null, 2));
+  };
+  const LINE = /^merge {3}a: review; edits to desk\.config\.json denied for Claude; protect main on the server$/m;
+  const local = join(home, '.claude', 'settings.local.json');
+  const denied = () => JSON.parse(readFileSync(local, 'utf8')).permissions.deny ?? [];
+  const before = ok(desk(home, 'sync'));
+  assert.doesNotMatch(before, /^merge /m);
+  assert.deepEqual(denied(), []);
+  const user = JSON.parse(readFileSync(local, 'utf8'));
+  writeFileSync(local, JSON.stringify({ ...user, permissions: { ...user.permissions, deny: ['Read(./secret)'] } }));
+  merge('review');
+  assert.match(ok(desk(home, 'sync')), LINE);
+  const rule = denied().find((r) => r.startsWith('Edit('));
+  assert.match(rule, /^Edit\(\/\/.*\/desk\.config\.json\)$/);
+  assert.ok(denied().includes('Read(./secret)'));
+  merge('direct');
+  assert.doesNotMatch(ok(desk(home, 'sync')), /^merge /m);
+  assert.deepEqual(denied(), ['Read(./secret)']);
+});
+
+test('desk check: direct prints nothing new and asks gh nothing; review warns and keeps the exit code', () => {
+  const { home } = multiDesk(), kit = shippedKit(), answers = join(tmp(), 'gh.json');
+  writeFileSync(answers, '{}');
+  const stub = pathToFileURL(join(KIT, 'test', 'gh-stub.mjs')).href;
+  const set = (fields) => {
+    const file = join(home, 'desk.config.json'), cfg = JSON.parse(readFileSync(file, 'utf8'));
+    Object.assign(cfg.repos.find((r) => r.id === 'a'), fields);
+    writeFileSync(file, JSON.stringify(cfg, null, 2));
+  };
+  // Only node on PATH: the plugin checks skip, so this stays quick.
+  const check = () => spawnSync(process.execPath, [join(kit, 'bin', 'desk.mjs'), 'check'], { cwd: home, encoding: 'utf8', timeout: 400e3,
+    env: { ...env(home), GH_STUB: answers, NODE_OPTIONS: `--import=${stub}`, PATH: dirname(process.execPath), Path: dirname(process.execPath) } });
+  set({ gh: 'o/r' });
+  const direct = check();
+  assert.equal(direct.status, 0, `${direct.stdout}\n${direct.stderr}`);
+  assert.doesNotMatch(direct.stdout, /protect|merge changed|has merge/);
+  assert.equal(existsSync(`${answers}.log`), false, 'no gh call');
+  set({ gh: '', merge: 'review' });
+  const review = check();
+  assert.equal(review.status, 0, `${review.stdout}\n${review.stderr}`);
+  assert.match(review.stdout, /^warn a has merge "review" and no gh value: wt merge will refuse on this repo; only a server rule is a guarantee$/m);
+});
+
+// ---- the user layer: its file is always a temp one, outside every git tree ----
+const userFile = (v) => { const f = join(tmp(), 'settings.json'); writeFileSync(f, typeof v === 'string' ? v : JSON.stringify(v)); return f; };
+const withUser = (home, file, ...args) => spawnSync(process.execPath, [BIN, ...args], { cwd: home, env: { ...env(home), AGENT_DESK_SETTINGS: file }, encoding: 'utf8' });
+const localSettings = (dir) => JSON.parse(readFileSync(join(dir, '.claude', 'settings.local.json'), 'utf8'));
+const treeOf = (dir) => Object.fromEntries(readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => { const p = join(e.parentPath ?? e.path, e.name); return [p, readFileSync(p, 'utf8')]; }));
+const bothHarnesses = (home) => { const p = join(home, 'desk.config.json'); writeFileSync(p, JSON.stringify({ ...JSON.parse(readFileSync(p, 'utf8')), harnesses: ['claude', 'copilot'] })); };
+const deskCarries = (home, keys) => { const p = join(home, '.claude', 'settings.json'); mkdirSync(join(home, '.claude'), { recursive: true }); writeFileSync(p, JSON.stringify({ ...(existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : {}), ...keys })); return p; };
+
+test('never committed: a user file changes nothing git can see in the desk, a repo or a worktree', () => {
+  const { root, home } = multiDesk(), repoA = join(root, 'a'), wt = join(root, 'worktrees', 'a-demo');
+  bothHarnesses(home);
+  ok(desk(home, 'wt', 'new', 'demo', '--repo', 'a'));
+  const dir = readdirSync(join(root, 'worktrees')).map((d) => join(root, 'worktrees', d)).find((d) => d.endsWith('demo')) ?? wt;
+  ok(desk(home, 'sync'));
+  git(home, 'init', '-q'); git(home, 'add', '-A'); git(home, '-c', 'user.name=t', '-c', 'user.email=t@t.invalid', 'commit', '-qm', 'desk');
+  for (const d of [home, repoA, dir]) assert.equal(git(d, 'status', '--porcelain'), '', d);
+  const f = userFile({ tasks: { review: { model: 'fable', effort: 'max' }, 'ci-summary': { model: 'opus' } }, cache: { promptCacheTtl: '5m', subagentPromptCacheTtl: '1h', idleCompaction: true } });
+  // Never gitignored to pass: a broad rule could hide a real leak.
+  for (const d of [home, repoA, dir]) assert.ok(!f.startsWith(d), `${f} sits in ${d}`);
+  const copilot = treeOf(join(home, '.github'));
+  ok(withUser(home, f, 'sync'));
+  for (const d of [home, repoA, dir]) {
+    assert.equal(git(d, 'status', '--porcelain'), '', d);
+    const l = localSettings(d);
+    assert.deepEqual([l.promptCacheTtl, l.subagentPromptCacheTtl, l.idleCompaction], ['5m', '1h', true], d);
+    assert.equal(l.tasks, undefined);
+  }
+  assert.deepEqual(treeOf(join(home, '.github')), copilot); // task values reach no Copilot file
+  const rec = readFileSync(join(home, '.claude', 'synced-permissions.json'), 'utf8');
+  for (const name of ['promptCacheTtl', 'subagentPromptCacheTtl', 'idleCompaction']) assert.match(rec, new RegExp(name));
+  assert.doesNotMatch(rec, /"5m"|"1h"|"fable"|"max"/); // names only
+});
+
+test('user cache keys beat the desk\'s, keep hand-added keys, and go when removed', () => {
+  const { root, home } = multiDesk(), repoA = join(root, 'a');
+  const shared = deskCarries(home, { promptCacheTtl: '1h' }), sharedBefore = readFileSync(shared, 'utf8');
+  ok(desk(home, 'sync'));
+  assert.equal(localSettings(repoA).promptCacheTtl, '1h');
+  assert.equal(localSettings(home).promptCacheTtl, undefined); // the desk's own settings.json applies there
+  const handFile = join(repoA, '.claude', 'settings.local.json');
+  writeFileSync(handFile, JSON.stringify({ ...localSettings(repoA), mine: 1 }));
+  ok(withUser(home, userFile({ cache: { promptCacheTtl: '5m', idleCompaction: false } }), 'sync'));
+  for (const d of [home, repoA]) assert.deepEqual([localSettings(d).promptCacheTtl, localSettings(d).idleCompaction], ['5m', false], d);
+  assert.equal(localSettings(repoA).mine, 1);
+  assert.equal(readFileSync(shared, 'utf8'), sharedBefore);
+  ok(desk(home, 'sync')); // no user file now
+  assert.equal(localSettings(repoA).promptCacheTtl, '1h');
+  assert.equal(localSettings(repoA).idleCompaction, undefined);
+  assert.equal(localSettings(repoA).mine, 1);
+  assert.equal(localSettings(home).promptCacheTtl, undefined);
+  assert.equal(localSettings(home).idleCompaction, undefined);
+});
+
+test('a partial sync writes the user\'s cache keys and leaves the record alone', () => {
+  const { root, home } = multiDesk(), repoA = join(root, 'a'), rec = join(home, '.claude', 'synced-permissions.json');
+  ok(desk(home, 'sync'));
+  const before = readFileSync(rec, 'utf8');
+  ok(withUser(home, userFile({ cache: { promptCacheTtl: '5m' } }), 'sync', repoA));
+  assert.equal(localSettings(repoA).promptCacheTtl, '5m');
+  assert.equal(readFileSync(rec, 'utf8'), before);
+});
+
+test('wt new writes the user\'s cache keys into the new worktree', () => {
+  const { root, home } = multiDesk();
+  ok(withUser(home, userFile({ cache: { promptCacheTtl: '5m' } }), 'wt', 'new', 'demo', '--repo', 'a'));
+  const dir = readdirSync(join(root, 'worktrees')).map((d) => join(root, 'worktrees', d)).find((d) => d.endsWith('demo'));
+  assert.equal(localSettings(dir).promptCacheTtl, '5m');
+});
+
+// The checkout's synced settings.local.json, plus idleCompaction (which the desk does not carry), committed.
+const commitLocalSettings = (dir) => {
+  writeFileSync(join(dir, '.claude', 'settings.local.json'), JSON.stringify({ ...localSettings(dir), idleCompaction: true }, null, 2) + '\n');
+  git(dir, 'add', '-f', '.claude/settings.local.json'); git(dir, '-c', 'user.name=t', '-c', 'user.email=t@t.invalid', 'commit', '-qm', 'tracked');
+  return join(dir, '.claude', 'settings.local.json');
+};
+
+for (const [why, after] of [['the key leaves the user file', { cache: { promptCacheTtl: '5m' } }], ['the user cache is emptied', { cache: {} }]]) {
+  test(`a tracked key survives a full sync after ${why}; an ignored file still loses it`, () => {
+    const { root, home } = multiDesk(), repoA = join(root, 'a'), repoB = join(root, 'b');
+    ok(desk(home, 'sync'));
+    commitLocalSettings(repoA);
+    ok(withUser(home, userFile({ cache: { idleCompaction: false } }), 'sync')); // the record now lists the name
+    assert.equal(localSettings(repoB).idleCompaction, false);
+    ok(withUser(home, userFile(after), 'sync'));
+    assert.equal(localSettings(repoA).idleCompaction, true);
+    assert.equal(git(repoA, 'status', '--porcelain').trim(), '');
+    assert.equal(localSettings(repoB).idleCompaction, undefined);
+  });
+}
+
+test('a tracked key in the desk folder survives the user removing it', () => {
+  const { root, home } = multiDesk();
+  git(home, 'init', '-q');
+  ok(desk(home, 'sync'));
+  commitLocalSettings(home);
+  ok(withUser(home, userFile({ cache: { idleCompaction: false } }), 'sync'));
+  ok(withUser(home, userFile({ cache: {} }), 'sync'));
+  assert.equal(localSettings(home).idleCompaction, true);
+  assert.equal(git(home, 'status', '--porcelain', '--', '.claude/settings.local.json').trim(), '');
+  assert.equal(localSettings(join(root, 'a')).idleCompaction, undefined);
+});
+
+test('a key both layers set follows the desk in a tracked file', () => {
+  const { root, home } = multiDesk(), repoA = join(root, 'a');
+  const shared = deskCarries(home, { promptCacheTtl: '1h' });
+  ok(desk(home, 'sync'));
+  commitLocalSettings(repoA);
+  ok(withUser(home, userFile({ cache: { promptCacheTtl: '5m' } }), 'sync'));
+  ok(withUser(home, userFile({ cache: {} }), 'sync'));
+  assert.equal(localSettings(repoA).promptCacheTtl, '1h');
+  assert.equal(git(repoA, 'status', '--porcelain').trim(), '');
+  writeFileSync(shared, '{}'); // the desk wrote this one, so its removal still reaches the file
+  ok(desk(home, 'sync'));
+  assert.equal(localSettings(repoA).promptCacheTtl, undefined);
+});
+
+test('a tracked settings.local.json gets no user value and a warning; the rest of the sync proceeds', () => {
+  const { root, home } = multiDesk(), repoA = join(root, 'a'), repoB = join(root, 'b');
+  ok(desk(home, 'sync'));
+  const tracked = commitLocalSettings(repoA); // the desk does not carry idleCompaction
+  const user = userFile({ cache: { promptCacheTtl: '5m', idleCompaction: false } });
+  const r = withUser(home, user, 'sync');
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stderr.split('\n').some((l) => l.startsWith('warn ') && l.includes(tracked)), r.stderr);
+  assert.equal(localSettings(repoA).promptCacheTtl, undefined);
+  assert.equal(localSettings(repoB).promptCacheTtl, '5m');
+  // a second full sync must not drop the committed key as stale
+  assert.equal(withUser(home, user, 'sync').status, 0);
+  assert.equal(localSettings(repoA).idleCompaction, true);
+  assert.equal(git(repoA, 'status', '--porcelain').trim(), '');
+});
+
+test('a malformed user file warns, writes the carried keys and exits as without it', () => {
+  const { root, home } = multiDesk();
+  deskCarries(home, { promptCacheTtl: '1h' });
+  const r = withUser(home, userFile('{"promptCacheTtl": "5m"'), 'sync');
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /^warn .*not valid JSON/m);
+  assert.equal(localSettings(join(root, 'a')).promptCacheTtl, '1h');
+});
+
+test('Copilot output is byte for byte the same with and without a user file; a Copilot-only desk gets no cache keys', () => {
+  const { home } = multiDesk();
+  const p = join(home, 'desk.config.json');
+  writeFileSync(p, JSON.stringify({ ...JSON.parse(readFileSync(p, 'utf8')), harnesses: ['copilot'] }));
+  ok(desk(home, 'sync'));
+  const without = treeOf(join(home, '.github'));
+  ok(withUser(home, userFile({ tasks: { review: { model: 'fable' } }, cache: { promptCacheTtl: '5m' } }), 'sync'));
+  assert.deepEqual(treeOf(join(home, '.github')), without);
+  assert.equal(localSettings(home).promptCacheTtl, undefined);
+  const s = withUser(home, userFile({ cache: { promptCacheTtl: '5m' } }), 'settings');
+  assert.doesNotMatch(s.stderr, /not applied yet/); // sync never writes it here: nothing to wait for
 });
 
 // The two NEXT.md shapes desks hold, in neutral wording.
@@ -456,6 +706,49 @@ test('sync migrates NEXT.md (bullets, LF) once; a generated TODO.md goes', () =>
   assert.doesNotMatch(again, /migrated|TODO\.md/, 'second run: nothing to do');
   assert.equal(lines(join(home, 'decisions.jsonl')).length, 2);
   assert.equal(watchTodos(home).length, 2);
+});
+
+test('sync migrates a watch item naming an open todo by moving it; done, missing, owner and several ids add one', () => {
+  const { home } = multiDesk();
+  const ts = '2026-11-01T00:00:00.000Z', tf = join(home, 'todo.jsonl');
+  const rows = [['T-1', 'open', 'desk'], ['T-2', 'done', 'desk'], ['T-3', 'active', 'desk'], ['T-4', 'open', 'desk'], ['T-5', 'open', 'owner'],
+    ['T-6', 'blocked', 'desk'], ['T-7', 'dropped', 'desk'], ['T-8', 'open', 'idea'], ['T-9', 'active', 'plugin']];
+  writeFileSync(tf, rows.map(([id, status, area]) => JSON.stringify({ ts, from: 'aaaa', id, set: { title: `todo ${id}`, status, area, size: 'small' } })).join('\n') + '\n');
+  writeFileSync(join(home, 'NEXT.md'), `# State
+
+## Not yet verified live
+- Prune on compaction (T-1).
+- Old thing (T-2).
+- Ghost (T-99).
+- Both (T-3) and (T-4).
+- Owner call (T-5).
+- Second look (T-1).
+- Running (T-9).
+- Stuck (T-6).
+- Dropped one (T-7).
+- Idea (T-8).
+`);
+  const out = ok(desk(home, 'sync'));
+  assert.match(out, /migrated NEXT\.md: 0 rulings, 10 watch todos/);
+  assert.equal(out.match(/^moved T-\d+ to watch; .*$/gm).length, 3, 'one line per moved todo');
+  assert.match(out, /^moved T-1 to watch; if the item only cites it: desk todo set T-1 --area desk$/m);
+  assert.match(out, /^moved T-9 to watch; if the item only cites it: desk todo set T-9 --area plugin$/m);
+  const t = fold(lines(tf));
+  assert.deepEqual(['T-1', 'T-6', 'T-9'].map((id) => t.get(id).area), ['watch', 'watch', 'watch'], 'open, blocked and active todos moved');
+  assert.match(t.get('T-1').notes[0], /Prune on compaction/);
+  assert.equal(t.get('T-1').notes.length, 2, 'a second item for the same todo keeps its own note');
+  assert.match(t.get('T-1').notes[1], /Second look/);
+  assert.deepEqual(['T-2', 'T-3', 'T-4', 'T-5', 'T-7', 'T-8'].map((id) => t.get(id).area), ['desk', 'desk', 'desk', 'owner', 'desk', 'idea']);
+  assert.equal(watchTodos(home).filter((l) => l.set.title).length, 6, 'new todos: T-2, T-99, T-3+T-4, T-5, T-7, T-8');
+  // The printed way back works, and a second run over the same file (as after an interrupted run) changes nothing.
+  ok(desk(home, 'todo', 'set', 'T-1', '--area', 'desk'));
+  const before = readFileSync(tf, 'utf8'), bak = join(home, 'NEXT.md.bak');
+  renameSync(bak, join(home, 'NEXT.md'));
+  const again = ok(desk(home, 'sync'));
+  assert.match(again, /migrated NEXT\.md: 0 rulings, 0 watch todos/);
+  assert.doesNotMatch(again, /^moved /m);
+  assert.equal(readFileSync(tf, 'utf8'), before);
+  assert.equal(fold(lines(tf)).get('T-1').area, 'desk');
 });
 
 test('sync migrates NEXT.md (CRLF, unbulleted, undated); partial, interrupted and backed-up runs; a hand TODO.md stays', () => {

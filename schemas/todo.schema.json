@@ -15,6 +15,7 @@
       "description": "Known fields are typed; others are allowed (`todo add --<any> <value>`).",
       "properties": {
         "title": { "type": "string" },
+        "summary": { "type": "string", "description": "About 50 characters (cut to 60); the Desk pane shows it instead of the title." },
         "status": { "enum": ["open", "active", "blocked", "done", "dropped"] },
         "area": { "type": "string", "minLength": 1 },
         "size": { "type": "string" },
