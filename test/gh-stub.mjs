@@ -14,6 +14,7 @@ function gh(args, opts) {
   appendFileSync(`${process.env.GH_STUB}.log`, JSON.stringify({ args, stdin }) + '\n');
   if (s.missing) throw Object.assign(new Error('spawnSync gh ENOENT'), { code: 'ENOENT' });
   if (s.fail && call.startsWith(s.fail)) throw Object.assign(new Error('Command failed: gh'), { status: 1, stderr: 'gh says boom\n' });
+  if (args[0] === 'api') return JSON.stringify({ data: { repository: { pullRequests: { nodes: s.graphql ?? [] } } } });
   if (call.startsWith('run list')) return JSON.stringify(s.runs ?? [{ status: 'completed', conclusion: 'success', databaseId: 1 }]);
   if (call.startsWith('pr list')) return JSON.stringify(s.prs ?? []);
   if (call.startsWith('pr create')) return 'https://github.example/o/r/pull/7\n';

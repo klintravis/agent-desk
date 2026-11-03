@@ -14,8 +14,8 @@ Facts come from commands, not memory. Several sessions run at once: write only t
 `board.jsonl` or other sessions' fields. The one exception is `D tidy --apply`, run by `handoff`, which applies a fixed
 rule to other sessions' `owner` fields and orphan files; never make such a change by hand, and kickoff does not apply
 it. `D` below is the desk CLI: the shim `<desk>/desk`
-(`<desk>\desk.cmd` in PowerShell or cmd), not on PATH and not `npx desk`. The session context names
-its path; it works from any folder.
+(in PowerShell or cmd, the node form), not on PATH and not `npx desk`. The session context names
+the exact command; it works from any folder.
 
 1. **Gather facts.** Read the rulings (`D decide --list`) and what waits to be verified live
    (`D todo list --area watch`), then `D status`, `D todo list` and `D tidy` (report only).
@@ -27,7 +27,7 @@ its path; it works from any folder.
 2. **Find the work**, in this order of weight:
    - red CI on a default branch;
    - handed-off worktrees (`state`/`next` set, claim released): resume these before new work;
-   - a `review` repo's branch whose PR shows `merged`: `D wt merge <slug>` closes it; one still open waits for a person;
+   - a `review` repo's branch whose row says `desk wt merge <slug> to close`: `D wt merge <slug>` closes it; one still open waits for a person;
    - blocked or stale todos, and the review candidates `D tidy` listed: propose unblocking, re-scoping or dropping them in step 5; change them
      only on the owner's go, and never one whose slug another session holds (`D board check <slug>`
      exits 1);
@@ -38,7 +38,7 @@ its path; it works from any folder.
    - separate changes run in parallel, one worktree each; run `D overlap` and put changes that touch
      the same files in sequence, not in parallel;
    - anything that needs the owner first (a ruling, a breaking change, a choice with trade-offs) is
-     `D todo add "<question>" --area owner --why "<options; recommendation first>"`. Do not start it,
+     `D todo add "<question>" --area owner --why "<context>" --option "<label>: <why>" --option "<label>: <why>"` (2-4 options, recommendation first, labels up to 60 characters). Do not start it,
      and do not plan work that depends on its answer.
 4. **Write it down** so the plan lives in `todo.jsonl`, not in chat: `D todo add|split`
    (`--summary "<about 50 characters>"` on `add`, the Desk pane's id row; after `split`, `D todo set T-n --summary` per child), `D todo set T-n --prio <n> --model <shared model/effort>` (never the resolved value: `todo.jsonl` is committed, your user settings are not, and `orchestrate` applies them at spawn), `D todo note T-n "<why it is first>"`. Skip

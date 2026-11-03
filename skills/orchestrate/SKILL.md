@@ -11,8 +11,8 @@ description: >-
 
 You are the orchestrator. You plan, brief, delegate and verify; subagents write the code. This skill
 is the instruction that sets `model` and `effort` on Agent calls — pass both every time.
-`desk` below is the desk CLI: the shim `<desk>/desk` (`<desk>\desk.cmd` in PowerShell or cmd), not on
-PATH and not `npx desk`. The session context names its path; it works from any folder.
+`desk` below is the desk CLI: the shim `<desk>/desk` (in PowerShell or cmd, the node form), not on
+PATH and not `npx desk`. The session context names the exact command; it works from any folder.
 
 ## Pick by task
 
@@ -73,7 +73,7 @@ closes the slug's todos. New work found on the way: `add` it with `--summary "<a
 1. **Plan**: `desk wt new <slug> --repo <id> --no-build`. If the repo has a spec workflow, the first
    agent writes the proposal there. You read the proposal and its open questions, not every artifact;
    owner decisions go to the owner before any code,
-   raised as `desk todo add "<question>" --area owner --why "<options; recommendation first>"` (the
+   raised as `desk todo add "<question>" --area owner --why "<context>" --option "<label>: <why>" --option "<label>: <why>"` (2-4 options, recommendation first, labels up to 60 characters) (the
    owner answers with `/decide` or `desk decide`, which closes the todo and records the ruling in `decisions.jsonl`).
 2. **Implement** (`implementer`, model/effort from Pick by task): one step per call. A change expected to change over about 150 lines gets one `implementer` run per code task group, in order, in the same worktree; each run commits before the next starts. Split a single group, or a todo with none, first, and keep tests with the code they check: a group that cannot pass the check alone joins its neighbour. A smaller change keeps one run, however many groups it has. Docs ship in the
    same branch: after the last implementer's commit, `scribe` writes the bookkeeping docs and the

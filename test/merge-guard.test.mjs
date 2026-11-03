@@ -1,4 +1,4 @@
-// scripts/merge-guard.mjs: the desk and repo mapping and failing open. The rule's own table is CASES in
+// scripts/merge-guard.mjs: the desk and repo mapping, and which way it fails. The rule's own table is CASES in
 // hooks/mergeguard.mjs, run here through --self-test. Temp dirs only; the guard only reads, git never pushes here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { multiDesk, desk, git, repo, tmp, KIT } from './helpers.mjs';
+import { ASSIGN_CASES, ESCAPE_CASES, UNREADABLE_CASES, mentions, verdict } from '../hooks/mergeguard.mjs';
 
 const GUARD = join(KIT, 'scripts', 'merge-guard.mjs');
 const { DESK_HOME: _, ...noDesk } = process.env;
@@ -56,6 +57,17 @@ test('merge-guard --self-test runs every row of the table', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^ok \d+ cases/);
 });
+
+for (const [name, rows] of [["bash $'...' escapes", ESCAPE_CASES], ['PowerShell assignment forms', ASSIGN_CASES], ['lines it cannot parse', UNREADABLE_CASES]]) {
+  test(`merge guard reads ${name}`, async (t) => {
+    for (const [c, current, want, shell = 'Bash'] of rows) {
+      await t.test(`${want ? 'refuse' : 'allow'} ${shell} on ${current}: ${c}`, () => {
+        assert.equal(!!verdict(c, { current, shell }), want);
+        if (want) assert.ok(mentions(c), 'the hook would not start the script');
+      });
+    }
+  });
+}
 
 test('direct desk: key absent or "direct", everything is allowed and no git process starts', () => {
   const { home, root } = multiDesk();
@@ -129,6 +141,10 @@ test('gh pr merge: refused by the directory or by --repo naming a review repo', 
   assert.ok(denial(b, 'gh pr merge 1 -R o/a', { from: home }));
   assert.ok(denial(b, 'gh pr merge 1 --repo=O/A', { from: home }));
   assert.ok(denial(b, 'GH_REPO=o/a gh pr merge 1', { from: home }));
+  assert.ok(denial(b, 'GH_REPO+=o/a gh pr merge 1', { from: home }));
+  // bash joins `+=` onto the value before it; a plain `=` replaces it
+  for (const form of ['GH_REPO=o/a GH_REPO+= gh pr merge 1', 'GH_REPO=o/a GH_REPO+="" gh pr merge 1', 'GH_REPO=o GH_REPO+=/a gh pr merge 1', 'GH_REPO=o/ GH_REPO+=a gh pr merge 1', 'if GH_REPO=o GH_REPO+=/a gh pr merge 1; then :; fi', 'GH_REPO=o/b GH_REPO=o/a gh pr merge 1']) assert.ok(denial(b, form, { from: home }), form);
+  for (const form of ['GH_REPO=o GH_REPO+=/b gh pr merge 1', 'GH_REPO=o/a GH_REPO=o/b gh pr merge 1', 'GH_REPO=o/a GH_REPO+=b gh pr merge 1']) assert.equal(denial(a, form, { from: home }), null, form);
   assert.ok(denial(b, 'gh pr merge https://github.com/o/a/pull/1', { from: home }));
   assert.equal(denial(a, 'gh pr merge 1 -R o/b', { from: home }), null);
   assert.equal(denial(a, 'gh pr view 1', { from: home }), null);
@@ -145,6 +161,25 @@ test('the denial names the branch, the tag form, desk wt merge and the person on
   assert.equal(denial(a, 'git push origin feat/x', { from: home }), null);
 });
 
+test('fails closed: a line it cannot read and that names push or merge is refused wherever it is typed', () => {
+  const { root, home, a, b } = mixed();
+  const hidden = "cd a && echo ${x:-'}'}; git push origin main";
+  assert.match(denial(a, hidden, { from: home }), /cannot read[^]*desk wt merge[^]*on the server/, 'in the review repo, with the way out');
+  assert.match(denial(root, hidden, { from: home }), /cannot read/, 'from outside any repo: its cd is unread too');
+  assert.match(denial(b, hidden, { from: home }), /cannot read/, 'from a direct repo: its cd is unread too');
+  for (const dir of [a, b]) {
+    const text = denial(dir, "echo it's a merge", { from: home });
+    assert.match(text, /this desk has a review repo/);
+    assert.doesNotMatch(text, /this repo has/, 'the line names no repo');
+  }
+  assert.match(denial(a, "git push origin 'main", { tool: 'PowerShell', from: home }), /cannot read/);
+  assert.equal(denial(a, 'echo "open', { from: home }), null, 'names neither word');
+
+  const direct = multiDesk(), { log, env } = spy();
+  assert.equal(denial(join(direct.root, 'a'), hidden, { from: direct.home, env }), null, 'no review repo on the desk');
+  assert.equal(existsSync(log), false, 'a direct desk spawns no git');
+});
+
 test('fails open: unknown repo, failing git, broken config, bad input, no desk', () => {
   const { root, home, a } = mixed();
   const elsewhere = tmp();
@@ -153,7 +188,6 @@ test('fails open: unknown repo, failing git, broken config, bad input, no desk',
   assert.equal(denial(tmp(), 'git push origin main', { from: home }), null, 'no repo at all: git fails');
   assert.equal(denial(join(root, 'gone'), 'git push origin main', { from: home }), null, 'no such directory');
   assert.equal(denial(a, 'git -C ../missing push origin main', { from: home }), null);
-  assert.equal(denial(a, 'git push origin "unterminated', { from: home }), null, 'unreadable command');
 
   assert.equal(denial(tmp(), 'git push origin main', { from: tmp() }), null, 'no desk');
   for (const input of ['not json', '', '{}', 'null', '{"tool_input":{"command":7}}']) {

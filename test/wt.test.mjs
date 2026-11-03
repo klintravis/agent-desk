@@ -4,7 +4,8 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, cop
 import { spawnSync } from 'node:child_process';
 import { join, delimiter } from 'node:path';
 import { multiDesk, desk, git, commit, env, BIN } from './helpers.mjs';
-import { conclusion, watchRuns, SESSION_ENV } from '../lib/wt.mjs';
+import { watchRuns, SESSION_ENV } from '../lib/wt.mjs';
+import { conclusion } from '../bin/desk.mjs';
 
 const ok = (r) => { assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`); return r.stdout; };
 const fails = (r, re) => { assert.notEqual(r.status, 0, r.stdout); assert.match(r.stderr, re); };

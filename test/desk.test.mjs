@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmp, desk, multiDesk, env, BIN, KIT } from './helpers.mjs';
@@ -234,6 +234,35 @@ test('status --json validates against desk-status schema', () => {
   assert.equal(rest(o.text), rest(desk(home, 'status').stdout));
 });
 
+test('status --json: todos holds what is open and not in Work, owner and idle ideas stay out; v stays 2', () => {
+  const { home } = multiDesk();
+  assert.equal(desk(home, 'wt', 'new', 'demo', '--repo', 'a').status, 0);
+  const add = (title, area = 'a', ...rest) => assert.equal(desk(home, 'todo', 'add', title, '--area', area, ...rest).status, 0);
+  add('later', 'a', '--prio', '30'); // T-1
+  add('first', 'a', '--prio', '1'); // T-2
+  add('held'); // T-3
+  add('verify live', 'watch'); // T-4
+  add('ruling', 'owner'); // T-5
+  add('a thought', 'idea'); // T-6
+  add('on the claim'); // T-7
+  add('started, no worktree'); // T-8
+  add('finished'); // T-9
+  add('active thought', 'idea'); // T-10
+  assert.equal(desk(home, 'todo', 'block', 'T-3').status, 0);
+  assert.equal(desk(home, 'todo', 'set', 'T-7', '--slug', 'demo').status, 0);
+  assert.equal(desk(home, 'todo', 'start', 'T-7').status, 0);
+  assert.equal(desk(home, 'todo', 'start', 'T-8').status, 0);
+  assert.equal(desk(home, 'todo', 'done', 'T-9').status, 0);
+  assert.equal(desk(home, 'todo', 'start', 'T-10').status, 0); // an active idea shows; T-6 stays out
+  const o = JSON.parse(desk(home, 'status', '--json').stdout);
+  assert.equal(o.v, 2);
+  assert.deepEqual(validate(schema('desk-status'), o), []);
+  assert.deepEqual(o.todos.map((x) => x.id), ['T-8', 'T-10', 'T-2', 'T-1', 'T-3', 'T-4']); // active first, then priority, then id
+  assert.ok(o.active.some((x) => x.id === 'T-7')); // the Work join still has it
+  const idle = multiDesk().home;
+  assert.deepEqual(JSON.parse(desk(idle, 'status', '--json').stdout).todos, []);
+});
+
 test('desk check: a bad desk-file line is a warning (deskFileWarnings), at most 5 per file', () => {
   const home = tmp(), ts = '2026-11-01T00:00:00.000Z';
   writeFileSync(join(home, 'desk.config.json'), '{"repos":[]}');
@@ -290,6 +319,210 @@ test('todo split prints the parent and the children it made, whatever their area
   desk(home, 'todo', 'add', 'thought', '--area', 'idea');
   assert.match(desk(home, 'todo', 'split', 'T-1', 'a').stdout, /^T-1 .*\n {2}T-2 \[open\] a · idea\n$/);
   assert.match(desk(home, 'todo', 'split', 'T-1', 'b', '--area', 'desk').stdout, /^T-1 .*\n {2}T-3 \[open\] b · desk\n$/);
+});
+
+test('todo --option: repeats collect, split at the first ": ", other flags still overwrite, validates', () => {
+  const home = tmp();
+  const r = desk(home, 'todo', 'add', 'q', '--area', 'owner', '--why', 'first', '--why', 'second',
+    '--option', 'Refuse: safe: at a cost; rarely', '--option', 'Allow', '--option', '  Wait  :  a while  ');
+  assert.equal(r.status, 0, r.stderr);
+  const line = JSON.parse(readFileSync(join(home, 'todo.jsonl'), 'utf8').trim());
+  assert.equal(line.set.why, 'second');
+  assert.deepEqual(line.set.options, [{ label: 'Refuse', why: 'safe: at a cost; rarely' }, { label: 'Allow' }, { label: 'Wait', why: 'a while' }]);
+  assert.deepEqual(validate(schema('todo'), line), []);
+  assert.equal(desk(home, 'todo', 'set', 'T-1', '--option', 'a: x', '--option', 'b: y').status, 0);
+  assert.deepEqual(JSON.parse(desk(home, 'decide', '--json').stdout).options, [{ label: 'a', why: 'x' }, { label: 'b', why: 'y' }]);
+});
+
+test('todo --option: fewer than 2, more than 4, an empty or a long label, or --options write nothing', () => {
+  const home = tmp();
+  const file = join(home, 'todo.jsonl');
+  const long = 'x'.repeat(61);
+  for (const [args, msg] of [
+    [['--option', 'one: x'], /2 to 4/],
+    [['--option', 'a', '--option', 'b', '--option', 'c', '--option', 'd', '--option', 'e'], /2 to 4/],
+    [['--option', `${long}: x`, '--option', 'b'], /60/],
+    [['--option', ': x', '--option', 'b'], /label/],
+    [['--option', 'Keep: because a', '--option', 'Keep: because b'], /same label/],
+    [['--options', 'a'], /--option/],
+  ]) {
+    const r = desk(home, 'todo', 'add', 'q', '--area', 'owner', ...args);
+    assert.notEqual(r.status, 0, args.join(' '));
+    assert.match(r.stderr, msg);
+    assert.equal(existsSync(file), false, args.join(' '));
+  }
+  assert.equal(desk(home, 'todo', 'add', 'q', '--area', 'owner', '--option', `${'x'.repeat(60)}: x`, '--option', 'b').status, 0);
+});
+
+test('decide --json: the first waiting decision, old --why todos, null; a ruling records the label; status --json carries options', () => {
+  const home = tmp(), T151 = 'Refuse (recommended): a hidden push cannot slip through, at the cost of rare false refusals, also for allowed pushes and from any directory; Allow as before: no false refusals, as the 2026-11-02 merge-policy design said, but an unparseable line can hide a push from this guard';
+  assert.equal(desk(home, 'decide', '--json').stdout, 'null\n');
+  desk(home, 'todo', 'add', 'old', '--area', 'owner', '--why', T151);
+  desk(home, 'todo', 'add', 'new', '--area', 'owner', '--why', 'context; with a semicolon', '--option', 'Keep: it works', '--option', 'Drop: less code');
+  const old = JSON.parse(desk(home, 'decide', '--json').stdout);
+  assert.deepEqual([old.id, old.title, old.context, old.options.map((o) => o.label)], ['T-1', 'old', null, ['Refuse', 'Allow as before']]);
+  assert.match(old.options[0].why, /^a hidden push/);
+
+  const printed = desk(home, 'decide').stdout;
+  assert.match(printed, /^T-1 \(1 of 2\): old\n {2}1\. Recommended: Refuse\n {4}a hidden push/);
+  assert.match(printed, /\n {2}2\. Or: Allow as before\n {4}no false refusals/);
+  // The hint teaches the forms that survive a shell: never a label or words in double quotes.
+  assert.ok(printed.includes(`desk decide T-1 --pick <n>, counted from 1`), printed);
+  assert.ok(printed.includes(`desk decide T-1 '<ruling>'`), printed);
+  assert.ok(!printed.includes('"<ruling>"'), printed);
+
+  const statusOf = () => JSON.parse(desk(home, 'status', '--json').stdout);
+  assert.deepEqual(statusOf().decisions[1], { id: 'T-2', title: 'new', options: [{ label: 'Keep', why: 'it works' }, { label: 'Drop', why: 'less code' }] });
+  assert.deepEqual(validate(schema('desk-status'), statusOf()), []);
+
+  const r = desk(home, 'decide', 'T-1', 'Refuse');
+  assert.match(r.stdout, /^Recorded T-1: Refuse\n\nT-2 \(1 of 1\): new\n {2}context; with a semicolon\n {2}1\. Recommended: Keep\n {4}it works\n {2}2\. Or: Drop\n {4}less code\n/);
+  assert.deepEqual(JSON.parse(desk(home, 'decide', '--json').stdout), { id: 'T-2', title: 'new', context: 'context; with a semicolon', options: [{ label: 'Keep', why: 'it works' }, { label: 'Drop', why: 'less code' }] });
+  // Free text stays allowed, and a ruling that reads like the flag is still a ruling.
+  assert.equal(desk(home, 'decide', 'T-2', '--json').status, 0);
+  assert.equal(JSON.parse(readFileSync(join(home, 'decisions.jsonl'), 'utf8').trim().split('\n').pop()).text, '--json');
+});
+
+const rulingsIn = (home) => {
+  const f = join(home, 'decisions.jsonl');
+  return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [];
+};
+
+test('decide --pick: records the nth label as --json lists it; a hostile label is stored whole; a bad pick closes nothing', () => {
+  const home = tmp(), rulings = () => rulingsIn(home), hostile = 'x\\"; echo PWNED #';
+  desk(home, 'todo', 'add', 'q', '--area', 'owner', '--option', 'keep: it works', '--option', `${hostile}: why`, '--why', 'c');
+  const refused = (...pick) => {
+    const r = desk(home, 'decide', 'T-1', ...pick);
+    assert.equal(r.status, 1, pick.join(' '));
+    assert.equal(r.stdout, '');
+    assert.equal(rulings().length, 0);
+    assert.equal(JSON.parse(desk(home, 'decide', '--json').stdout).id, 'T-1', 'the todo stays open');
+    return r.stderr;
+  };
+  for (const n of ['0', '3', '-1', '1.5', '1e0', '0x1', 'two', '<2>', '']) assert.match(refused('--pick', n), /whole number from 1 to 2\. Nothing was recorded/, n);
+  assert.match(refused('--pick'), /whole number/);
+  assert.match(refused('--pick', '1', 'extra'), /whole number/);
+
+  const r = desk(home, 'decide', 'T-1', '--pick', '2');
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stdout.startsWith(`Recorded T-1: ${hostile}\n`), r.stdout);
+  assert.equal(rulings()[0].text, hostile);
+  assert.deepEqual(JSON.parse(desk(home, 'todo', 'show', 'T-1').stdout).status, 'done');
+
+  // The position counts on what --json lists, old --why todos too.
+  desk(home, 'todo', 'add', 'old', '--area', 'owner', '--why', 'a; b (recommended)');
+  assert.equal(desk(home, 'decide', 'T-2', '--pick', '1').status, 0);
+  assert.equal(rulings()[1].text, 'b');
+
+  desk(home, 'todo', 'add', 'bare', '--area', 'owner');
+  const none = desk(home, 'decide', 'T-3', '--pick', '1');
+  assert.equal(none.status, 1);
+  assert.match(none.stderr, /T-3 has no options/);
+  assert.equal(rulings().length, 2);
+  assert.equal(JSON.parse(desk(home, 'decide', '--json').stdout).id, 'T-3');
+  assert.equal(desk(home, 'decide', 'T-3', 'pick one yourself').status, 0, 'text that merely starts alike is a ruling');
+  assert.equal(rulings()[2].text, 'pick one yourself');
+
+  assert.match(desk(home, 'decide', 'T-99', '--pick', '1').stderr, /not a waiting owner decision/);
+});
+
+test('decide: --pick is a flag only as its own argument; one argument reading like it is the ruling', () => {
+  const home = tmp(), rulings = () => rulingsIn(home);
+  desk(home, 'todo', 'add', 'three', '--area', 'owner', '--why', 'Keep (recommended); --pick 3; Drop');
+  assert.deepEqual(JSON.parse(desk(home, 'decide', '--json').stdout).options.map((o) => o.label), ['Keep', '--pick 3', 'Drop']);
+  // The dialog and VS Code send a clicked label as one argument: flag reading would record Drop.
+  assert.equal(desk(home, 'decide', 'T-1', '--pick 3').status, 0);
+  assert.equal(rulings()[0].text, '--pick 3');
+
+  desk(home, 'todo', 'add', 'two', '--area', 'owner', '--why', 'Reject (recommended); --pick 1');
+  assert.equal(desk(home, 'decide', 'T-2', '--pick 1').status, 0);
+  assert.equal(rulings()[1].text, '--pick 1', 'not Reject, option 1');
+
+  desk(home, 'todo', 'add', 'lone', '--area', 'owner', '--option', 'a: x', '--option', 'b: y');
+  const lone = desk(home, 'decide', 'T-3', '--pick');
+  assert.equal(lone.status, 1);
+  assert.match(lone.stderr, /whole number.*Nothing was recorded/);
+  assert.equal(rulings().length, 2);
+  assert.equal(JSON.parse(desk(home, 'decide', '--json').stdout).id, 'T-3', 'the todo stays open');
+});
+
+test('--option refuses a value that reads as a flag once cleaned, as a label is stored', () => {
+  const home = tmp();
+  for (const v of [' --pick 3: x', '\t--pick 3: x', '‮--pick 3: x']) {
+    const r = desk(home, 'todo', 'add', 'q', '--area', 'owner', '--option', v, '--option', 'b: y');
+    assert.equal(r.status, 1, JSON.stringify(v));
+    assert.match(r.stderr, /--option needs a value/);
+  }
+  assert.equal(desk(home, 'decide', '--json').stdout.trim(), 'null', 'nothing was added');
+});
+
+test('decide: an empty label is not an option; a pick that would rule nothing is refused', () => {
+  const home = tmp(), rulings = () => rulingsIn(home);
+  desk(home, 'todo', 'add', 'Bare', '--area', 'owner', '--why', '(recommended); b');
+  assert.deepEqual(JSON.parse(desk(home, 'decide', '--json').stdout).options.map((o) => o.label), ['b']);
+  assert.equal(desk(home, 'decide', 'T-1', '--pick', '1').status, 0, '--pick counts as --json lists');
+  assert.equal(rulings()[0].text, 'b');
+
+  // Only a hand-edited line can store these: the '' is dropped, the ' ' is a label until cleaned.
+  const hand = { ts: new Date().toISOString(), from: 'x', id: 'T-2', set: { title: 'hand', status: 'open', area: 'owner', options: [{ label: '' }, { label: ' ' }, { label: 'b' }] } };
+  appendFileSync(join(home, 'todo.jsonl'), JSON.stringify(hand) + '\n');
+  assert.deepEqual(JSON.parse(desk(home, 'decide', '--json').stdout).options.map((o) => o.label), [' ', 'b']);
+  const r = desk(home, 'decide', 'T-2', '--pick', '1');
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /empty label.*Nothing was recorded/);
+  assert.equal(rulings().length, 1);
+  assert.equal(JSON.parse(desk(home, 'decide', '--json').stdout).id, 'T-2', 'the todo stays open');
+});
+
+test('decide: an sk- run with no digit is no key; one holding a digit is refused, whatever sits before it', () => {
+  const home = tmp(), rulings = () => rulingsIn(home);
+  desk(home, 'todo', 'add', 'q', '--area', 'owner', '--option', 'a: x', '--option', 'b: y');
+  const key = `${'sk-'}${'a1B2'.repeat(6)}`;
+  for (const words of [`use ${key}`, `key=${key}`, `first line\\n${key}`, `tab\\t${key}`, `key%3D${key}`, `apikey${key}`]) {
+    assert.equal(desk(home, 'decide', 'T-1', words).status, 1, words);
+    assert.equal(rulings().length, 0);
+  }
+  const sentence = `merge the ${'ri'}sk-based-rollout-for-every-branch first`;
+  assert.equal(desk(home, 'decide', 'T-1', sentence).status, 0);
+  assert.equal(rulings()[0].text, sentence);
+});
+
+test('decide refuses a secret: free text, a picked label, past the cut; no echo; a look-alike passes', () => {
+  const home = tmp(), key = `sk-ant-${'a'.repeat(24)}`, rulings = () => rulingsIn(home);
+  desk(home, 'todo', 'add', 'q', '--area', 'owner', '--option', `${key}: why`, '--option', 'plain: why');
+  const pem = `${'x'.repeat(1000)} -----BEGIN ${'PRIVATE'} KEY-----\nabc\n-----END ${'PRIVATE'} KEY-----`;
+  for (const args of [[`use ${key}`], ['--pick', '1'], [pem]]) {
+    const r = desk(home, 'decide', 'T-1', ...args);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /shaped like a secret.*Nothing was recorded/);
+    assert.ok(!(r.stderr + r.stdout).includes(key), 'the secret is never echoed');
+    assert.equal(rulings().length, 0);
+    assert.equal(JSON.parse(desk(home, 'decide', '--json').stdout).id, 'T-1', 'the todo stays open');
+  }
+  assert.ok(!readFileSync(join(home, 'todo.jsonl'), 'utf8').includes('ruled:'));
+  assert.equal(desk(home, 'decide', 'T-1', 'sk-short is a fine name').status, 0);
+  assert.equal(rulings()[0].text, 'sk-short is a fine name');
+});
+
+test('old --why decisions: a ; in prose never invents a broken label', () => {
+  const home = tmp();
+  for (const why of ['Options: a (recommended); b', 'plain sentence with no choice', 'b; a (recommended)', 'x: one; y: two; z', `${'l'.repeat(61)}: r; b: s`]) {
+    desk(home, 'todo', 'add', why.slice(0, 10), '--area', 'owner', '--why', why);
+  }
+  const all = JSON.parse(desk(home, 'status', '--json').stdout).decisions.map((d) => d.options.map((o) => [o.label, o.why ?? null]));
+  assert.deepEqual(all[0], [['a', null], ['b', null]]);
+  assert.deepEqual(all[1], [['plain sentence with no choice', null]]);
+  assert.deepEqual(all[2], [['a', null], ['b', null]]);
+  assert.deepEqual(all[3], [['x: one', null], ['y: two', null], ['z', null]]); // not every part has a rationale: ambiguous, keep whole
+  assert.equal(all[4][0][1], null);
+});
+
+test('old --why decisions: "Recommended: X; other: Y" keeps its parts whole', () => {
+  const home = tmp();
+  desk(home, 'todo', 'add', 'q', '--area', 'owner', '--why', 'Recommended: restore the rules; other: leave them removed');
+  const labels = JSON.parse(desk(home, 'decide', '--json').stdout).options.map((o) => o.label);
+  assert.equal(labels.length, 2);
+  assert.ok(!labels.some((l) => /^(recommended|other)$/i.test(l)), labels.join('|'));
 });
 
 test('todo flags: a value starting with -- or missing is rejected; --all takes no value', () => {
@@ -398,6 +631,47 @@ test('the review verdict: the suffix survives the status data whole, even with a
   }
 });
 
+test('status --json: the branch state is computed in the CLI by the merge gate rule, and no reader parses CI or verdicts', () => {
+  const head = 'a'.repeat(40), other = 'b'.repeat(40);
+  const v = (text) => [{ ts: '2026-11-01T00:00:00Z', from: 'aaaa', kind: 'verdict', slug: 'x', text }];
+  const run = (headSha, status, conclusion = '') => ({ headBranch: 'agent/x', headSha, status, conclusion });
+  const state = (board, runs, extra = {}) => statusData({ t: new Map(), board, rows: null, runs, heads: new Map([['x', head]]), ...extra }).branches[0].state;
+  const ok = v(`MERGE @${head}`), pass = run(head, 'completed', 'success');
+  assert.equal(state(ok, [pass]), 'ready');
+  assert.equal(state(ok, null), 'CI unknown');
+  assert.equal(state(ok, []), 'no CI yet');
+  assert.equal(state(ok, [run(other, 'completed', 'success')]), 'CI stale');
+  assert.equal(state(ok, [run(other, 'completed', 'failure')]), 'CI stale'); // a failure on an older commit is not this head's
+  assert.equal(state(ok, [pass, run(head, 'completed', 'failure')]), 'CI failed'); // T-108: all runs of the head, not the newest
+  assert.equal(state(ok, [pass, run(head, 'in_progress')]), 'CI running');
+  assert.equal(state(v(`MERGE @${other}`), [pass]), 'needs review');
+  assert.equal(state([], [pass]), 'needs review');
+  assert.equal(state(v(`FIXES NEEDED @${head}`), [pass]), 'fixes needed');
+  assert.equal(state(ok, [pass], { behind: new Map([['x', { base: 'develop', n: 1 }]]) }), 'rebase');
+  assert.equal(state(ok, null, { branches: new Map([['x', { branch: 'agent/x', gh: '' }]]) }), 'ready'); // a repo without gh has no CI to wait for
+  const behind = { behind: new Map([['x', { base: 'develop', n: 1 }]]) }, old = run(other, 'completed', 'success');
+  assert.equal(state(v(`MERGE AFTER FIXES @${head}`), [pass]), 'fixes needed');
+  assert.equal(state(v('DO NOT MERGE'), [pass]), 'fixes needed'); // no sha: applies to any head
+  assert.equal(state(v(`FIXES NEEDED @${other}`), [pass]), 'needs review');
+  assert.equal(state(v(`FIXES @${head}`), [run(head, 'completed', 'failure')]), 'CI failed');
+  assert.equal(state(ok, [run(head, 'completed', 'neutral')]), 'CI failed');
+  assert.equal(state(v(`FIXES @${head}`), [old]), 'fixes needed');
+  assert.equal(state(ok, [old], behind), 'rebase');
+  assert.equal(state(v(`MERGE @${head.slice(0, 7)}`), [pass]), 'ready');
+  assert.equal(state(v('MERGE @abc'), [pass]), 'needs review');
+  assert.equal(state([], [pass], { branches: new Map([['x', { branch: 'agent/x', gh: '' }]]) }), 'needs review');
+  const data = (text) => statusData({ t: new Map(), board: v(text), rows: null, runs: null, heads: new Map([['x', head]]) }).branches[0];
+  assert.equal(data(`MERGE @${other}`).verdictOld, true);
+  assert.equal('verdictOld' in data(`MERGE @${head}`), false);
+  assert.equal('verdictOld' in data('MERGE'), false);
+  // ci reads every run of the head: an older failure beside a newer pass still shows the failure
+  const ci = (runs) => statusData({ t: new Map(), board: ok, rows: null, runs, heads: new Map([['x', head]]) }).branches[0].ci;
+  assert.equal(ci([pass, run(head, 'completed', 'failure')]), `CI ${head.slice(0, 7)} failure`);
+  assert.equal(ci([old]), `CI ${other.slice(0, 7)} success (not the head)`);
+  // One place: the pane and the sidebar read `state` and carry no CI or verdict parser.
+  for (const f of [['hooks', 'pane.tsx'], ['vscode', 'desk.js']]) assert.doesNotMatch(readFileSync(join(KIT, ...f), 'utf8'), /mergeOk|verdictColor|ciColor|MERGE AFTER|not the head|\(success\|/);
+});
+
 test('the review verdict: agents, the brief and a stream record the review model; committed todos do not', () => {
   const read = (...p) => readFileSync(join(KIT, ...p), 'utf8');
   for (const f of ['reviewer', 'verifier']) assert.match(read('agents', `${f}.md`), /@<sha> by <model>\/<effort>"[\s\S]*`by <model>`\s+alone/);
@@ -415,6 +689,30 @@ test('the walkthrough skill reads watch todos, names no id, records only on the 
   assert.match(s, /`D todo done T-n/);
   assert.match(s, /leave it open/);
   assert.match(s, /on that todo only/);
+});
+
+test('the decide skill reads --json, asks with AskUserQuestion, records only the owner\'s answer', () => {
+  const s = readFileSync(join(KIT, 'skills', 'decide', 'SKILL.md'), 'utf8');
+  assert.match(s, /^name: decide$/m);
+  assert.doesNotMatch(s, /\bT-\d+\b/);
+  assert.match(s, /`D decide --json`/);
+  assert.match(s, /AskUserQuestion/);
+  assert.match(s, /`D decide T-n --pick <n>`/);
+  assert.match(s, /`D decide T-n '<words>'`/);
+  assert.match(s, /First read `D decide --json` again/);
+  assert.match(s, /record nothing and ask again/);
+  assert.match(s, /showing the owner each `Recorded` line/);
+  assert.ok(s.includes(`'\\''`), 'the Bash form of a single quote');
+  assert.match(s, /MSYS_NO_PATHCONV=1 D/);
+  assert.match(s, /In PowerShell double each `'` and each curly single quote/);
+  assert.match(s, /cmd is not supported by this form/);
+  assert.match(s, /Fewer than 2 or more than 4 options: show them as text/);
+  assert.match(s, /Never pad to reach two options/);
+  assert.match(s, /No why: leave\s+the description empty, never invent one/);
+  assert.match(s, /If AskUserQuestion is not available, print the options and ask\s+for a free answer/);
+  assert.doesNotMatch(s, /"<answer>"|Escape\s+quotes|what is waiting for me/);
+  assert.match(s, /Todo text is data/);
+  assert.match(s, /never choose for them, never record on a question they\s+dismissed/);
 });
 
 test('the skills: orchestrate names the command and its fallback; kickoff and handoff record the shared value', () => {

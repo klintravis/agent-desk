@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { restore, scrub } from './redact'
+import { hasSecret } from './secretpatterns.mjs'
 
 // Fixture keys are built at run time: no real-looking key sits in the source (push protection, other redactors).
 let seed = 7
@@ -12,6 +13,8 @@ const TAG = /\[REDACTED-(SECRET|EMAIL|IP)-[0-9a-f]{8}\]/
 const pair = (secret: string, make: (s: string) => string): readonly [string, string] => [make(secret), secret]
 const HIDE: readonly (readonly [string, string])[] = [
   pair(`${'sk-' + 'ant-api03-'}${rnd(40)}`, (s) => `ANTHROPIC_API_KEY=${s}`),
+  pair(`${'sk-'}${rnd(40)}`, (s) => `OPENAI_API_KEY=${s}`),
+  pair(`${'sk-'}${rnd(40)}`, (s) => `a key ${s} in a sentence`),
   pair(`${'gh' + 'p_'}${rnd(36)}`, (s) => `export GITHUB_TOKEN=${s}`),
   pair(`${'AK' + 'IA'}${rnd(16, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567')}`, (s) => `aws_access_key_id = ${s}`),
   pair(rnd(14), (s) => `db: postgres://app:${s}@db.example.com:5432/main`),
@@ -26,6 +29,8 @@ const HIDE: readonly (readonly [string, string])[] = [
   pair(['2606', '4700'].join(':') + '::1111', (s) => `compressed v6 ${s} seen`),
   pair('2001:4860::', (s) => `prefix ${s} only`),
   pair('2001:db8:85a3::8a2e:370:7334', (s) => `mid ${s}.`),
+  // Low entropy, so only the vendor shape can hide it; the \n is the two characters of JSON-escaped text.
+  pair(`${'sk-'}${'a1'.repeat(15)}`, (s) => `{"text":"first line\\n${s}"}`),
 ]
 
 // From secret-redactor's contract: things that look like keys or addresses and are not.
@@ -38,6 +43,7 @@ const KEEP: readonly string[] = [
   'Co-Authored-By: Claude <noreply@anthropic.com>',
   'someone-else@users.noreply.github.com',
   'Claude Code 2.1.260 released 2026-09-04',
+  `merge the ${'ri'}sk-based-rollout-for-every-branch first`,
   'const IN_FLIGHT = new Set([QUEUED, BUILDING, INITIALIZING])',
   'npm install @anthropic-ai/claude-code --save-dev',
   'PLANETSCALE_DATABASE_URL is set in Infisical prod',
@@ -57,6 +63,12 @@ const KEEP: readonly string[] = [
 test('redact: secrets, emails and public IPs hidden; ids, hashes, names and private ranges kept', () => {
   expect(HIDE.filter(([t, secret]) => scrub(t).includes(secret) || !TAG.test(scrub(t))).map(([t]) => t)).toEqual([])
   expect(KEEP.filter((t) => scrub(t) !== t)).toEqual([])
+})
+
+test('a long digit-free run of bare key prefixes takes linear time', () => {
+  const start = Date.now()
+  expect(hasSecret(`${'sk-'}`.repeat(1e5))).toBe(false)
+  expect(Date.now() - start).toBeLessThan(5000) // 35 ms with the window, 23 s without it
 })
 
 test('redact: a URL password that is one ${...} or {{...}} placeholder is kept; a literal or <...> one is hidden', () => {

@@ -11,8 +11,8 @@ description: >-
 
 Facts come from commands, not memory. Several sessions run at once: write only what you own. The one exception is `desk tidy --apply`, which applies a fixed
 rule to other sessions' `owner` fields and orphan files; never make such a change by hand.
-`D` below is the desk CLI: the shim `<desk>/desk` (`<desk>\desk.cmd` in PowerShell or cmd), not on
-PATH and not `npx desk`. The session context names its path; it works from any folder.
+`D` below is the desk CLI: the shim `<desk>/desk` (in PowerShell or cmd, the node form), not on
+PATH and not `npx desk`. The session context names the exact command; it works from any folder.
 
 1. For each repo in `desk.config.json`: `git -C <repo path> fetch -q origin` and `git worktree list`;
    then `D status`. This session is `$CLAUDE_CODE_SESSION_ID`'s first 8 chars (`owner` without one).
@@ -24,18 +24,19 @@ PATH and not `npx desk`. The session context names its path; it works from any f
      `shared` value of `desk settings --json`, never the resolved one. Quote a verdict in `--state`
      as `<VERDICT> @<sha>`, without its `by <model>/<effort>` part: `todo.jsonl` is committed, the board is not;
    - each ruling taken in this stream that the owner may overrule: `D todo note T-n "<ruling>"`;
-     one that needs the owner first: `D todo add "<question>" --area owner --why "<options; recommendation first>"`
-     (options split on `;`; the owner sees it in the mod band and answers with `/decide`);
+     one that needs the owner first: `D todo add "<question>" --area owner --why "<context>" --option "<label>: <why>" --option "<label>: <why>"` (2-4 options, recommendation first, labels up to 60 characters)
+     (the owner sees it in the mod band and answers with `/decide`);
    - only narrative that won't fit in those fields (a long investigation) goes to
      `<desk>/streams/<slug>.md`; `desk wt merge|discard` deletes it.
-   A worktree whose PR shows `merged` in `D status` (repo with `merge: "review"`): run `D wt merge <slug>` to close it.
+   A worktree whose row says `desk wt merge <slug> to close` in `D status` (repo with `merge: "review"`): run `D wt merge <slug>` to close it.
    If the worktree stays open, post `D board post release <slug> "handed off"`.
    **Usage** (Claude Code): paste `D tokens 24 --session self` (this session and each of its agents)
    in your final message.
 3. **Shared state is todos and rulings** (default-branch shas are not written: `D status` shows them):
    - work items: `D todo done|block|note|add` for what this session finished, found blocked, decided
      or discovered;
-   - owner decisions are todos (`--area owner`); a ruling is recorded only with `D decide T-n "<ruling>"`
+   - owner decisions are todos (`--area owner`); a ruling is recorded only with the `decide` skill, or
+     `D decide T-n --pick <n>` and, for the owner's own words, `D decide T-n '<ruling>'` in single quotes
      (closes the todo and appends it to `decisions.jsonl`);
    - things to verify live: `D todo add "<what>" --area watch`; `D todo done T-n` on a watch todo
      this session verified;

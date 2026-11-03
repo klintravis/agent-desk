@@ -17,7 +17,7 @@ It ships in two parts that share one version number:
   init and sync. `desk sync` also writes the session and subagent context hook (Ponytail, the desk
   rules, the board), which Claude Code and Copilot both read.
 - **Claude Code plugin**:
-  - skills: `kickoff`, `handoff`, `orchestrate`, `walkthrough`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`
+  - skills: `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`
   - agents: `implementer`, `reviewer`, `verifier`, `archiver`, `scribe`, `ci-triage`
   - a mod: the Desk pane, the owner-decisions band, `/desk` and `/decide`, auto-compaction prune,
     cache warm-hold, the edit guard and the session meters (plan quota, context), secret redaction
@@ -38,12 +38,30 @@ and runs `npm install` (`--no-install` skips it). `npx` is only for that first i
 ```sh
 mkdir desk && cd desk
 npx github:klintravis/agent-desk init --repo app=../app
-./desk status            # from then on: the desk's shim (.\desk.cmd in PowerShell or cmd)
+./desk status            # from then on: the desk's shim (PowerShell and cmd: the node form below)
 ```
 
 `desk init` and `desk sync` write a `desk` shim (and `desk.cmd` for Windows) into the desk folder. The
 shim runs the desk's pinned kit with `DESK_HOME` set, so `<desk>/desk ...` works from any folder,
-worktrees included. Agents are told its path in their session context. Avoid `npx desk` outside the
+worktrees included. Agents are told its path in their session context.
+
+On a machine that blocks `desk.cmd`, run the kit directly with node (it selects the desk from any folder,
+worktrees included, because `DESK_HOME` wins over the current folder), or use `./desk` in Git Bash:
+
+```powershell
+$env:DESK_HOME = 'C:\path\to\desk'; node 'C:\path\to\desk\node_modules\agent-desk\bin\desk.mjs' status
+```
+
+```bat
+set "DESK_HOME=C:\path\to\desk" && node "C:\path\to\desk\node_modules\agent-desk\bin\desk.mjs" status
+```
+
+Either form leaves `DESK_HOME` set in that terminal, and it wins over the current folder; `Remove-Item Env:DESK_HOME` or `set DESK_HOME=` clears it.
+
+This still needs `node` and the kit's scripts to be allowed to run; what is allowed is the machine
+administrator's decision. Agents get the exact command for their desk in the session context.
+
+Avoid `npx desk` outside the
 desk folder, because it resolves the registry's unrelated `desk` package. The hooks and settings
 `desk sync` writes call `node <desk>/node_modules/agent-desk/...`. Until that copy is installed, the
 hooks and the shim call the kit that ran `desk sync`. A global install
@@ -136,22 +154,26 @@ engine's own summary runs instead, as it does for a manual `/compact`. A toast s
 ### Desk pane
 
 In an interactive session inside a desk, or once a surface attaches (the VS Code extension, the desktop app, a phone), the mod opens the **Desk** pane (`desk-status`) beside the
-chat. Its rows: Context, Quota, Cache with the output style (`default` when none) and Warm (the
-keep-warm toggle and why). Waiting decisions follow, with a `Decide T-n` button, then a line counting what waits
-(`1 ready to merge · 1 needs review`, in the colour of the worst, absent when nothing does), then three tabs:
-Work (active todos; agents with type, description and age, first seen on the minute tick), Branches
-(open branches, most urgent first, each one row with one state word such as `ready`, `rebase` or `fixes needed` and who holds it;
-claims with no branch; pull requests; overlaps by file, the top three and `+N more`) and Sessions (each running
-session by its transcript title, marked `this session` when it is, with its worktree, id and agents; roots; today's tokens). A card on Branches takes the border of its worst status, and the tab shows a red dot
-while one is red. The status sections refresh every minute from `desk status --json`. A band above the prompt shows
+chat. Its rows: Context, Quota, Cache with the output style (`default` when none), Warm (the
+keep-warm toggle and why), today's Tokens and Roots. Then a line counting what waits
+(`1 ready to merge · 1 needs review`, in the colour of the worst, absent when nothing does), then three tabs, the same panels as the [VS Code extension](vscode/README.md):
+**Decisions** (each waiting decision with its options and whys, and a `Decide T-n` button; a yellow dot on the tab while one waits),
+**Work**, the default (open branches, most urgent first, each one row with one state word such as `ready`, `rebase` or `fixes needed` and who holds it, and the active todos on it;
+claims with no branch; agents with type, description and age, first seen on the minute tick; pull requests; overlaps by file, the top three and `+N more`; each running
+session by its transcript title, marked `this session` when it is, with its id and agents) and
+**Todos** (what is open and not in Work, active first, then by priority, the first ten and `+N more`; owner decisions and ideas stay out, an active idea excepted). A card on Work takes the border of its worst status, and the tab shows a red dot
+while one is red. Nothing shows twice: an active todo on a branch or claim is in Work only, and an open PR is said on the Pull requests card, not again on its branch. The status sections refresh every minute from `desk status --json`. A band above the prompt shows
 `⚑ 2 decisions waiting` with a `Decide T-n` button, and the near-full context row (any session).
-Either button walks the waiting decisions in a dialog: the question and recommendation above the options,
-Other for your own words. Your answer is recorded after redaction, on one line, cut to 1000 characters (`desk decide`) and the next decision follows;
+Either button walks the waiting decisions in a dialog: the question, its context and each option's why above the options,
+Other for your own words. A chosen option records its short label; your own words are recorded after redaction, on one line, cut to 1000 characters (`desk decide`). The next decision follows;
 closing the dialog records nothing and gives the reason in a toast. A decision with fewer than 2 or more
 than 4 options shows in a toast instead and, where the surface's prompt box takes it and holds no draft,
 leaves `/decide T-n ` there: type the ruling, Enter. Otherwise type the printed Answer line.
-Two commands are registered: `/desk` opens the pane, and `/decide` shows the next decision or, as
-`/decide T-n <ruling>`, records one (it runs `desk decide`). The pane's data are plugin atoms whose
+Two commands are registered: `/desk` opens the pane, and `/decide` walks the waiting decisions in the same dialog as the button
+when the next one has 2 to 4 options, and its answer names the way out if no dialog opens. With none waiting, with other option counts, or
+where no dialog is possible, as in `-p`, it prints the next one as text. As
+`/decide T-n <ruling>` or `/decide T-n --pick <n>` it records one (it runs `desk decide`). If `/decide` is not in your slash menu, as seen in VS Code, use the plugin's
+`decide` skill: plugin skills are listed namespaced, so `/agent-desk:decide`. It does the same walk with AskUserQuestion (each option's why as its description). The pane's data are plugin atoms whose
 shapes (`status-2`, `meters-2`, `warm-1`, `style-1`, `agents-1`) are declared in `types/index.d.ts`.
 
 ## Quickstart
@@ -159,7 +181,7 @@ shapes (`status-2`, `meters-2`, `warm-1`, `style-1`, `agents-1`) are declared in
 ```sh
 mkdir desk && cd desk
 npx github:klintravis/agent-desk init --repo app=../app --repo api=../api --repo notes=../notes
-# `desk` below is the desk's shim: ./desk (bash), .\desk.cmd (PowerShell or cmd), <desk>/desk elsewhere
+# `desk` below is the desk's shim: ./desk (bash), <desk>/desk elsewhere (PowerShell or cmd: the node form above)
 # edit desk.config.json: install/build/check per repo, gh where CI lives on GitHub
 desk sync
 desk todo add "first piece of work" --area app
@@ -232,7 +254,7 @@ that holds `desk.config.json`. `desk init` ignores `DESK_HOME` and always uses t
 | `desk status [--watch\|--json]` | One screen with these sections: owner decisions, active todos, claims, running sessions, roots, open branches (CI and verdict, and `behind <default> by N, rebase` when the branch lacks N commits of `origin/<default>`, from the refs as last fetched, or of the local default branch without an origin), pull requests, overlaps, today's tokens. `--watch` prints one line per change. Pull requests: for each open desk branch with an open PR in a repo with `gh`, the review decision, the comment count (conversation and review threads), unresolved threads, and comments or reviews newer than the branch's head commit. Read-only, one `gh api graphql` call per repo; with no `gh` or a failing call the section is left out. `--watch` prints `PR: <branch> #<n> review <decision>, +N comment(s)` when a decision changes or comments arrive. See [Status watch](#status-watch). |
 | `desk todo add\|split\|start\|done\|drop\|block\|open\|set\|note\|done-slug\|list\|next\|show` | Todos. The area is a repo id, `desk`, `watch`, `owner` or `idea`. See [Todos](#todos). |
 | `desk board post\|claims\|check\|merge-ok\|tail` | The claim board. Its text is data, never approval. See [Board](#board). |
-| `desk decide [T-n <ruling> \| --list [n]]` | Owner decisions, one at a time; `--list` prints the recorded rulings. See [Owner decisions](#owner-decisions). |
+| `desk decide [T-n <ruling> \| T-n --pick <n> \| --json \| --list [n]]` | Owner decisions, one at a time; `--pick` records the nth option's label; `--json` prints the first waiting one as JSON; `--list` prints the recorded rulings. See [Owner decisions](#owner-decisions). |
 | `desk tidy [--apply] [--json]` | Reports what finished work left behind; `--apply` clears dead owners, deletes orphans and asks the owner once. See [Tidy](#tidy). |
 | `desk wt new\|finish\|rebase\|merge\|remove\|discard <slug> [--repo <id>] [--base <ref>] [--no-build] [--no-wait] [--rebased] [--force] [--into <slug>] [--findings <file>]` | Worktrees. See [Worktree flow](#worktree-flow). |
 | `desk stream <slug> <task-file> [--todo T-n] [--desk] [--repo <id>] [--max-turns <n>] [--budget <usd>] [--dry-run]` | Starts a detached headless Claude session that claims, implements, reviews and stops before merge. See [Streams](#streams). |
@@ -310,7 +332,8 @@ Under `review`, agents never merge into a protected branch (every branch outside
   the PR state.
 - A person merges on the server (squash and rebase work). Re-run `desk wt merge <slug>`: it asks
   `gh` for the PR state, then closes the worktree, branch, claim and todos. `desk status` and the
-  Desk pane show `PR #n merged: desk wt merge <slug> to close`.
+  Desk pane show `PR #n merged: desk wt merge <slug> to close` (just `PR #n merged` when that PR's head
+  does not hold the branch's head: a new commit or a reused slug).
 - `desk wt remove` on an unmerged `review` branch points to `desk wt merge`.
 
 **Only the server rule is a guarantee.** Set a branch protection rule or ruleset on the default
@@ -319,7 +342,9 @@ dismisses stale approvals. Nothing below replaces it:
 
 - **The merge guard** (Claude plugin; `scripts/merge-guard.mjs` is the same check as a standalone
   `PreToolUse` script) refuses an agent's `git push` or `git merge` to a protected
-  branch, and `gh pr merge`, in Bash and PowerShell. It is a best-effort parse and fails open.
+  branch, and `gh pr merge`, in Bash and PowerShell. It is a best-effort parse. A line it cannot
+  read that names `push` or `merge`, or has a backslash after `$'`, is refused on any desk with a `review` repo; its other errors
+  (git, a broken config) allow the command.
   Tag pushes (`refs/tags/*`, `--tags`) pass; a bare `git push origin v1.2` is refused.
 - **The `desk.config.json` deny**: on a desk with a `review` repo, `desk sync` denies the file-edit
   tools on that file, and `desk check` warns when the setting changed against upstream. It stops
@@ -329,7 +354,7 @@ dismisses stale approvals. Nothing below replaces it:
 
 Known not to be covered: Bash or PowerShell edits of `desk.config.json`, a `cd` that the guard
 cannot follow (`popd`, `cd -`), `bash -c`, `eval`, scripts and aliases, `$VAR` and `$(...)` as
-branch names, escapes inside `$'...'` (`git $'pu\x73h'`), PowerShell `$x += git push`, `gh api` ref writes, local commits on the main checkout (their push is refused),
+branch names, bash `git {push,} origin main`, `a[ 0 ]=x git push`, `a[x y]=x git push`, `a["]"]=x git push`, `a[b[0]]=x git push`, `env GH_REPO=o/a GH_REPO+=b gh pr merge` (env sets `GH_REPO+`, read here as an append), `GH_REPO=o/a env GH_REPO+=b gh pr merge 1`, `echo ${x:-$(git push)}`, `echo ${x:-'}'}; git push #'` (a `${...}` ends at its first `}`, whatever the quotes), `` echo `echo '`; git push; echo `echo '` `` (a backtick body with an odd quote is read past its backtick), PowerShell `[string] $x = git push` (spaced type), `$a[$i + 1] = git push`, `$a[ 0 ] = git push`, `($a,$b) = git push`, `$o.($k) = git push`, `$o[($k)] = git push`, `[Console]::Title = git push`, `$a <# x #> = git push`, `<# x #> git push`, `return git push`, `$(git push)` inside `@"..."@`, `@{ x = git push }` and its family (a PowerShell hashtable value whose key is only a `$(...)`, sits in parentheses, or has no `$`: `@{ "$(a)" = git push origin main }`, `@{ "$()" = ... }`, `@{ ("$x") = ... }`, `@{ "x" = ... }`, `@{ $() = ... }`), `. git push` and PowerShell 7's ``"pu`u{73}h"``, a quote spanning two lines of a heredoc fed to a shell, `gh api` ref writes, local commits on the main checkout (their push is refused),
 Copilot, and any session without the plugin or the synced settings. `git push` with no refspec under
 `push.default=upstream` goes to the upstream while the guard judges the current branch: a worktree
 made from `origin/<defaultBranch>` tracks it until its first `desk wt finish`, so there it reaches
@@ -347,7 +372,7 @@ not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <rep
 `todo drop T-n` to let it go.
 
 - `todo add "<title>" [--area <repo id>|desk|owner|watch|idea] [--size ...] [--prio N] [--why ".."] [--parent T-n]
-  [--summary "<about 50 characters>"] [--change <spec change>] [--tasks 2.1-2.3] [--model sonnet/medium]`. With one repo `--area` defaults
+  [--option "<label>: <why>"]... [--summary "<about 50 characters>"] [--change <spec change>] [--tasks 2.1-2.3] [--model sonnet/medium]`. With one repo `--area` defaults
   to it; with several, `--area` is required. `--prio` must be an integer (anything else exits 1 and
   writes nothing). `--` ends the flags, so a title that starts with `--` is `todo add -- "--foo"`.
   A flag with no value, or whose value starts with `--`, exits 1 and writes nothing (`--all` takes none).
@@ -382,10 +407,28 @@ not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <rep
 
 ### Owner decisions
 
-`desk decide` prints the first waiting `owner` todo: its title, the recommendation (the first of the
-todo's `--why`, split on `;`) and the other options. `desk decide T-n "<ruling>"` appends
-`{date, todo, title, text}` to `decisions.jsonl`, then closes the todo. `desk decide --list [n]` prints
-the last `n` rulings (default 20), oldest first.
+Write a decision with options, the recommendation first:
+
+```
+desk todo add "Refuse an unparseable push?" --area owner --why "The guard cannot read every line." \
+  --option "Refuse: a hidden push cannot slip through, at the cost of rare false refusals" \
+  --option "Allow as before: no false refusals, but a hidden push can pass"
+```
+
+`--option "<label>: <why>"` is repeatable and splits at the first `: `. Give 2 to 4, with labels of at most 60
+characters (the dialogs take 2-4 short labels); anything else is refused. `--why` is then the context of the
+question. A todo with only `--why` still displays: its text is split on `;` into options, and `Label: rationale`
+parts are read as label and why only when every part has a short, distinct label other than `Recommended`, `other` or `or`.
+
+`desk decide` prints the first waiting `owner` todo: its title, its context, the recommendation and the other
+options, numbered from 1, each with its why under it. `desk decide --json` prints the same decision as
+`{id, title, context, options: [{label, why}]}`, or `null` when none waits. `desk decide T-n '<ruling>'` appends
+`{date, todo, title, text}` to `decisions.jsonl`, then closes the todo: choosing an option records its label, and
+your own words are allowed too. `desk decide T-n --pick <n>` records the nth option's label, counted from 1 as `--json`
+lists them, so the label never crosses a shell; `--pick` counts only as its own argument, so one argument reading
+`--pick 3` is plain text. A position that is not a whole number or out of range, or a todo with no options, exits 1 and
+closes nothing. A ruling shaped like a secret also exits 1, recording nothing and closing nothing,
+since `decisions.jsonl` is committed. `desk decide --list [n]` prints the last `n` rulings (default 20), oldest first.
 
 ### Tidy
 
@@ -438,9 +481,11 @@ and its sha), Open branches (CI and review
 verdict per branch, and `behind <default> by N, rebase`), Pull requests (when a repo has `gh`), Overlaps and Tokens today. A source that
 cannot be read prints `unavailable`; the command never fails.
 
-`desk status --json` prints the same data as one JSON object (`decisions`, `active`, `claims`,
+`desk status --json` prints the same data as one JSON object (`decisions`, `active`, `todos`, `claims`,
 `sessions`, `roots`, ..., plus `text`, the screen above), validated by `schemas/desk-status.schema.json`.
-The Desk pane reads it.
+`todos` is what is open, active or blocked and not in Work (an active todo whose slug has a branch or claim is in Work), without owner decisions and with an idea only while it is active.
+Each branch carries `state`, one word (`ready`, `needs review`, `rebase`, `fixes needed`, `CI failed`, ...) computed
+by the rule `desk wt merge` uses; the Desk pane and the VS Code sidebar read it and do not parse CI or verdict text.
 
 `desk status --watch` (run it under a monitor) checks every 90 seconds and prints one line per change:
 `BOARD: <json>` for a new board line, `CI: <branch> <sha> completed <conclusion>`,
@@ -530,7 +575,7 @@ warn. Removing a value removes the key at the next full `desk sync`. A key writt
 | Part | Files |
 |---|---|
 | Plugin | `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `hooks/hooks.json` (registers `./register.ts`) |
-| Skills | `kickoff`, `handoff`, `orchestrate`, `walkthrough`, and the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt` |
+| Skills | `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, and the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt` |
 | Agents | `implementer`, `reviewer`, `verifier`, `archiver`, `scribe`, `ci-triage` |
 | Templates for `desk init` | `templates/AGENTS.md`, `templates/agent-rules.md` |
 | JSON Schemas of the desk files | `schemas/desk-config.schema.json`, `schemas/todo.schema.json`, `schemas/board.schema.json`, `schemas/decisions.schema.json` |
@@ -638,7 +683,7 @@ folder. Open the desk folder, or the generated `.code-workspace`, in VS Code.
 | Agents (implementer, reviewer, verifier, archiver, scribe, ci-triage) | plugin | `.github/agents/<name>.agent.md`. `model` is dropped (use the picker); `effort` becomes `reasoning-effort`; tools map to Copilot's `read`, `search`, `edit`, `execute`, `web`, `agent`. |
 | Ponytail and `agent-rules.md` at session and subagent start, plus the board at session start | `SessionStart`/`SubagentStart` hooks in `.claude/settings.local.json` | the same hooks: Copilot reads `.claude/settings.json` and `settings.local.json` |
 | `desk` CLI: todos, board, status, worktrees, merge gate, decide | yes | yes |
-| Desk pane, owner-decisions band, `/desk`, `/decide` | yes (mod) | no |
+| Desk pane, owner-decisions band, `/desk`, `/decide` | yes (mod) | no (the `decide` skill walks the decisions) |
 | Auto-compaction prune, cache warm-hold | yes (mod) | no |
 | Edit guard (refuses `sed -i` and heredoc edits) | yes (mod) | no |
 | `desk tokens`, running sessions in `desk status` | yes (reads Claude transcripts) | no |
@@ -682,9 +727,11 @@ for Bash, if you wire it into another harness yourself. Both do nothing outside 
 - `chat.useClaudeHooks`: the older Local harness reads the `.claude/settings*.json` hooks only with
   this on. The Copilot harness reads them by default.
 - `github.copilot.chat.skillTool.enabled`: turn it on so agents can load the `.github/skills`.
-- Claude-only, with no Copilot equivalent: the Desk pane and band, `/desk` and `/decide`,
+- Claude-only, with no Copilot equivalent: the Desk pane and band, `/desk`,
   auto-compaction prune, warm-hold, the edit guard, `desk tokens`, running sessions in
-  `desk status`, and `desk stream`.
+  `desk status`, and `desk stream`. The mod's `/decide` is Claude-only too, but `desk sync` copies
+  the `decide` skill to `.github/skills`: where AskUserQuestion is not available it prints the
+  options and asks for a free answer.
 
 ## Versioning and upgrade
 
@@ -705,6 +752,7 @@ To upgrade:
    sections it did not migrate), a generated `TODO.md` is deleted, and the shipped `AGENTS.md` lines
    that named `NEXT.md` or `TODO.md` are replaced. Edit by hand only the lines sync names, then commit.
 5. Update the plugin: `/plugin marketplace update agent-desk`.
+6. If you use the VS Code extension, install the `.vsix` from the GitHub release: `code --install-extension agent-desk-vX.Y.Z.vsix`.
 
 Until step 4, `desk check` warns that `kitVersion` differs from the installed kit.
 
@@ -728,15 +776,23 @@ publish.
 1. On a branch, run `node scripts/release.mjs bump <x.y.z>`. It needs `x.y.z` greater than the current
    version and entries under `## Unreleased`; it sets the version in `package.json`,
    `.claude-plugin/plugin.json` and `vscode/package.json` and moves the entries to `## <x.y.z> - <date>`.
-2. Review the branch, merge it to `develop`, wait for CI.
+2. Review the branch, merge it to `develop`, wait for CI. When the release touches the merge `review` path
+   (`desk wt merge` under `merge: "review"`), also run `node scripts/gh-review-live.mjs` from a checkout of the
+   private repo. It is a live test of the `gh` calls: it pushes two throwaway branches (`agent/gh-live-base-<id>`,
+   `agent/gh-live-head-<id>`, empty commits marked `[skip ci]`), lists PRs for the head, opens a PR between them
+   (never against `develop`), updates it, merges it on the server, deletes the head and checks that the merged
+   commit is reachable from `pull/<n>/head` (the proof `desk wt merge` uses to close), checking the state each time.
+   It then deletes both branches, and closes the PR only if it is still open (a merged PR is not closed), even on
+   failure. It refuses an `origin` with more than one push URL, or one that `gh repo view` does not report as private; it prints `ok` and
+   exits 0, or `FAILED: ...` and exits 1.
 3. Fast-forward `main` to that `develop` commit, push it, tag it and push the tag:
    `git tag vX.Y.Z && git push origin main vX.Y.Z`.
 4. With `main` checked out at the tag, run `node scripts/release.mjs publish vX.Y.Z`. It makes one commit
    from the tag's tree on top of the public `main` and pushes it with the tag, so the private history
    stays private. Never push a private branch or tag to `public`.
 5. `.github/workflows/release.yml` runs on the tag and skips a private repo. It fails unless the tagged
-   commit is on `main`, runs `npm test`, writes the CHANGELOG section to `notes.md` and creates the
-   GitHub release from it.
+   commit is on `main`, runs `npm test`, writes the CHANGELOG section to `notes.md`, packages the VS Code
+   extension and creates the GitHub release from them, with `agent-desk-vX.Y.Z.vsix` attached.
 
 `node scripts/release.mjs notes vX.Y.Z` prints that section and exits 1 unless the tag is `v` plus the
 version in all three files and the CHANGELOG has the section. To create a release by hand after step 4, run

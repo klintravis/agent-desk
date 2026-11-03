@@ -81,6 +81,9 @@ Section names are README headings.
 | area `watch` | `bin/desk.mjs` `next`, `lib/sync.mjs` `migrateDesk` | Todos |
 | area `idea` | `bin/desk.mjs` `next`, `tree` | Todos |
 | `--list` (decide) | `bin/desk.mjs` `decide`, `rulingsText` | Owner decisions |
+| `--json` (decide) | `bin/desk.mjs` `decide`, `decisionOf`, `hooks/pane.tsx`, `vscode/desk.js` `nextDecision` | Owner decisions |
+| `--pick` (decide) | `bin/desk.mjs` `decide`, `decisionOf`, `skills/decide/SKILL.md` | Owner decisions |
+| `--option` | `bin/desk.mjs` `flags`, `parseOptions` | Owner decisions |
 | `--size` | `bin/desk.mjs` `todoLine` (any field via `flags`) | Todos |
 | `--prio` | `bin/desk.mjs` `flags` | Todos |
 | `--` (end of flags) | `bin/desk.mjs` `flags` | Todos |
@@ -166,9 +169,10 @@ Section names are README headings.
 | Auto-compaction prune | `hooks/register.ts` `session.compact`, `hooks/prune.ts` | Auto-compaction prune |
 | Warm-hold | `hooks/warmhold.ts` `tick`, `register.ts` `session.start`; status shown in the pane Warm row | Warm-hold (in a desk) |
 | keep-warm toggle | `hooks/pane.tsx` Warm row Button, `warm` atom, `Deps.off` | Warm-hold (in a desk) |
+| pane tabs Decisions, Work, Todos | `hooks/pane.tsx` `tabs`, `tab`; `todos` from `bin/desk.mjs` `statusData` | Desk pane |
 | pane row Style, Work tab Agents | `hooks/pane.tsx`, `register.ts` `prompt.compose`, minute tick `trackAgents` | Desk pane |
 | pane attention colours | `hooks/pane.tsx` `quotaColor`, `prColor`, `worst`, `branchColor`, `ACCENT` | Desk pane |
-| pane branch rows, headline, overlaps | `hooks/pane.tsx` `branchState`, `branchNote`, `headline`, `overlapRows`; `hooks/prtext.mjs` `prText` (also `desk status`) | Desk pane |
+| pane branch rows, headline, overlaps | `bin/desk.mjs` `branchWord` (the state word, shared with `wt merge` through `conclusion` and `mergeOk`); `hooks/pane.tsx` `branchState`, `branchNote`, `headline`, `overlapRows`; `hooks/prtext.mjs` `prText` (also `desk status`) | Desk pane |
 | Cold-cache guard | `hooks/warmhold.ts` `coldSend`, `register.ts` `prompt.submit` | Cold-cache guard |
 | Edit guard | `hooks/editguard.mjs` `verdict`, `register.ts` `tool.call` | Claude Code and GitHub Copilot |
 | Merge guard | `hooks/mergeguard.mjs` `verdict`, `register.ts` `tool.call` | Merge policy |
@@ -178,8 +182,8 @@ Section names are README headings.
 | Desk pane | `hooks/pane.tsx` `startPane`, `registerPane`; `register.ts` `session.start`, `session.attach` | Desk pane |
 | owner-decisions band | `hooks/pane.tsx` `ui.render` `AbovePrompt` | Desk pane |
 | `/desk` | `hooks/pane.tsx` `command.run` desk | Desk pane |
-| `/decide` | `hooks/pane.tsx` `command.run` decide, `runDecide` | Desk pane |
-| `Decide T-n` press | `hooks/pane.tsx` `ask`, `printedDecision`, `runDecide` | Desk pane |
+| `/decide` | `hooks/pane.tsx` `command.run` decide, `typedArgs`, `runDecide`, `ask` (no arguments: the dialog walk) | Desk pane |
+| `Decide T-n` press | `hooks/pane.tsx` `ask`, `decisionLines`, `runDecide` | Desk pane |
 | status line | `hooks/meters.ts` `paint`, `line`, `bar` | Session meters |
 | `desk-status` schema | `schemas/desk-status.schema.json`, `lib/schema.mjs` `schemaTest` | Status watch |
 | Plan quota | `hooks/quota.ts` `quotaLine` | Session meters |
@@ -219,9 +223,10 @@ Section names are README headings.
 | `hooks/tsconfig.json` | compiler settings for `npm run typecheck` (hooks and their tests, strict, `noUncheckedIndexedAccess`) | Versioning and upgrade |
 | `scripts/release.mjs bump` | `scripts/release.mjs` `bump` | Versioning and upgrade |
 | `scripts/release.mjs notes` | `scripts/release.mjs` `notes` | Versioning and upgrade |
+| `scripts/gh-review-live.mjs` | `scripts/gh-review-live.mjs`: live gh test of the merge review path on the private repo (throwaway PR: list, create, update, server merge, close proof, cleanup) | Versioning and upgrade |
 | `scripts/release.mjs publish` | `scripts/release.mjs` `publish`: one commit from the tag's tree on the public `main`, with the tag | Versioning and upgrade |
 | `.github/workflows/ci.yml` | push and pull request: `npm test` with Node 20 and 22, and `claude plugin test` on Node 22 with a pinned Claude Code CLI; self-hosted runner on a private repo, hosted Linux, Windows and macOS otherwise | Versioning and upgrade |
-| `.github/workflows/release.yml` | tag `v*` push (skipped on a private repo): `npm test`, gate on `main`, GitHub release | Versioning and upgrade |
+| `.github/workflows/release.yml` | tag `v*` push (skipped on a private repo): `npm test`, gate on `main`, package `vscode/` with a pinned vsce, GitHub release with the vsix attached | Versioning and upgrade |
 
 ## Skills, agents, templates
 
@@ -234,6 +239,7 @@ Section names are README headings.
 | `ponytail-review` | `skills/ponytail-review/SKILL.md` | What is in the kit |
 | `ponytail-audit` | `skills/ponytail-audit/SKILL.md` | What is in the kit |
 | `ponytail-debt` | `skills/ponytail-debt/SKILL.md` | What is in the kit |
+| `decide` | `skills/decide/SKILL.md` | What is in the kit |
 | `walkthrough` | `skills/walkthrough/SKILL.md` | What is in the kit |
 | `implementer` | `agents/implementer.md` | What is in the kit |
 | `reviewer` | `agents/reviewer.md` | What is in the kit |
@@ -306,13 +312,13 @@ Section names are README headings.
 
 | item | where in code | README section |
 |---|---|---|
-| Agent Desk view (Desk, shown when a root holds `desk.config.json`) | `vscode/package.json` `contributes.views`, `vscode/extension.js` `activate` | VS Code extension |
+| Agent Desk views (Decisions, Work and Todos, shown when a root holds `desk.config.json`) | `vscode/package.json` `contributes.views`, `vscode/extension.js` `activate` | VS Code extension |
 | Refresh command (`agentDesk.refresh`), every 60 seconds and on the view button | `vscode/extension.js` `activate` | VS Code extension |
 | Decide command (`agentDesk.decide`), quick pick over waiting decisions | `vscode/extension.js` `activate`, `askRuling` | VS Code extension |
 | Waiting-decisions badge | `vscode/extension.js` `activate` | VS Code extension |
 | Desk lookup and CLI run | `vscode/desk.js` `findDesk`, `run` | VS Code extension |
-| Status tree from `desk status --json` | `vscode/desk.js` `parseStatus`, `statusTree` | VS Code extension |
-| Ruling recorded with `desk decide`, secret refused | `vscode/desk.js` `printedDecision`, `record` | VS Code extension |
+| Views Decisions, Work, Todos from `desk status --json` | `vscode/package.json`, `vscode/extension.js` `VIEWS`, `vscode/desk.js` `parseStatus`, `statusTree`, `workRows`, `branchState` | VS Code extension |
+| Ruling recorded with `desk decide`, secret refused | `vscode/desk.js` `nextDecision`, `decisionPicks`, `record` | VS Code extension |
 
 ## README check
 

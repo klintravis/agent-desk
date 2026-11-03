@@ -76,6 +76,15 @@ test('init writes the desk once and keeps what exists', () => {
   assert.notEqual(desk(tmp(), 'init', '--no-install', '--repo', 'x=missing').status, 0, 'a missing path is refused');
 });
 
+test('init hint: both shell forms, the running kit when none is installed, apostrophes doubled', () => {
+  const home = join(tmp(), "it's");
+  mkdirSync(home);
+  const out = ok(desk(home, 'init', '--no-install'));
+  const mjs = join(KIT, 'bin', 'desk.mjs');
+  assert.ok(out.includes(`PowerShell: \`$env:DESK_HOME = '${home.replace(/'/g, "''")}'; node '${mjs}' sync\``), out);
+  assert.ok(out.includes(`cmd: \`set "DESK_HOME=${home}" && node "${mjs}" sync\``), out);
+});
+
 test('init writes into the cwd, not the desk DESK_HOME names', () => {
   const other = tmp(), here = tmp();
   ok(desk(other, 'init', '--no-install'));

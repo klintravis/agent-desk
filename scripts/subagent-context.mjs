@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname, resolve, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findDesk, loadConfig } from '../lib/config.mjs';
+import { findDesk, loadConfig, deskKit, psq } from '../lib/config.mjs';
 
 const quiet = () => { process.stdout.write('{}'); process.exit(0); };
 let input = {};
@@ -41,7 +41,8 @@ let rules = '';
 for (const f of [join(home, 'agent-rules.md'), join(home, '.claude', 'agent-rules.md')]) {
   try { rules = '\n' + readFileSync(f, 'utf8'); break; } catch {}
 }
-rules += `\n- The desk command (\`desk ...\` in the rules and skills) is not on PATH: run \`"${home.replace(/\\/g, '/')}/desk" ...\` in bash, \`& "${join(home, 'desk.cmd')}" ...\` in PowerShell or cmd. Not \`npx desk\`.\n`;
+const deskMjs = join(deskKit(home), 'bin', 'desk.mjs');
+rules += `\n- The desk command (\`desk ...\` in the rules and skills) is not on PATH: run \`"${home.replace(/\\/g, '/')}/desk" ...\` in bash; in PowerShell \`$env:DESK_HOME = ${psq(home)}; node ${psq(deskMjs)} ...\`; in cmd \`set "DESK_HOME=${home}" && node "${deskMjs}" ...\`. Not \`npx desk\`.\n`;
 
 // Output styles do not reach subagents (own system prompt): the desk's style is asked for in a rule.
 const style = (() => { try { return loadConfig(home).outputStyle; } catch { return ''; } })();

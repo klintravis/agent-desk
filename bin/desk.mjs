@@ -9,7 +9,7 @@
 //        desk todo <add|split|start|done|...|list|next|show> ...   (see TODO below)
 //        desk tokens [hours=24] [--json] [--session <id8>|self] [--by-worktree]   (--by-worktree: one row per worktree)
 //        desk overlap
-//        desk decide [T-n <ruling> | --list [n]]   owner decisions one at a time; rulings in decisions.jsonl (see DECIDE below)
+//        desk decide [T-n <ruling> | T-n --pick <n> | --json | --list [n]]   owner decisions one at a time; rulings in decisions.jsonl (see DECIDE below)
 //        desk tidy [--apply] [--json]   report leftovers; --apply clears dead owners, deletes orphans, asks once (lib/tidy.mjs)
 //        desk wt new|finish|rebase|merge|remove|discard <slug> [--repo <id>] ...   (lib/wt.mjs)
 //        desk stream <slug> <task-file> [--todo T-n] [--desk] [--repo <id>] [--max-turns 80] [--budget <usd>] [--dry-run]
@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { KIT, kitVersion, deskKit, findDesk, deskHome, config, repoFor, worktreeList, gitRepos, baseRef, hasOrigin, projectPrefixes, isDeskProject, resolveSettings, userLayer } from '../lib/config.mjs';
 import { prText } from '../hooks/prtext.mjs';
+import { hasSecret } from '../hooks/secretpatterns.mjs';
 export { deskHome, config };
 
 // ---- lib ----
@@ -67,6 +68,31 @@ export function mergeOk(lines, slug, head) {
   const m = v && /^MERGE @([0-9a-f]{7,40})\b/.exec(v.text);
   if (!m) return v ? `newest verdict is "${v.text}"` : 'no verdict on the board';
   return head.startsWith(m[1]) ? null : `verdict covers ${m[1]}, head is ${head.slice(0, 7)}: commits after the review`;
+}
+
+// A commit can have several workflow runs: '' while none exists yet, 'running' while any is open,
+// 'success' only when every run succeeded or was skipped, else the first other conclusion.
+export const PASS = ['success', 'skipped'];
+export function conclusion(runs) {
+  if (!runs.length) return '';
+  if (runs.some((r) => r.status !== 'completed')) return 'running';
+  const bad = runs.find((r) => !PASS.includes(r.conclusion));
+  return bad ? bad.conclusion || 'failure' : 'success';
+}
+
+const VERDICT_SHA = /@([0-9a-f]{7,40})\b/;
+// The one word for where a branch stands, for the status readers (pane, sidebar). `wt merge` does not call it: it goes through mergeGates.
+// ci: conclusion() of the runs of the head, or 'none' (no run at all), 'old' (runs, none on the head), 'unknown' (gh unavailable), 'skip' (repo without gh).
+// 'ready' follows the gate's rules (CI success or no gh, and mergeOk), not the gate itself.
+// shortcut: only the newest 40 runs per repo, query by commit when an idle reviewed branch must still read ready
+export function branchWord({ ci, board, slug, head, behind }) {
+  const v = board.filter((l) => l.kind === 'verdict' && l.slug === slug).at(-1)?.text ?? '';
+  const sha = VERDICT_SHA.exec(v)?.[1];
+  if (!['running', 'success', 'none', 'old', 'unknown', 'skip'].includes(ci)) return 'CI failed';
+  if (/^(FIXES|DO NOT|MERGE AFTER)/.test(v) && (!sha || head.startsWith(sha))) return 'fixes needed';
+  if (behind) return 'rebase';
+  if (ci === 'success' || ci === 'skip') return mergeOk(board, slug, head) ? 'needs review' : 'ready';
+  return { running: 'CI running', old: 'CI stale', none: 'no CI yet' }[ci] ?? 'CI unknown';
 }
 
 const fmt = (l) => `${l.ts.slice(5, 16).replace('T', ' ')} ${l.from} ${l.kind} ${l.slug}${l.text ? ' - ' + l.text : ''}`;
@@ -133,6 +159,7 @@ function boardTest() {
 // with `todo set T-n --area <repo id>`). Legacy `repo` means the first repo.
 // TODO: todo add "<title>" [--area <repo id>|desk|owner|watch|idea] [--size tiny|small|medium|large] [--prio N]
 //                         [--why ".."] [--summary "<~50 chars, the Desk pane's one row>"] [--parent T-n] [--change <spec change>] [--tasks 2.1-2.3] [--model sonnet/medium]
+//                         [--option "<label>: <why>"]...   (an owner decision's choices, 2-4, recommendation first, label at most 60 characters; `why` is then the context)
 //                         (no --area: the only repo; with several repos --area is required; --prio must be an integer;
 //                          `--` ends the flags, so a title may start with "--": todo add -- "--foo")
 //        todo split T-n "<child title>" ["<child title>" ...]   (children inherit area/change/prio)
@@ -190,22 +217,41 @@ export function tree(t, { area, all } = {}) {
 const repos = () => tryOr(() => config().repos, []);
 
 function flags(argv) {
-  const f = {}, rest = [];
+  const f = {}, rest = [], option = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--') { rest.push(...argv.slice(i + 1)); break; } // end of flags: what follows is text, even "--foo"
     if (!argv[i].startsWith('--')) { rest.push(argv[i]); continue; }
     const k = argv[i].slice(2);
     if (k === 'all') { f.all = true; continue; } // value-less: never eats the next argument
+    if (k === 'options') { console.error('--options is not a flag: give each option with --option "<label>: <why>"'); process.exit(1); }
     const v = argv[i + 1];
-    if (v === undefined || v.startsWith('--')) { console.error(`--${k} needs a value; a title starting with -- goes after --`); process.exit(1); }
-    f[k] = v; i++;
+    // After clean: a label is stored cleaned, so a leading space or control character must not carry `--pick 3` past this.
+    if (v === undefined || clean(v).startsWith('--')) { console.error(`--${k} needs a value; a title starting with -- goes after --`); process.exit(1); }
+    if (k === 'option') option.push(v); else f[k] = v;
+    i++;
   }
+  if (option.length) f.options = parseOptions(option);
   if ('prio' in f) {
     if (!/^-?\d+$/.test(f.prio ?? '')) { console.error(`--prio needs an integer, got ${f.prio === undefined ? 'nothing' : `"${f.prio}"`}`); process.exit(1); }
     f.prio = Number(f.prio);
   }
-  for (const k of Object.keys(f)) if (typeof f[k] === 'string') f[k] = clean(f[k], k === 'why' ? 1000 : k === 'summary' ? 60 : 300); // an owner question's why holds its options; a summary is one pane row
+  for (const k of Object.keys(f)) if (typeof f[k] === 'string') f[k] = clean(f[k], k === 'why' ? 1000 : k === 'summary' ? 60 : 300); // an old owner question's why holds its options; a summary is one pane row
   return { f, rest };
+}
+
+// `--option "<label>: <why>"`, split at the first `: `. The dialogs take 2-4 short labels, and a label is what a choice records.
+function parseOptions(raw) {
+  const die = (m) => { console.error(`--option: ${m}`); process.exit(1); };
+  if (raw.length < 2 || raw.length > 4) die(`give 2 to 4 options, recommendation first; got ${raw.length}`);
+  const opts = raw.map((v) => {
+    const s = clean(v, Infinity), i = s.indexOf(': ');
+    const label = (i < 0 ? s : s.slice(0, i)).trim(), why = i < 0 ? '' : clean(s.slice(i + 2), 1000);
+    if (!label) die(`an option needs a label before the first ": ": ${clean(v, 60)}`);
+    if (label.length > 60) die(`the label is over 60 characters, put the rationale after the first ": ": ${label.slice(0, 60)}...`);
+    return why ? { label, why } : { label };
+  });
+  if (new Set(opts.map((o) => o.label)).size !== opts.length) die('two options have the same label');
+  return opts;
 }
 
 export function todo([cmd, ...argv]) {
@@ -499,20 +545,20 @@ const ghRuns = (n) => {
 // in `gh pr list`). Read-only; null when no repo has `gh` or a call fails, and the section is left out.
 // PR review state is ported from pr-pulse (MIT, THIRD-PARTY.md).
 const PR_QUERY = `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){pullRequests(states:OPEN,first:50,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{
-number headRefName reviewDecision comments(last:50){totalCount nodes{createdAt}} reviews(last:50){nodes{submittedAt}}
+number headRefName isCrossRepository reviewDecision comments(last:50){totalCount nodes{createdAt}} reviews(last:50){nodes{submittedAt}}
 reviewThreads(first:100){nodes{isResolved comments(last:20){totalCount nodes{createdAt}}}} commits(last:1){nodes{commit{committedDate}}}}}}}`;
 const ghPrs = () => {
   const rs = config().repos.filter((r) => r.gh);
   return rs.length ? rs.flatMap((r) => {
     const [owner, name] = r.gh.split('/');
     const out = execFileSync('gh', ['api', 'graphql', '-F', `owner=${owner}`, '-F', `name=${name}`, '-f', `query=${PR_QUERY}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15e3 });
-    return JSON.parse(out).data.repository.pullRequests.nodes.map((p) => ({ ...prState(p), repo: r.id }));
+    return JSON.parse(out).data.repository.pullRequests.nodes.filter((p) => !p.isCrossRepository).map((p) => ({ ...prState(p), repo: r.id }));
   }) : null;
 };
 // Every state, for the rows under merge "review"; a repo whose call fails leaves its rows without `pr`.
 const ghReviewPrs = () => config().repos.filter((r) => r.merge === 'review' && r.gh).flatMap((r) =>
   // shortcut: the newest 100 PRs, a branch whose PR is older shows no PR; page or query per branch when a repo has more
-  tryOr(() => JSON.parse(gh(r.gh, 'pr', 'list', '--state', 'all', '--limit', '100', '--json', 'number,state,headRefName,url,isCrossRepository')).filter((p) => !p.isCrossRepository).map((p) => ({ ...p, repo: r.id })), []));
+  tryOr(() => JSON.parse(gh(r.gh, 'pr', 'list', '--state', 'all', '--limit', '100', '--json', 'number,state,headRefName,headRefOid,url,isCrossRepository')).filter((p) => !p.isCrossRepository).map((p) => ({ ...p, repo: r.id })), []));
 // One PR, flattened: comments (conversation + review threads), unresolved threads, and the comments and
 // reviews newer than the head commit (feedback the branch has not answered yet).
 export function prState(p) {
@@ -532,17 +578,26 @@ export function prState(p) {
 // branches: slug -> { branch, repo } (default agent/<slug>); runs of another repo never match.
 // roots: the repo entries of desk.config.json. A branch of a repo without `gh` shows CI "-".
 // behind: slug -> { n, base } (commits the default branch has that the branch lacks); set when n > 0.
+// held: slug -> whether the merged PR holds the local head (gatherStatus asks git); absent means unknown, not stale.
+const prFor = (reviewPrs, b) => {
+  const mine = reviewPrs.filter((x) => x.headRefName === b.branch && (!b.repo || x.repo === b.repo));
+  return mine.find((x) => x.state === 'OPEN') ?? mine.toSorted((x, y) => y.number - x.number)[0];
+};
 // reviewPrs: PRs of every state from the repos under merge "review", one per row at most.
-export function statusData({ t, board, rows, runs, prs = null, reviewPrs = [], heads, behind = new Map(), branches: branchOf = new Map(), overlaps: ov, roots = [], user = null, now = Date.now(), exists }) {
+export function statusData({ t, board, rows, runs, prs = null, reviewPrs = [], held = new Map(), heads, behind = new Map(), branches: branchOf = new Map(), overlaps: ov, roots = [], user = null, now = Date.now(), exists }) {
   const open = openClaims(board, exists);
   const last = new Map(board.map((l) => [l.from, l.ts]));
   const slugs = [...heads.keys()].sort();
+  const working = new Set([...slugs, ...open.map((c) => c.slug)]);
   const fresh = (r) => r.last && now - Date.parse(r.last) < RUNNING_MIN * 60e3;
   const sum = (f) => (rows ?? []).reduce((a, r) => a + f(r), 0);
   return {
     v: 2, at: new Date(now).toISOString(),
-    decisions: ownerWaiting(t).map((x) => ({ id: x.id, title: x.title })),
+    decisions: ownerWaiting(t).map((x) => { const { id, title, options } = decisionOf(x); return { id, title, options }; }),
     active: [...t.values()].filter((x) => x.status === 'active' && x.area !== 'owner').sort(order),
+    // Not yet in Work: what is active on a branch or claim shows there, so no surface repeats it.
+    // Active first, so a surface that cuts the list never hides it; an idea only when active.
+    todos: [...t.values()].filter((x) => OPEN.has(x.status) && x.area !== 'owner' && (x.area !== 'idea' || x.status === 'active') && !(x.status === 'active' && working.has(x.slug))).sort((a, b) => (b.status === 'active') - (a.status === 'active') || order(a, b)),
     claims: open.map((c) => ({ slug: c.slug, from: c.from, ts: c.ts, last: last.get(c.from) ?? null })),
     sessions: rows === null ? null : [...new Map(rows.filter((r) => r.agent === 'main' && fresh(r)).map((r) => [r.session, r])).values()].map((m) => {
       const slug = open.filter((c) => c.from === m.session).map((c) => c.slug).join(',');
@@ -552,14 +607,16 @@ export function statusData({ t, board, rows, runs, prs = null, reviewPrs = [], h
     roots: roots.map((r) => ({ id: r.id, kind: r.kind, path: r.path, ...(r.gh ? { gh: r.gh } : {}), ...(r.merge === 'review' ? { merge: r.merge } : {}), ...(r.kind === 'folder' ? {} : { defaultBranch: r.defaultBranch, sha: r.sha ?? '' }) })),
     branches: slugs.map((slug) => {
       const b = branchOf.get(slug) ?? { branch: `agent/${slug}` };
-      const run = runs?.find((r) => r.headBranch === b.branch && (!b.repo || !r.repo || r.repo === b.repo));
       const head = heads.get(slug) || '?';
+      const mine = (runs ?? []).filter((r) => r.headBranch === b.branch && (!b.repo || !r.repo || r.repo === b.repo));
+      const run = mine[0];
+      const onHead = conclusion(mine.filter((r) => r.headSha.startsWith(head))); // every run of the head sha, as the merge gate reads it
       const v = board.filter((l) => l.kind === 'verdict' && l.slug === slug).at(-1);
-      const ci = b.gh === '' ? 'CI -' : !runs ? 'CI unavailable' : !run ? 'no CI run' : `CI ${run.headSha.slice(0, 7)} ${run.status === 'completed' ? run.conclusion : run.status}${run.headSha.startsWith(head) ? '' : ' (not the head)'}`;
-      const bh = behind.get(slug);
-      const mine = reviewPrs.filter((x) => x.headRefName === b.branch && (!b.repo || x.repo === b.repo));
-      const pr = mine.find((x) => x.state === 'OPEN') ?? mine.toSorted((x, y) => y.number - x.number)[0];
-      return { slug, head, ci, verdict: v ? v.text.slice(0, 120) : null, behind: bh?.n > 0 ? { base: bh.base, n: bh.n } : null, ...(pr ? { pr: { number: pr.number, state: pr.state, url: pr.url } } : {}) };
+      const ci = b.gh === '' ? 'CI -' : !runs ? 'CI unavailable' : !run ? 'no CI run' : onHead ? `CI ${head.slice(0, 7)} ${onHead}` : `CI ${run.headSha.slice(0, 7)} ${run.status === 'completed' ? run.conclusion : run.status} (not the head)`;
+      const bh = behind.get(slug), vsha = VERDICT_SHA.exec(v?.text ?? '')?.[1];
+      const pr = prFor(reviewPrs, b);
+      const state = branchWord({ ci: b.gh === '' ? 'skip' : !runs ? 'unknown' : onHead || (mine.length ? 'old' : 'none'), board, slug, head, behind: bh?.n > 0 });
+      return { slug, head, ci, state, ...(vsha && !head.startsWith(vsha) ? { verdictOld: true } : {}), verdict: v ? v.text.slice(0, 120) : null, behind: bh?.n > 0 ? { base: bh.base, n: bh.n } : null, ...(pr ? { pr: { number: pr.number, state: pr.state, url: pr.url, ...(pr.state === 'MERGED' && head !== '?' && held.get(slug) === false ? { stale: true } : {}) } } : {}) };
     }),
     prs: prs ? slugs.flatMap((slug) => {
       const b = branchOf.get(slug) ?? { branch: `agent/${slug}` };
@@ -603,11 +660,21 @@ export function gatherStatus() {
   const branches = new Map(wts.map(({ slug, repo }) => [slug, { branch: repo.branchPrefix + slug, repo: repo.id, gh: repo.gh }]));
   // Local refs only (no fetch, status stays fast): origin/<default> as of the last fetch, else the local default branch.
   const behind = new Map(wts.map(({ slug, dir, repo }) => [slug, { base: repo.defaultBranch, n: tryOr(() => Number(git(dir, 'rev-list', '--count', `HEAD..${baseRef(repo)}`)), 0) }]));
+  const reviewPrs = tryOr(ghReviewPrs, []);
+  // Same test as `wt merge`: the PR holds the head when it is the head or a descendant of it (Update branch). No fetch here:
+  // a PR head this clone lacks stays unknown (not stale) and `wt merge` decides after its own fetch.
+  const held = new Map();
+  for (const { slug, dir } of wts) {
+    const head = heads.get(slug), pr = head && prFor(reviewPrs, branches.get(slug));
+    if (pr?.state !== 'MERGED' || !pr.headRefOid || pr.headRefOid.startsWith(head)) continue;
+    try { git(dir, 'cat-file', '-e', pr.headRefOid); } catch { continue; }
+    held.set(slug, tryOr(() => (git(dir, 'merge-base', '--is-ancestor', head, pr.headRefOid), true), false));
+  }
   return {
     t: tryOr(todos, new Map()), board: tryOr(read, []), heads, behind, branches,
     roots: tryOr(() => config().repos, []).map((r) => (r.kind === 'folder' ? r : { ...r, sha: tryOr(() => git(r.path, 'rev-parse', baseRef(r)), '') })),
     rows: tryOr(() => tokenRows(Math.max(RUNNING_MIN / 60, (Date.now() - midnight) / 3600e3)), null),
-    runs: tryOr(() => ghRuns(40), null), prs: tryOr(ghPrs, null), reviewPrs: tryOr(ghReviewPrs, []),
+    runs: tryOr(() => ghRuns(40), null), prs: tryOr(ghPrs, null), reviewPrs, held,
     overlaps: tryOr(currentOverlaps, null),
     user: tryOr(() => userLayer(resolveSettings(config())), null),
   };
@@ -783,17 +850,42 @@ function status(argv) {
 
 // ---- decide: owner decisions one at a time; a ruling closes the todo and adds one record to decisions.jsonl ----
 // DECIDE: decide                   the first waiting owner decision: recommendation first, then the other options
+//         decide --json            the same as {id, title, context, options: [{label, why}]}, or null with none waiting
 //         decide T-n <ruling...>   close it (ruling as a note) and append {date, todo, title, text} to decisions.jsonl
+//         decide T-n --pick <n>    the same, the ruling being the nth option's label (from 1, as --json lists them), so a label crosses no shell
 //         decide --list [n]        the last n rulings (20), oldest first
-// The options come from the todo's why, split on ";" (ask with --why "<recommended>; <other>; ...").
+// Ask with todo add --option "<recommended label>: <why>" --option "<other label>: <why>"; --why is then the question's context.
+
+const MARK = /\s*\(recommended\)$/i;
+
+// A todo from before --option holds its options in why, split on ";". `Label: rationale` splits only when every part reads
+// that way with a short, distinct label that is not a marker word; anything else stays whole, as it was written.
+function oldOptions(why) {
+  const parts = String(why ?? '').replace(/^options:\s*/i, '').split(';').map((s) => s.trim()).filter(Boolean);
+  const colon = parts.map((p) => /^(.+?): (.*)$/s.exec(p));
+  const labels = colon.map((m) => m?.[1].replace(MARK, ''));
+  const labelled = parts.length > 1 && labels.every((l) => l && l.length <= 60 && !/^(recommended|other|or)$/i.test(l)) && new Set(labels).size === labels.length;
+  const opts = parts.map((p, i) => (labelled ? { label: labels[i], why: colon[i][2].replace(MARK, '') } : { label: p.replace(MARK, '') }));
+  // Recommendation first: the marker that said otherwise is stripped, so a later option that carried it moves up.
+  const marked = parts.findIndex((p, i) => MARK.test(p) || (labelled && MARK.test(colon[i][1])));
+  if (marked > 0) opts.unshift(...opts.splice(marked, 1));
+  return opts;
+}
+
+// The one reading of a decision: the printed text, `decide --json` and `status --json` all come from here.
+export function decisionOf(x) {
+  const stored = Array.isArray(x.options);
+  // Empty labels go here, once, so a --pick number and the --json list count the same options.
+  return { id: x.id, title: x.title, context: (stored && x.why) || null, options: (stored ? x.options : oldOptions(x.why)).filter((o) => o?.label) };
+}
 
 export function decideText(t) {
   const w = ownerWaiting(t);
   if (!w.length) return 'No owner decisions waiting.\n';
-  const x = w[0];
-  const opts = (x.why ?? '').replace(/^options:\s*/i, '').split(';').map((s) => s.trim()).filter(Boolean);
-  return [`${x.id} (1 of ${w.length}): ${x.title}`, opts.length ? `  Recommended: ${opts[0]}` : '  (no options given)', ...opts.slice(1).map((o) => `  Or: ${o}`),
-    `Answer: /decide ${x.id} <ruling>   (shell: desk decide ${x.id} "<ruling>")`].join('\n') + '\n';
+  const d = decisionOf(w[0]);
+  const lines = (o, i) => [`  ${i + 1}. ${i ? 'Or' : 'Recommended'}: ${o.label}`, ...(o.why ? [`    ${o.why}`] : [])];
+  return [`${d.id} (1 of ${w.length}): ${d.title}`, ...(d.context ? [`  ${d.context}`] : []), ...(d.options.length ? d.options.flatMap(lines) : ['  (no options given)']),
+    `Answer: /decide ${d.id} --pick <n> or /decide ${d.id} <ruling>   (shell: desk decide ${d.id} --pick <n>, counted from 1; your own words in single quotes: desk decide ${d.id} '<ruling>')`].join('\n') + '\n';
 }
 
 export function rulingsText(recs, n = 20) {
@@ -810,8 +902,22 @@ function decide([id, ...rest]) {
   }
   const t = todos();
   if (!id) return process.stdout.write(decideText(t));
-  const x = t.get(id), ruling = clean(rest.join(' '), 1000);
-  if (x?.area !== 'owner' || !OPEN.has(x.status) || !ruling) { console.error(`decide: ${id} is not a waiting owner decision, or the ruling is empty`); process.exit(1); }
+  if (id === '--json' && !rest.length) { const x = ownerWaiting(t)[0]; return process.stdout.write(`${JSON.stringify(x ? decisionOf(x) : null)}\n`); }
+  const no = (why) => { console.error(`decide: ${why}`); process.exit(1); };
+  const x = t.get(id);
+  let raw = rest.join(' ');
+  if (x?.area !== 'owner' || !OPEN.has(x.status) || !clean(raw)) no(`${id} is not a waiting owner decision, or the ruling is empty`);
+  // From argv, never the joined text: the dialog and VS Code send a label as one argument, and a label reading `--pick 3` is a ruling.
+  if (rest[0] === '--pick') {
+    const opts = decisionOf(x).options, n = rest.slice(1).join(' ');
+    if (!opts.length) no(`${id} has no options to pick from; give the ruling as text. Nothing was recorded`);
+    if (!/^\d+$/.test(n) || +n < 1 || +n > opts.length) no(`--pick takes a whole number from 1 to ${opts.length}. Nothing was recorded`);
+    raw = opts[+n - 1].label;
+    if (!clean(raw)) no(`option ${n} of ${id} has an empty label; give the ruling as text. Nothing was recorded`);
+  }
+  // The uncut text: the cut below could drop a private key's END marker. Never echo it: this message reaches a toast and a transcript.
+  if (hasSecret(raw)) no('that ruling holds something shaped like a secret, and decisions.jsonl is committed; remove it. Nothing was recorded');
+  const ruling = clean(raw, 1000);
   // The record first: if that write fails the todo stays open and the ruling can be given again.
   const ts = new Date().toISOString();
   appendJsonl(DECISIONS(), { ts, from: me(), date: ts.slice(0, 10), todo: id, title: clean(x.title, 160), text: ruling });
@@ -824,8 +930,22 @@ function decideTest() {
   const t = fold([L('T-1', { title: 'pick', status: 'open', area: 'owner', why: 'Options: (a) keep; (b) drop' }), L('T-2', { title: 'later', status: 'open', area: 'owner', prio: 60 }),
     L('T-3', { title: 'gone', status: 'done', area: 'owner' })]);
   const recs = [{ text: 'old one' }, { date: '2026-11-01', todo: 'T-4', title: 'pick', text: 'keep' }];
+  const old = (why) => decisionOf({ id: 'T-9', title: 'q', why }).options;
+  // T-151 as it was written: a `;` split whose whole first part used to become the recorded ruling.
+  const t151 = old('Refuse (recommended): a hidden push cannot slip through, at the cost of rare false refusals, also for allowed pushes and from any directory; Allow as before: no false refusals, as the 2026-11-02 merge-policy design said, but an unparseable line can hide a push from this guard');
+  const both = [{ label: 'keep', why: 'it works' }, { label: 'drop' }];
   return [
-    decideText(t).startsWith('T-1 (1 of 2): pick\n  Recommended: (a) keep\n  Or: (b) drop\nAnswer: /decide T-1 '), // the lines a Decide press parses in hooks/pane.tsx
+    decideText(t).startsWith('T-1 (1 of 2): pick\n  1. Recommended: (a) keep\n  2. Or: (b) drop\nAnswer: /decide T-1 --pick <n> ') && decideText(t).includes('desk decide T-1 --pick <n>, counted from 1') && decideText(t).includes(`desk decide T-1 '<ruling>'`) && !decideText(t).includes('"'),
+    old('(recommended); b').map((o) => o.label).join() === 'b', // an empty label would be a --pick that records nothing
+    t151.map((o) => o.label).join() === 'Refuse,Allow as before' && t151[0].why.startsWith('a hidden push') && t151[1].why.endsWith('from this guard'),
+    old('keep it (recommended); drop it').map((o) => o.label).join() === 'keep it,drop it' && !old('a; b')[0].why,
+    old('a; b (Recommended)').map((o) => o.label).join() === 'b,a', // the marker outranks the order
+    old('one: x; two').map((o) => o.label).join() === 'one: x,two' && !old('one: x; two')[0].why, // not every part has a label: nothing is split
+    old('same: x; same: y').map((o) => o.label).join() === 'same: x,same: y', // two equal labels could not tell the options apart
+    old(`${'x'.repeat(61)}: x; b: y`)[0].label.length > 61, // a label that long is prose
+    old('only: one part')[0].label === 'only: one part' && old('')?.length === 0,
+    decisionOf({ id: 'T-9', title: 'q', why: 'because; really', options: both }).context === 'because; really' && decisionOf({ id: 'T-9', title: 'q', why: 'because; really', options: both }).options.length === 2,
+    decideText(fold([L('T-1', { title: 'pick', status: 'open', area: 'owner', why: 'context here', options: both })])).startsWith('T-1 (1 of 1): pick\n  context here\n  1. Recommended: keep\n    it works\n  2. Or: drop\nAnswer: '),
     decideText(fold([L('T-2', { title: 'later', status: 'blocked', area: 'owner' })])).includes('(no options given)') && decideText(new Map()) === 'No owner decisions waiting.\n', // blocked still waits: the band counts it
     rulingsText(recs) === '# Rulings recorded\n- undated: old one\n- 2026-11-01 (T-4): pick: keep\n',
     rulingsText(recs, 1) === '# Rulings recorded\n- 2026-11-01 (T-4): pick: keep\n', // the last n, oldest first

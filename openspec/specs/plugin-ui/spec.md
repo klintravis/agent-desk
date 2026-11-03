@@ -112,82 +112,16 @@ The pane SHALL show these rows, each a label and a value, and SHALL leave out an
 | Cache | the cache meter, then the output style on the same row |
 | Style | the session's output style name, or `default`; its own row only while the cache meter is unknown |
 | Warm | a Button labelled `auto` or `off`, then why: the warm-hold reason, `idle`, or `off for this session` |
+| Tokens | today's calls, fresh and cached tokens, once the status is read; `unavailable` when it has no value |
+| Roots | one dim line per root, once the status is read; `none` when empty |
 
 #### Scenario: Unknown row left out
 - **WHEN** a row's value is unknown
 - **THEN** the pane leaves that row out
 
-### Requirement: Desk pane decisions
-Below the rows, when a decision waits, the pane SHALL show each as `<id> <title>` and a `Decide <id>` Button for
-the first, outside any tab. The rows and the decisions are bordered cards.
-
-#### Scenario: Decisions outside the tabs
-- **WHEN** a decision waits and the Sessions tab is open
-- **THEN** the decision and its Decide Button are shown
-
-### Requirement: Desk pane tabs
-Below the rows, any decisions and the headline, the pane SHALL show three tab Buttons, Work (the default), Branches and Sessions, each with its count,
-and only the open tab's sections, each a bordered card with a heading over its lines, `none` when empty
-and `unavailable` when the status has no value for it.
-
-#### Scenario: A closed tab
-- **WHEN** the Work tab is open
-- **THEN** no branch verdict is drawn until Branches is pressed
-
-#### Scenario: The Sessions label
-- **WHEN** three sessions run
-- **THEN** the third tab reads `Sessions 3`
-
-### Requirement: Desk pane Work and Sessions tab sections
-The Work and Sessions tabs SHALL hold these sections:
-
-| Tab | Sections |
-|---|---|
-| Work | Active todos (one row each: id and summary or title, see Active todo row; `state:` and `next:` when set); Agents, each running or pending agent as `<type> · <description> · <age>` |
-| Sessions | Running sessions; Roots, one dim row each; Tokens today |
-
-#### Scenario: Agents
-- **WHEN** two agents run
-- **THEN** the Work tab's Agents lists two lines
-
-#### Scenario: A running session
-- **WHEN** a session has a title, a claimed worktree and two agents
-- **THEN** its row shows the title, then a dim `wt:<slug> · <id> · 2 agents`, then one line per agent as `<type> · <about>`, each cut at the edge
-
-#### Scenario: A session with no title
-- **WHEN** a session has no title
-- **THEN** its slug names the row, or its id when it has no slug, and the footnote does not repeat that id
-
-#### Scenario: This session
-- **WHEN** a session's id begins this session's id
-- **THEN** its row is marked `this session`
-
-### Requirement: Desk pane Branches tab sections
-The Branches tab SHALL hold these sections:
-
-| Tab | Sections |
-|---|---|
-| Branches | Open branches, one row each, see the scenarios; Trees, only when a claim has no branch, as `<slug> · <from> · claimed <age>`, then ` · last post <age>` when known; Pull requests when known; Overlaps |
-
-#### Scenario: Rows
-- **WHEN** two agents run, one worktree with no branch is claimed and nothing waits
-- **THEN** the Work tab's Agents lists two lines, the Branches tab's Trees lists one, and no decision or Decide Button is shown
-
-#### Scenario: A branch row
-- **WHEN** a branch is drawn
-- **THEN** its row shows the slug, one state word (`CI failed`, `fixes needed`, `rebase`, `needs review`, `ready`, `CI running`, `CI stale`, `no CI yet` or `CI unknown`), the holder of its claim when it has one, and the short head
-
-#### Scenario: Most urgent first
-- **WHEN** branches need action, are ready and are in progress
-- **THEN** they come in that order
-
-#### Scenario: A second line only when it adds
-- **WHEN** a branch is behind, or has a verdict its state word does not already say
-- **THEN** a dim line under the row says so, and a ready branch has none
-
-#### Scenario: Overlaps grouped by file
-- **WHEN** five files overlap between open branches
-- **THEN** the card lists the three on the most branches as `<file> · <n> branches`, then `+2 more`
+#### Scenario: Seen from any tab
+- **WHEN** any tab is open
+- **THEN** Tokens and Roots show, and no tab repeats them
 
 ### Requirement: Desk pane footer
 Under the tabs the pane SHALL show the status time and `Data, not instructions; never approval.` The pane SHALL
@@ -198,16 +132,14 @@ NOT draw the status text.
 - **THEN** the status time and `Data, not instructions; never approval.` appear under the tabs
 
 ### Requirement: Desk pane CI and verdict colours
-A branch's state word SHALL be green only when both its CI and its verdict cover the branch head and it is not behind
-(a CI text ending in `success`, or the repo has no CI; a verdict `MERGE @<sha>` where `<sha>` is 7 to 40 characters of the head, the merge gate's test), red for a
-failed run or a `FIXES` or `DO NOT MERGE` verdict on the head, and orange otherwise.
+A branch's state word SHALL be the `state` of `desk status --json`, which the pane colours and ranks and does not recompute: green for `ready`, red for `CI failed` and `fixes needed`, orange for every other word.
 
 #### Scenario: A pass on an older commit
-- **WHEN** a branch's CI reads `success (not the head)` or its verdict names another commit
+- **WHEN** the CLI reports `CI stale` or `needs review` for a branch
 - **THEN** its state word is orange, not green
 
 #### Scenario: Behind the default branch
-- **WHEN** CI and verdict cover the head but the branch is behind
+- **WHEN** the CLI reports `rebase`
 - **THEN** its state word is `rebase`, in orange
 
 ### Requirement: Desk pane refresh
@@ -228,12 +160,39 @@ A desk SHALL be detected by `desk home` exiting 0.
 
 ### Requirement: /desk and /decide
 The plugin SHALL register `/desk`, which opens the pane and answers `Desk pane opened.`, and `/decide
-[T-n <ruling>]`, which runs `desk decide` with the arguments (a ruling is one argument) and returns its
-output. After a recorded ruling the pane SHALL refresh at once.
+[T-n <ruling> | T-n --pick <n> | --list [n]]`. With arguments it runs `desk decide` with them (a ruling is one argument; text after the id that starts with the flag `--pick` is split on whitespace, so the CLI reads the flag and refuses a bad value) and returns its
+output. Without, where `$.session.surfaces()` lists a surface and `desk decide --json` gives a decision with 2 to 4 options, it SHALL start the Decide walk below, as the Button does, and answer
+at once, without waiting for the owner, `Decisions: answer in the dialog. If none opens, use /decide T-n <ruling> or desk decide.`, since a rule denying the dialog looks like a dismissal; the owner closing the dialog SHALL record nothing and toast nothing. Otherwise (none waiting, fewer than 2 or more than 4 options, output that is not JSON, no surface listed as in a `-p` run,
+or the call fails) it SHALL return the printed `desk decide` text and open no dialog. `$.ui.ask` rejects alike on dismissal and with no one to ask, so the surfaces
+list, not the rejection, tells them apart. After a recorded ruling the pane SHALL refresh at once.
 
 #### Scenario: Record a ruling
 - **WHEN** the user runs `/decide T-5 use option b`
 - **THEN** `desk decide T-5 "use option b"` runs and the pane refreshes
+
+#### Scenario: A mistyped pick is refused
+- **WHEN** the user runs `/decide T-5 --pick two`, `/decide T-5 --pick <2>`, `/decide T-5 --pick` or `/decide T-5 --pick 2 extra`
+- **THEN** `desk decide` receives the flag and each word as separate arguments and refuses them, nothing is recorded and T-5 stays open
+
+#### Scenario: Typed /decide opens the dialog
+- **WHEN** the user runs `/decide` with no arguments, a surface draws, and T-5 waits with two options
+- **THEN** the same dialog as the Button's opens, and the chosen label is recorded as `desk decide T-5 "<label>"`
+
+#### Scenario: Typed /decide, dialog closed
+- **WHEN** the owner closes that dialog
+- **THEN** nothing is recorded and no toast shows
+
+#### Scenario: Typed /decide, no surface
+- **WHEN** `/decide` runs with no arguments and `$.session.surfaces()` is empty
+- **THEN** it returns the printed `desk decide` text and opens no dialog
+
+#### Scenario: Typed /decide, none waiting
+- **WHEN** `/decide` runs with no arguments, a surface draws and no decision waits
+- **THEN** it returns `No owner decisions waiting.` and opens no dialog
+
+#### Scenario: Typed /decide, 1 or 5+ options
+- **WHEN** `/decide` runs with no arguments, a surface draws and the next decision has 1 or 5 options
+- **THEN** it returns the printed `desk decide` text, the options and their whys stay on screen, and no dialog opens or toast shows
 
 ### Requirement: Decisions band
 A band above the prompt SHALL show only what needs acting on:
@@ -252,7 +211,7 @@ The band SHALL be hidden while a survey is shown, and when neither row applies.
 - **THEN** the band reads `ctx ▰▰▰▰▰▰▰▱ 84%  near full: handoff or /compact`
 
 ### Requirement: Decide button
-A `Decide <id>` Button, in the band or the pane's Owner decisions card, SHALL be drawn as the primary action, and
+A `Decide <id>` Button, in the band or the pane's Decisions tab, SHALL be drawn as the primary action, and
 the band's count SHALL be yellow. A press SHALL run `desk decide` from the plugin's own code, not through the
 engine's command chain, and SHALL walk the waiting decisions as the requirements below say.
 
@@ -261,38 +220,48 @@ engine's command chain, and SHALL walk the waiting decisions as the requirements
 - **THEN** `desk decide` runs
 
 ### Requirement: Decide walk with options
-A printed decision with 2 to 4 options SHALL be asked in the engine's question dialog, its text holding the
-printed question and recommendation and its choices the options. The chosen label, or the text typed under
-Other, SHALL be recorded, after redaction, as `desk decide <printed id> <ruling>` (on one line, cut to 1000 characters),
-the pane SHALL refresh, and the walk SHALL go on with the decision that record printed.
+A decision read from `desk decide --json` with 2 to 4 options SHALL be asked in the engine's question dialog through `$.ui.ask`, its text holding the
+question, the context and each option's why, and its choices the option labels. `$.ui.ask` takes labels only and no
+document covers a plugin calling `AskUserQuestion` with per-option descriptions, so the whys stay in the question text.
+This is a parity gap: the VS Code extension shows each why on the option's own row. The chosen label as it is, or the text typed under
+Other after redaction, SHALL be recorded as `desk decide <id> <ruling>`, the ruling one argument (on one line, cut to 1000 characters),
+the pane SHALL refresh, and the walk SHALL go on with a fresh read of the next decision.
 
 #### Scenario: Press asks and records
-- **WHEN** T-5 is printed with `Recommended: (a) keep` and `Or: (b) drop`, and the owner chooses `(b) drop`
-- **THEN** the dialog's text holds the question and `Recommended: (a) keep`, its choices are `(a) keep` and `(b) drop`, and `desk decide T-5 "(b) drop"` runs and the pane refreshes
+- **WHEN** T-5 has options `Keep: it works` and `Drop: less code`, and the owner chooses `Drop`
+- **THEN** the dialog's text holds the question, `Recommended: Keep - it works` and `Or: Drop - less code`, its choices are `Keep` and `Drop`, and `desk decide T-5 "Drop"` runs and the pane refreshes
+
+#### Scenario: The rationale is never the ruling
+- **WHEN** an old todo has the T-151 why, and the owner chooses its first option
+- **THEN** the dialog's choices are `Refuse` and `Allow as before`, and the ruling recorded is `Refuse`
 
 #### Scenario: A secret in the answer is not recorded
 - **WHEN** the text typed under Other holds a secret
 - **THEN** `desk decide` receives the text with the secret replaced by a `[REDACTED-...]` tag
+
+#### Scenario: A clicked label is recorded as it is
+- **WHEN** the owner chooses a label that holds an email address, or reads `--pick 1`
+- **THEN** `desk decide` receives the label unchanged as one argument, and the CLI still refuses a secret in it
 
 #### Scenario: Press records typed text
 - **WHEN** the owner types `neither, wait for v0.4` under Other for T-5
 - **THEN** `desk decide T-5 "neither, wait for v0.4"` runs
 
 #### Scenario: Press walks on
-- **WHEN** recording T-5 prints T-6 as the next decision, with two options
-- **THEN** the dialog asks T-6, and once it is recorded and `No owner decisions waiting.` prints, the walk ends with that in a toast
+- **WHEN** T-5 is recorded and T-6 waits, with two options
+- **THEN** the dialog asks T-6, and once it is recorded and none waits, the walk ends with `No owner decisions waiting.` in a toast
 
 ### Requirement: Decide walk without options
-A printed decision with fewer than 2 or more than 4 options SHALL show the printed text in a toast and, where
-the surface's prompt box takes it, fill an empty prompt with `/decide <printed id> `. The walk SHALL end there.
+A decision with fewer than 2 or more than 4 options SHALL show its text and the answer command in a toast and, where
+the surface's prompt box takes it, fill an empty prompt with `/decide <id> `. The walk SHALL end there.
 
 #### Scenario: Press /decide
-- **WHEN** the user presses `Decide T-5`, T-5 is printed with no options, or with more than 4, and the prompt is empty
-- **THEN** a toast shows the printed text, no dialog opens and the prompt holds `/decide T-5 `
+- **WHEN** the user presses `Decide T-5`, T-5 has no options, or more than 4, and the prompt is empty
+- **THEN** a toast shows the decision, no dialog opens and the prompt holds `/decide T-5 `
 
 #### Scenario: No choices to offer, draft
-- **WHEN** T-5 is printed with no options, or with more than 4, and the prompt holds a draft
-- **THEN** a toast shows the printed text and the draft is unchanged
+- **WHEN** T-5 has no options, or more than 4, and the prompt holds a draft
+- **THEN** a toast shows the decision and the draft is unchanged
 
 ### Requirement: Decide walk ends
 A declined or refused dialog SHALL record nothing and fill nothing, and SHALL end the walk with a toast of the
@@ -307,18 +276,22 @@ reason. A record that fails SHALL end the walk with a toast of `desk decide`'s o
 - **THEN** `desk decide` refuses, its output is shown in a toast and the walk ends
 
 ### Requirement: Decide with nothing printed
-When no decision is printed, nothing SHALL be asked or filled, and any output SHALL be shown in a toast.
+When `desk decide --json` gives no decision, nothing SHALL be asked or filled, and any output SHALL be shown in a toast. Output that is not JSON SHALL be treated as a failure, never parsed for a decision.
 
 #### Scenario: Nothing printed
-- **WHEN** the owner presses `Decide T-5` and `desk decide` prints no decision
+- **WHEN** the owner presses `Decide T-5` and `desk decide --json` prints no decision
 - **THEN** no dialog opens and nothing is filled
 
+#### Scenario: Not JSON
+- **WHEN** `desk decide --json` prints text that is not JSON, even text that reads like a decision
+- **THEN** no dialog opens, nothing is recorded and a toast shows an error
+
 ### Requirement: Decide id, draft and repeat presses
-The id SHALL be the one `desk decide` printed, never the Button's. A draft SHALL NOT be overwritten. A press
+The id SHALL be the one `desk decide --json` returned, never the Button's. A draft SHALL NOT be overwritten. A press
 during a walk SHALL do nothing.
 
 #### Scenario: A newer id than the Button's
-- **WHEN** the Button reads `Decide T-5` and `desk decide` prints T-60
+- **WHEN** the Button reads `Decide T-5` and `desk decide --json` returns T-60
 - **THEN** the dialog asks T-60 and the ruling is recorded on T-60, not T-5
 
 #### Scenario: Press with a draft
@@ -373,14 +346,14 @@ Button `onPress` SHALL change it. While it is `off`, warm-hold SHALL neither pin
 - **THEN** the mode is `auto`
 
 ### Requirement: Active todo row
-On the Work tab, each active todo SHALL take at most three rows: `<id> <summary>` (`<id> <title>` when none), then `state:` and `next:` when set, each cut at the edge and never wrapped. The id row SHALL carry one label: `wt:<slug>`, else the owner, else none. A long summary or title is cut first and the label kept; a label wider than the pane is cut too. Status, area, size, priority, change and model SHALL NOT appear on the row. Owner decisions SHALL keep their full question.
+On the Work and Todos tabs, each todo SHALL take at most three rows: `<id> <summary>` (`<id> <title>` when none), then `state:` and `next:` when set, each cut at the edge and never wrapped. On the Todos tab the id row SHALL carry one label: the status unless it is `open`, then `wt:<slug>`, else the owner, else the area. On the Work tab the id row SHALL carry none, since it sits under its branch or claim.
 
 #### Scenario: Summary
-- **WHEN** an active todo has a summary
+- **WHEN** a todo has a summary
 - **THEN** its row reads `<id> <summary>`, not the title
 
 #### Scenario: No summary
-- **WHEN** an active todo has no summary
+- **WHEN** a todo has no summary
 - **THEN** its row reads `<id> <title>`, truncated at the edge
 
 #### Scenario: Long title
@@ -388,15 +361,19 @@ On the Work tab, each active todo SHALL take at most three rows: `<id> <summary>
 - **THEN** the head is cut at the edge (`truncate-end`) and `wt:<slug>` stays visible
 
 #### Scenario: Owner label
-- **WHEN** the todo has an owner and no slug
+- **WHEN** a todo on the Todos tab has an owner and no slug
 - **THEN** the row's label is the owner
 
+#### Scenario: Status in the label
+- **WHEN** a todo on the Todos tab is blocked and has an owner
+- **THEN** the row's label reads `blocked · <owner>`
+
 #### Scenario: No label
-- **WHEN** the todo has neither slug nor owner
+- **WHEN** a todo shows on the Work tab, or on the Todos tab open with no slug, owner or area
 - **THEN** the row shows no label
 
 #### Scenario: Other fields
-- **WHEN** the todo has a model, area, size or priority
+- **WHEN** the todo has a model, size or priority
 - **THEN** none of them appears on the row
 
 ### Requirement: Desk pane row colours
@@ -407,19 +384,19 @@ The pane SHALL colour what needs attention and SHALL keep every word, so colour 
 - **THEN** the Quota row is red, whatever the other windows read
 
 ### Requirement: Desk pane card and tab marks
-The Open branches, Pull requests and Overlaps cards SHALL take the border of the worst status inside them (red over orange over green), and stay dim when empty. The Branches tab SHALL show a red dot while any of those cards is red, and no dot for orange, which any branch in progress reads.
+The Open branches, Pull requests and Overlaps cards SHALL take the border of the worst status inside them (red over orange over green), and stay dim when empty. The Work tab SHALL show a red dot while any of those cards is red, and no dot for orange, which any branch in progress reads. The Decisions tab SHALL show a yellow dot while a decision waits, and its card a yellow border.
 
 #### Scenario: A failing branch seen from another tab
-- **WHEN** a branch's CI failed and the Work tab is open
-- **THEN** a red dot shows beside the Branches tab, and on that tab the Open branches card has a red border
+- **WHEN** a branch's CI failed and the Todos tab is open
+- **THEN** a red dot shows beside the Work tab, and on that tab the Open branches card has a red border
 
 #### Scenario: Nothing to report
 - **WHEN** there are no open branches, pull requests or overlaps
-- **THEN** those cards keep their dim border and the Branches tab shows no dot
+- **THEN** those cards keep their dim border and the Work tab shows no dot
 
 #### Scenario: A branch in progress
 - **WHEN** a branch has no verdict yet and nothing is red
-- **THEN** the Open branches card has an orange border and the Branches tab shows no dot
+- **THEN** the Open branches card has an orange border and the Work tab shows no dot
 
 ### Requirement: Desk pane headline
 Above the tabs the pane SHALL show one line counting the open branches that are ready or wait on someone, in the colour of the worst of them.
@@ -433,12 +410,147 @@ Above the tabs the pane SHALL show one line counting the open branches that are 
 - **THEN** no line is drawn
 
 ### Requirement: Desk pane merge policy
-The Desk pane SHALL show the PR state from `desk status --json` on the row of a `review` branch, and `review` on that repo's Roots line. A `direct` repo's rows SHALL not change, and verdict colours SHALL not change.
+The Desk pane SHALL show the PR state from `desk status --json` for a `review` branch, on the Pull requests card when `prs` lists the branch and on the row otherwise, and `review` on that repo's Roots line. A `direct` repo's rows SHALL not change, and verdict colours SHALL not change.
 
 #### Scenario: Waiting for a person
 - **WHEN** a `review` branch has an open PR and a `MERGE` verdict
-- **THEN** the row shows the PR as open and the verdict is not coloured as a failure
+- **THEN** the PR shows as open, on the Pull requests card when `prs` lists the branch and on the row otherwise, and the verdict is not coloured as a failure
 
 #### Scenario: Merged on the server
 - **WHEN** a `review` branch's PR is merged
 - **THEN** the row names `desk wt merge <slug>`
+
+### Requirement: Desk pane three tabs
+Below the rows and the headline, the pane SHALL show three tab Buttons, Decisions, Work (the default) and Todos, each with its count,
+and only the open tab's sections, each a bordered card with a heading over its lines, `none` when empty
+and `unavailable` when the status has no value for it. A tab value stored by an older version SHALL be dropped, so the pane opens on Work.
+
+#### Scenario: A closed tab
+- **WHEN** the Work tab is open
+- **THEN** no decision or Todos row is drawn until its tab is pressed
+
+#### Scenario: The Work label
+- **WHEN** two branches and one claim with no branch are open
+- **THEN** the second tab reads `Work 3`
+
+### Requirement: Desk pane Decisions tab
+The Decisions tab SHALL show each waiting decision as `<id> <title>`, then its options from `decisions[].options`: `Recommended: <label>` for the first and `Or: <label>` for the others, each followed by ` · <why>` when it has one. A `Decide <id>` Button for the first decision SHALL follow. With nothing waiting it SHALL read `No decisions waiting`, with no Button. While one waits, the tab Button SHALL show a yellow dot, so a closed tab hides no decision.
+
+#### Scenario: A decision waits and the Work tab is open
+- **WHEN** a decision waits and the Work tab is open
+- **THEN** the tab reads `Decisions 1` with a yellow dot, and the decision and its Decide Button show once that tab is pressed
+
+#### Scenario: Options and whys
+- **WHEN** T-5 has options `keep` (why `it works`) and `drop` (no why)
+- **THEN** the tab shows `T-5 <title>`, `Recommended: keep · it works`, `Or: drop` and `Decide T-5`
+
+#### Scenario: A decision with no options
+- **WHEN** a decision has none in the status
+- **THEN** its id and title still show
+
+### Requirement: Desk pane Work tab
+The Work tab SHALL hold what is in progress, in this order: Open branches, Agents, Pull requests, Overlaps, Running sessions. An open PR SHALL be said on the Pull requests card (with `a person merges`) and not again on its branch row.
+Open branches SHALL hold one row for each branch and each claim with no branch, a claim's row as `<slug> · <from> · claimed <age>`, then ` · last post <age>` when known, and under a row the active todos on that slug.
+A value the row above already says SHALL not repeat.
+
+#### Scenario: The slug once
+- **WHEN** a todo sits under its branch, or a session has a slug
+- **THEN** neither carries a `wt:<slug>` label
+
+#### Scenario: Agents
+- **WHEN** two agents run
+- **THEN** the Work tab's Agents lists two lines, each `<type> · <description> · <age>`; with none running or pending the card is not drawn
+
+#### Scenario: This session's agents once
+- **WHEN** Agents lists this session's agents
+- **THEN** its Running sessions row leaves them out; when Agents lists none, that row names them
+
+#### Scenario: Pull requests unknown
+- **WHEN** the status has no pull request data
+- **THEN** the Pull requests card is not drawn
+
+#### Scenario: A running session
+- **WHEN** a session has a title, a claimed worktree and two agents
+- **THEN** its row shows the title, then a dim `<id> · 2 agents`, then one line per agent as `<type> · <about>`, each cut at the edge
+
+#### Scenario: A session with no title
+- **WHEN** a session has no title
+- **THEN** its id names the row (its slug is on its branch row), and the footnote does not repeat that id
+
+#### Scenario: This session
+- **WHEN** a session's id begins this session's id
+- **THEN** its row is marked `this session`
+
+#### Scenario: This session's agents show once
+- **WHEN** the engine lists this session's agents
+- **THEN** the Agents card shows them and this session's Running sessions row does not
+
+#### Scenario: Rows
+- **WHEN** two agents run, one worktree with no branch is claimed and nothing waits
+- **THEN** Agents lists two lines, Open branches lists the claim, and no decision or Decide Button is shown
+
+#### Scenario: A branch row
+- **WHEN** a branch is drawn
+- **THEN** its row shows the slug, one state word (`CI failed`, `fixes needed`, `rebase`, `needs review`, `ready`, `CI running`, `CI stale`, `no CI yet` or `CI unknown`), the holder of its claim when it has one, and the short head
+
+#### Scenario: Most urgent first
+- **WHEN** branches need action, are ready and are in progress
+- **THEN** they come in that order
+
+#### Scenario: A second line only when it adds
+- **WHEN** a branch is behind, or has a verdict its state word does not already say
+- **THEN** a dim line under the row says so, and a ready branch has none
+
+#### Scenario: Overlaps grouped by file
+- **WHEN** five files overlap between open branches
+- **THEN** the card lists the three on the most branches as `<file> · <n> branches`, then `+2 more`
+
+#### Scenario: A todo on a branch
+- **WHEN** an active todo's slug has a branch
+- **THEN** it shows under that branch's row, once, and not on the Todos tab
+
+### Requirement: Desk pane Todos tab
+The Todos tab SHALL list the `todos` of `desk status --json` in the order given, at most ten, then `+<n> more`. With none it SHALL read `No open todos`.
+
+#### Scenario: Many open
+- **WHEN** thirteen todos are open
+- **THEN** the tab reads `Todos 13`, the first ten show, and `+3 more` follows
+
+### Requirement: Panels in both surfaces
+The pane and the VS Code extension SHALL show the same three panels, Decisions, Work and Todos, in that order, from the same fields of `desk status --json`. The only differences SHALL be the gaps these scenarios state.
+
+#### Scenario: Same order
+- **WHEN** both surfaces show a desk
+- **THEN** each reads Decisions, Work, Todos
+
+#### Scenario: Shown once
+- **WHEN** an active todo is on a branch or claim
+- **THEN** both surfaces show it in Work and not in Todos; a blocked or open todo with a slug is in Todos
+
+#### Scenario: Gap, how the panels open
+- **WHEN** the panels are drawn
+- **THEN** the pane has tabs, one open at a time with dots on closed ones, because the engine has no collapsible element and the dock's rows are few; the extension has collapsible stacked views
+
+#### Scenario: Gap, the Todos cap
+- **WHEN** more than ten todos are open
+- **THEN** the pane shows ten and `+n more`; the extension shows every todo, because a tree scrolls
+
+#### Scenario: Gap, what only the pane shows
+- **WHEN** both surfaces show a desk
+- **THEN** the meters, Tokens, Roots and Agents are on the pane and not in the extension; the meters, Tokens and Roots are options T-144 left out, and Agents is the engine's live list, which the extension cannot reach (the status holds only each session's agents, shown under Running sessions)
+
+#### Scenario: Gap, a todo's state and next
+- **WHEN** a todo has `state` or `next`
+- **THEN** the pane shows them on rows; the extension in the tooltip, because a tree row has one line
+
+#### Scenario: Gap, empty Work
+- **WHEN** nothing is in progress
+- **THEN** the pane shows `none` per card; the extension one row, `Nothing in progress`, because a tree hides empty sections
+
+#### Scenario: Gap, the Decide walk
+- **WHEN** Decide is pressed
+- **THEN** the pane walks in a dialog; the extension in a quick pick
+
+#### Scenario: Gap, an older CLI
+- **WHEN** the status has no `todos`
+- **THEN** the extension refuses it and names what to update; the pane does not handle it, so the CLI and the plugin are updated together

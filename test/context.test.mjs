@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { KIT, env, multiDesk, desk, tmp } from './helpers.mjs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { KIT, BIN, env, multiDesk, desk, tmp } from './helpers.mjs';
 
 const CTX = join(KIT, 'scripts', 'subagent-context.mjs');
 const noDesk = () => ({ ...env(''), DESK_HOME: '' });
@@ -21,6 +21,26 @@ test('subagent-context: Claude form, Ponytail plus the desk rules, no board for 
   assert.match(o.hookSpecificOutput.additionalContext, /^PONYTAIL MODE ACTIVE - level: full/);
   assert.match(o.hookSpecificOutput.additionalContext, /# Desk rules for this agent/);
   assert.doesNotMatch(o.hookSpecificOutput.additionalContext, /Desk board/);
+});
+
+test('subagent-context: PowerShell and cmd get the direct node form, which selects the desk from any folder', () => {
+  const { home } = multiDesk();
+  const text = ctx(home, 'SubagentStart').hookSpecificOutput.additionalContext;
+  const mjs = join(KIT, 'bin', 'desk.mjs'); // no pinned kit in the test desk: the running one
+  assert.ok(text.includes(`$env:DESK_HOME = '${home}'; node '${mjs}' ...`), 'PowerShell form');
+  assert.ok(text.includes(`set "DESK_HOME=${home}" && node "${mjs}" ...`), 'cmd form');
+  assert.doesNotMatch(text, /desk\.cmd/);
+  const r = spawnSync(process.execPath, [mjs, 'home'], { cwd: tmp(), env: { ...process.env, DESK_HOME: home }, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), home);
+});
+
+test('subagent-context: the PowerShell form single-quotes paths and doubles an apostrophe', () => {
+  const home = join(tmp(), "it's $a"); // 'it''s $a' stays literal in PowerShell
+  mkdirSync(home);
+  assert.equal(spawnSync(process.execPath, [BIN, 'init', '--no-install'], { cwd: home, env: env(home), encoding: 'utf8' }).status, 0);
+  const text = ctx(home, 'SubagentStart').hookSpecificOutput.additionalContext;
+  assert.ok(text.includes(`$env:DESK_HOME = '${home.replace(/'/g, "''")}'; node '${join(KIT, 'bin', 'desk.mjs')}' ...`), text);
 });
 
 test('subagent-context: the concise rule for subagents only, and not when outputStyle is empty', () => {

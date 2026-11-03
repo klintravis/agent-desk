@@ -195,8 +195,8 @@ listed as watch.
 
 ### Requirement: One batched owner question
 `desk tidy --apply` SHALL raise at most one owner todo for the review candidates: area `owner`, field `source` set to
-`tidy`, field `tidyIds` holding the comma-separated ids, a summary, a title with the count, and a `why` whose options split
-on `;` with the recommendation first. Tidy SHALL NOT act on the ruling. Owners and orphans SHALL NOT be part of the question.
+`tidy`, field `tidyIds` holding the comma-separated ids, a summary, a title with the count, a `why` naming the candidates,
+and `options` with the recommendation first. Tidy SHALL NOT act on the ruling. Owners and orphans SHALL NOT be part of the question.
 
 #### Scenario: First run
 - **WHEN** `desk tidy --apply` finds two candidates

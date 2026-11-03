@@ -34,7 +34,7 @@ All in new `test/tidy.test.mjs`, added to the explicit list in the `test` script
 ## 5. Check
 
 - [x] 5.1 Run `npm test && claude plugin test && claude plugin validate .` from the worktree and read the exit code; verify: exit 0
-- [x] 5.2 Run `node C:/IbmiKit/Source/ibmi-agent-kit/scripts/check-names.mjs` from the worktree before pushing; verify: exit 0
+- [x] 5.2 Run `check-names.mjs` from the worktree before pushing; verify: exit 0
 - [x] 5.3 Run `desk tidy` (report only, no `--apply`) on a copy of a real desk's `todo.jsonl` in a temp folder and read the list for false positives; verify: every listed item is explained by the spec, and anything else goes back to the owner
 
 ## Workflow follow-up

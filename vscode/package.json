@@ -3,7 +3,7 @@
   "publisher": "klintravis",
   "displayName": "Agent Desk",
   "description": "The desk's status and owner decisions in the VS Code sidebar, without Claude. Runs the desk's own CLI.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/klintravis/agent-desk" },
   "engines": { "vscode": "^1.90.0" },
@@ -19,7 +19,11 @@
       "activitybar": [{ "id": "agentDesk", "title": "Agent Desk", "icon": "icon.svg" }]
     },
     "views": {
-      "agentDesk": [{ "id": "agentDesk.status", "name": "Desk", "when": "agentDesk.inDesk" }]
+      "agentDesk": [
+        { "id": "agentDesk.decisions", "name": "Decisions", "when": "agentDesk.inDesk" },
+        { "id": "agentDesk.work", "name": "Work", "when": "agentDesk.inDesk" },
+        { "id": "agentDesk.todos", "name": "Todos", "when": "agentDesk.inDesk" }
+      ]
     },
     "commands": [
       { "command": "agentDesk.refresh", "title": "Refresh", "category": "Agent Desk", "icon": "$(refresh)" },
@@ -27,8 +31,8 @@
     ],
     "menus": {
       "view/title": [
-        { "command": "agentDesk.decide", "when": "view == agentDesk.status", "group": "navigation" },
-        { "command": "agentDesk.refresh", "when": "view == agentDesk.status", "group": "navigation" }
+        { "command": "agentDesk.decide", "when": "view == agentDesk.decisions", "group": "navigation" },
+        { "command": "agentDesk.refresh", "when": "view =~ /^agentDesk\\./", "group": "navigation" }
       ],
       "commandPalette": [
         { "command": "agentDesk.decide", "when": "agentDesk.inDesk" },

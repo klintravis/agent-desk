@@ -25,6 +25,7 @@ Vendor key shapes, private keys, connection-string passwords and high-entropy to
 #### Scenario: Vendor shapes
 - **WHEN** text holds an Anthropic, OpenAI, GitHub, Slack, AWS, Stripe, Google, npm, GitLab or SendGrid key, a JWT, or a Slack or Discord webhook URL
 - **THEN** it is hidden whatever its entropy
+- **AND** a bare `sk-` run counts as an OpenAI key only when a digit falls within 100 characters of the prefix: `risk-based-rollout-for-every-branch` is kept, and a real key with no digit in that window is not caught by this shape
 
 #### Scenario: Private key and URL password
 - **WHEN** text holds a `-----BEGIN ... PRIVATE KEY-----` block, or `scheme://user:<password>@host`

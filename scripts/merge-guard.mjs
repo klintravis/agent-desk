@@ -1,6 +1,7 @@
 // PreToolUse(Bash, PowerShell) hook: refuses pushes and merges into protected branches of a repo with
 // merge "review". The rule lives in hooks/mergeguard.mjs; this finds the desk and maps each command's
-// directory to a repo through its git common dir. Any error allows: the server rule is the wall.
+// directory to a repo through its git common dir. Any error of its own allows: the server rule is the wall.
+// A command it cannot read and that names push or merge, or has a backslash after $', is refused on any desk with a review repo.
 // `desk sync` does not wire it, like edit-guard: the plugin's tool.call hook runs it; wire it by hand where
 // the plugin is not loaded. Reads the hook JSON on stdin. Exit 0 with no output = allow.
 // Usage: node merge-guard.mjs [--self-test]
@@ -27,8 +28,9 @@ function native(dir) {
   return process.platform === 'win32' ? d.replace(/^\/([a-zA-Z])(?=$|\/)/, '$1:') : d;
 }
 
-/** @returns {{ why: string, prefix: string } | null} */
+/** @returns {{ why: string, prefix: string, where?: string } | null} */
 function refusal(op, cwd, review) {
+  if (op.kind === 'unreadable') return { why: judge(op, review[0].branchPrefix), prefix: review[0].branchPrefix, where: 'this desk has a review repo' }; // a `cd` in it is unread too, so cwd does not say which repo
   if (op.dirs.includes(null)) return null; // a `cd $X`: not knowable here
   const dir = op.dirs.reduce((from, to) => resolve(from, native(to)), cwd);
   let repo;
@@ -61,5 +63,5 @@ function check(input) {
 let hit = null;
 try { hit = check(JSON.parse(readFileSync(0, 'utf8'))); } catch {}
 if (hit) process.stdout.write(JSON.stringify({
-  hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason(hit.why, hit.prefix) },
+  hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason(hit.why, hit.prefix, hit.where) },
 }));

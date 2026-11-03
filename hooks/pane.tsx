@@ -20,7 +20,7 @@ function desk($: Engine) { return `${$.plugin.root}/bin/desk.mjs` }
 export async function inDesk($: Engine) {
   return $.process.run(['node', desk($), 'home'], { timeoutMs: 15_000 }).then((p) => p.exitCode === 0, () => false)
 }
-const status = atom({ plugin: 'agent-desk', key: 'status' } as const, null, { shape: 'status-3' })
+const status = atom({ plugin: 'agent-desk', key: 'status' } as const, null, { shape: 'status-4' })
 const err = atom({ plugin: 'agent-desk', key: 'err' } as const, '', { shape: 'err-1' })
 // The session's meters as numbers: every surface formats them (status line, band, pane).
 const meters = atom({ plugin: 'agent-desk', key: 'meters' } as const, {}, { shape: 'meters-2' })
@@ -28,7 +28,8 @@ const meters = atom({ plugin: 'agent-desk', key: 'meters' } as const, {}, { shap
 const warm = atom({ plugin: 'agent-desk', key: 'warm' } as const, { off: false }, { shape: 'warm-1' })
 const style = atom({ plugin: 'agent-desk', key: 'style' } as const, null, { shape: 'style-1' })
 const agents = atom({ plugin: 'agent-desk', key: 'agents' } as const, [], { shape: 'agents-1' })
-const tab = atom({ plugin: 'agent-desk', key: 'tab' } as const, 'work', { shape: 'tab-1' })
+const tab = atom({ plugin: 'agent-desk', key: 'tab' } as const, 'work', { shape: 'tab-2' })
+const TODOS = 10
 export async function showMeters($: Engine, m: DeskMeters) {
   await update($, meters, () => m)
 }
@@ -62,50 +63,65 @@ export async function startPane($: Engine, isInteractive: boolean | undefined) {
   if (!isInteractive || started) return
   started = true
   await $.command.register({ name: 'desk', description: 'Open the desk status pane (desk status)' }).catch(() => {})
-  await $.command.register({ name: 'decide', description: 'Owner decisions one at a time; /decide T-n <ruling> records one; /decide --list [n] lists rulings', argumentHint: '[T-n <ruling> | --list [n]]' }).catch(() => {})
+  await $.command.register({ name: 'decide', description: 'Owner decisions one at a time; /decide T-n <ruling> records one; /decide --list [n] lists rulings', argumentHint: '[T-n <ruling> | T-n --pick <n> | --list [n]]' }).catch(() => {})
   $.clock.every(EVERY, () => void refresh($).catch(() => {}))
   void refresh($).catch(() => {})
   void $.ui.open({ id: PANE, title: 'Desk' }).catch(() => {})
 }
 
 // `/decide` and a press both come here: $.command.run skips the calling plugin's own hook, so a press cannot go through it.
-async function runDecide($: Engine, args: string) {
-  const m = /^(T-\d+)\s+([\s\S]+)$/.exec(args)
-  // m[1] and m[2] are both mandatory groups of the regex.
-  const r = await $.process.run(['node', desk($), 'decide', ...(m ? [m[1]!, m[2]!] : args.split(/\s+/).filter(Boolean))], { timeoutMs: 30_000 })
+async function runDecide($: Engine, argv: string[]) {
+  const r = await $.process.run(['node', desk($), 'decide', ...argv], { timeoutMs: 30_000 })
     .then((p) => ({ ok: p.exitCode === 0, text: (p.stdout || p.stderr).trim() }), (err) => ({ ok: false, text: `desk decide failed: ${err}` }))
-  if (m) void refresh($).catch(() => {}) // the band drops the decision now, not at the next minute
+  if (/^T-\d+$/.test(argv[0] ?? '')) void refresh($).catch(() => {}) // the band drops the decision now, not at the next minute
   return r
 }
 
-// The lines of decideText in bin/desk.mjs; a record prints `Recorded T-n: <ruling>` on one line, then the next decision.
-function printedDecision(text: string) {
-  const head = /^(T-\d+) \(\d+ of \d+\): .*$/m.exec(text)
-  return head && { id: head[1]!, head: head[0], options: [...text.matchAll(/^ {2}(?:Recommended|Or): (.*)$/gm)].map((o) => o[1]!) }
+// A typed line: the ruling is one argument, and text starting with the flag splits so the CLI reads it and refuses a bad value. A clicked label never comes here.
+const typedArgs = (args: string) => {
+  const m = /^(T-\d+)\s+([\s\S]+)$/.exec(args)
+  if (!m) return args.split(/\s+/).filter(Boolean)
+  // m[1] and m[2] are mandatory groups of the regex.
+  return /^--pick(\s|$)/.test(m[2]!) ? [m[1]!, ...m[2]!.split(/\s+/)] : [m[1]!, m[2]!]
 }
 
-// A Decide press walks the waiting decisions in the engine's dialog and records each answer after redaction, on one line, cut to 1000 characters. The id is the one
-// `desk decide` printed: the Button's can be a minute old, and a ruling must land on the question the owner read.
+// `desk decide --json`: the first waiting decision, or null.
+type Decision = { id: string; title: string; context: string | null; options: { label: string; why?: string }[] }
+
+// $.ui.ask takes labels only, so each option's why sits in this text. The marker sits here too: on a label it would be recorded with the ruling.
+const decisionLines = (d: Decision) => [
+  `${d.id}: ${d.title}`,
+  ...(d.context ? [d.context] : []),
+  ...d.options.map((o, i) => `${i ? 'Or' : 'Recommended'}: ${o.label}${o.why ? ` - ${o.why}` : ''}`),
+].join('\n')
+
+// A Decide press walks the waiting decisions in the engine's dialog and records each answer: a picked label as it is, text typed under Other after redaction, on one line, cut to 1000 characters. The id is the one
+// `desk decide --json` gave: the Button's can be a minute old, and a ruling must land on the question the owner read.
 // The dialog takes 2-4 options and pads fewer with Yes/No, which would record `Yes`: the others get the toast and `/decide T-n `.
 // shortcut: a dialog the engine never settles keeps the guard set until the mod reloads; add a timeout if a live press shows that.
 let walking = false
-async function ask($: Engine) {
+// quiet: a typed /decide, where the owner closing the dialog is an answer of its own and not worth a toast.
+async function ask($: Engine, quiet = false) {
   if (walking) return
   walking = true
   try {
-    let r = await runDecide($, '')
     for (;;) {
-      const d = r.ok ? printedDecision(r.text) : null
-      if (!d) { if (r.text) $.ui.toast(r.text, { timeoutMs: 30_000 }); return }
+      const r = await runDecide($, ['--json'])
+      if (!r.ok || !r.text) { if (r.text) $.ui.toast(r.text, { timeoutMs: 30_000 }); return }
+      const d = JSON.parse(r.text) as Decision | null
+      if (!d) { $.ui.toast('No owner decisions waiting.', { timeoutMs: 30_000 }); return }
       if (d.options.length < 2 || d.options.length > 4) {
-        $.ui.toast(r.text, { timeoutMs: 30_000 })
+        $.ui.toast(`${decisionLines(d)}\nAnswer: /decide ${d.id} <ruling>`, { timeoutMs: 30_000 })
         await $.prompt.read().then((p) => (p.text.trim() ? undefined : $.prompt.fill({ text: `/decide ${d.id} ` }))).catch(() => {})
         return
       }
-      // The marker sits in the question: on a label it would be recorded with the ruling.
-      const answer = await $.ui.ask(`${d.head}\nRecommended: ${d.options[0]}\nYour ruling?`, { options: d.options, header: 'Decision' })
-      // scrub: a dialog answer passes no redaction hook on the way to decisions.jsonl.
-      r = await runDecide($, `${d.id} ${scrub(answer)}`)
+      // AskOptions has labels only, no per-option description, so the whys stay in the question text.
+      const answer = await $.ui.ask(`${decisionLines(d)}\nYour ruling?`, { options: d.options.map((o) => o.label), header: 'Decision' })
+        .catch((e) => { if (quiet) return undefined; throw e })
+      if (answer === undefined) return
+      // scrub: typed text passes no redaction hook on the way to decisions.jsonl. A picked label is recorded as it is, and the CLI refuses a secret in it.
+      const done = await runDecide($, [d.id, d.options.some((o) => o.label === answer) ? answer : scrub(answer)])
+      if (!done.ok) { $.ui.toast(done.text, { timeoutMs: 30_000 }); return }
     }
   } catch (e) {
     $.ui.toast((e as Error)?.message ?? String(e), { timeoutMs: 30_000 })
@@ -115,13 +131,6 @@ async function ask($: Engine) {
 }
 const ago = (now: number, ts: number | string) => durationOf(Math.max(0, now - (typeof ts === 'string' ? Date.parse(ts) : ts)))
 const ctxColor = (pct: number) => (pct >= CTX_HINT ? 'red' : pct >= 60 ? 'orange' : 'green')
-// Green only for a result that covers the head: a pass on an older commit or for an older head proves nothing.
-export const ciColor = (ci: string) => (/failure|cancelled|timed_out/.test(ci) ? 'red' : /success$/.test(ci) ? 'green' : 'orange')
-export const verdictColor = (verdict: string | null, head: string) => {
-  // The same test as the merge gate (mergeOk in bin/desk.mjs): a verdict names 7 to 40 characters of the head.
-  const merge = verdict && /^MERGE @([0-9a-f]{7,40})\b/.exec(verdict)
-  return merge ? (head.startsWith(merge[1]!) ? 'green' : 'orange') : verdict && /^(FIXES|DO NOT)/.test(verdict) ? 'red' : 'orange'
-}
 // What a row names, so a scan finds it; a theme key, so it reads on light and dark. Status keeps red, orange and green.
 const ACCENT = 'suggestion'
 export const quotaColor = (q: NonNullable<DeskMeters['quota']>) => ctxColor(Math.max(0, ...q.rows.map((r) => r.pct)))
@@ -130,25 +139,23 @@ export const prColor = (p: NonNullable<DeskStatus['prs']>[number]) =>
 // A card's border: the worst status inside it, undefined when there is none.
 export const worst = (colors: readonly (string | undefined)[]) => (['red', 'orange', 'green'] as const).find((c) => colors.includes(c))
 type Branch = DeskStatus['branches'][number]
-// True when the verdict is about the head; one that names no commit cannot be stale.
-const verdictOnHead = (b: Branch) => { const m = /@([0-9a-f]{7,40})\b/.exec(b.verdict ?? ''); return m ? b.head.startsWith(m[1]!) : true }
-// One word for where a branch stands. rank: 0 and 1 need action, 2 is ready, 3 is in progress.
+// Where a branch stands is computed once, by `desk status --json` (branchWord in bin/desk.mjs, the rule `wt merge` uses); this only
+// gives the word a colour and a rank. rank: 0 and 1 need action, 2 is ready, 3 is in progress.
+const LOOK: Record<string, { color: string; rank: number }> = {
+  'CI failed': { color: 'red', rank: 0 }, 'fixes needed': { color: 'red', rank: 0 }, rebase: { color: 'orange', rank: 1 },
+  'needs review': { color: 'orange', rank: 1 }, ready: { color: 'green', rank: 2 },
+}
 export function branchState(b: Branch): { word: string; color: string; rank: number } {
-  const ci = ciColor(b.ci), fixes = b.verdict && verdictOnHead(b) && /^(FIXES|DO NOT|MERGE AFTER)/.test(b.verdict)
-  if (ci === 'red' && !/not the head/.test(b.ci)) return { word: 'CI failed', color: 'red', rank: 0 } // a run on an older commit is not a failure of this one
-  if (fixes) return { word: 'fixes needed', color: verdictColor(b.verdict, b.head), rank: 0 }
-  if (b.behind) return { word: 'rebase', color: 'orange', rank: 1 }
-  // `CI -`: a repo without gh has no CI to wait for, so only the verdict is left.
-  if (ci === 'green' || b.ci === 'CI -') return verdictColor(b.verdict, b.head) === 'green' ? { word: 'ready', color: 'green', rank: 2 } : { word: 'needs review', color: 'orange', rank: 1 }
-  const word = /not the head/.test(b.ci) ? 'CI stale' : /queued|in_progress|requested|waiting|pending/.test(b.ci) ? 'CI running' : b.ci === 'no CI run' ? 'no CI yet' : 'CI unknown'
-  return { word, color: 'orange', rank: 3 }
+  const word = b.state || 'CI unknown' // an older desk CLI sends no state
+  return { word, ...(LOOK[word] ?? { color: 'orange', rank: 3 }) }
 }
 // The dim second line of a branch row, empty when the state word says it all.
-export function branchNote(b: Branch) {
+// carded: the Pull requests card lists this branch, so an open PR is said there, once.
+export function branchNote(b: Branch, carded = false) {
   const word = branchState(b).word
-  return [b.pr && prText(b.slug, b.pr), // first: the row truncates at its end
+  return [b.pr && !(carded && b.pr.state === 'OPEN') && prText(b.slug, b.pr), // first: the row truncates at its end
     b.behind && `behind ${b.behind.base} by ${b.behind.n}`,
-    b.verdict && word !== 'ready' && word !== 'fixes needed' && `verdict ${b.verdict.replace(/@([0-9a-f]{7})[0-9a-f]+/, '@$1')}${verdictOnHead(b) ? '' : ', older commit'}`,
+    b.verdict && word !== 'ready' && word !== 'fixes needed' && `verdict ${b.verdict.replace(/@([0-9a-f]{7})[0-9a-f]+/, '@$1')}${b.verdictOld ? ', older commit' : ''}`,
     (word === 'CI stale' || word === 'CI unknown') && b.ci].filter(Boolean).join(' · ')
 }
 export const branchColor = (b: Branch) => branchState(b).color
@@ -177,9 +184,23 @@ export function registerPane(on: On) {
     return { text: 'Desk pane opened.' }
   })
 
-  // `/decide` shows the next waiting decision; `/decide T-n <ruling>` records it (the ruling is one argv element).
+  // `/decide` walks the waiting decisions in the dialog, as the Button does; `/decide T-n <ruling>` records one (the ruling is one argv element), `/decide T-n --pick <n>` picks one.
+  // $.ui.ask rejects alike when dismissed and in a -p run, so "a dialog is possible" is asked of $.session.surfaces() (empty in -p): none, or
+  // a failing call, gets the old text. The walk is not awaited: the turn waits on this hook, and the dialog waits on the owner.
+  // Only a decision the dialog can take opens it; none waiting, or 1 or 5+ options, stay on screen as text. A rule denying the
+  // dialog also reads as a dismissal, so the line names the way out.
   on('command.run', { command: 'decide' }, async ($, e) => {
-    return { text: (await runDecide($, (e.args ?? '').trim())).text }
+    const args = (e.args ?? '').trim()
+    if (!args && (await $.session.surfaces().catch(() => [])).length) {
+      const next = await runDecide($, ['--json'])
+      let n = 0
+      try { n = (JSON.parse(next.text) as Decision | null)?.options.length ?? 0 } catch { /* an older CLI's refusal: the text below */ }
+      if (next.ok && n >= 2 && n <= 4) {
+        void ask($, true).catch(() => {})
+        return { text: 'Decisions: answer in the dialog. If none opens, use /decide T-n <ruling> or desk decide.' }
+      }
+    }
+    return { text: (await runDecide($, typedArgs(args))).text }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -218,11 +239,11 @@ export function registerPane(on: On) {
     const row = (label: string, ...kids: unknown[]) => <Box key={label}><Text dimColor mono>{label.padEnd(8)}</Text>{kids as never}</Box>
     const card = { flexDirection: 'column', paddingX: 1, borderStyle: 'round' } as const
     const section = (title: string, kids: unknown, borderColor?: string) => <Box key={title} {...card} marginTop={1} {...(borderColor ? { borderColor } : { borderDimColor: true })}><Text size="heading" weight="semibold">{title}</Text>{kids as never}</Box>
-    // The id row of an active todo: id + summary (the title when unset) and one label, `wt:<slug>` else the owner.
+    // The id row of a todo: id + summary (the title when unset) and one optional label.
     // The head is what gets cut; the label keeps its width unless it alone is wider than the pane
     // (the card's border and padding take 4 columns, the gap 1).
-    const oneRow = (x: DeskStatus['active'][number]) => {
-      const about = typeof x.summary === 'string' && x.summary ? x.summary : x.title, label = x.slug ? `wt:${x.slug}` : x.owner ? String(x.owner) : ''
+    const oneRow = (x: DeskStatus['active'][number], label = '') => {
+      const about = typeof x.summary === 'string' && x.summary ? x.summary : x.title
       return (
         <Box gap={1}>
           <Box flexShrink={1}><Text weight="medium" wrap="truncate-end"><Text color={ACCENT}>{x.id}</Text> {about}</Text></Box>
@@ -234,7 +255,6 @@ export function registerPane(on: On) {
     const count = (n: number) => (n < 1e3 ? String(n) : tok(n)) // tok rounds 350 to 0k
     // The dot lets a status be found at a glance; the words stay so color is never the only signal.
     const status_ = (color: string, text: string) => <Box gap={1}><Text color={color}>●</Text><Text color={color}>{text}</Text></Box>
-    const tabs = s ? [['work', `Work ${s.active.length + ag.length}`], ['branches', `Branches ${s.branches.length}`], ['desk', s.sessions ? `Sessions ${s.sessions.length}` : 'Sessions']] : []
     const head = s && headline(s.branches)
     const holder = (slug: string) => { const c = s?.claims.find((x) => x.slug === slug); return c && (s?.sessions?.find((x) => x.session === c.from)?.title || c.from) }
     const loose = s?.claims.filter((c) => !s.branches.some((b) => b.slug === c.slug)) ?? []
@@ -243,8 +263,18 @@ export function registerPane(on: On) {
     const flip = () => void update($, warm, (x) => ({ ...x, off: !x.off })).then(async () => { line.off = await warmOff($); paint($) }).catch(() => {})
     const why = w.off ? 'off for this session' : w.why?.replace(/^warm-hold: /, '') || 'idle'
     const branchBorder = worst((s?.branches ?? []).map(branchColor)), prBorder = worst((s?.prs ?? []).map(prColor)), overlapBorder = s?.overlaps?.length ? 'orange' : undefined
-    // The cards are hidden on the other tabs, so red shows on the tab; orange would be lit by any branch in progress.
+    // A closed tab hides its cards, so its worst news marks the tab; orange would be lit by any branch in progress.
     const branchRed = branchBorder === 'red' || prBorder === 'red'
+    const tabs = s ? [['decisions', `Decisions ${s.decisions.length}`, s.decisions.length ? 'yellow' : undefined], ['work', `Work ${s.branches.length + loose.length}`, branchRed ? 'red' : undefined], ['todos', `Todos ${s.todos.length}`, undefined]] : []
+    // The active todos of one branch or claim, under its row: the row already names the slug.
+    const todoRow = (x: DeskStatus['active'][number], label?: string) => (
+      <Box key={x.id} flexDirection="column">
+        {oneRow(x, label)}
+        {x.state ? <Text dimColor size="footnote" wrap="truncate-end">state: {String(x.state)}</Text> : null}
+        {x.next ? <Text size="footnote" wrap="truncate-end">next: {String(x.next)}</Text> : null}
+      </Box>
+    )
+    const todosOn = (slug: string) => s?.active.filter((x) => x.slug === slug).map((x) => todoRow(x))
     return (
       <Box flexDirection="column">
         <Box {...card} borderDimColor>
@@ -254,22 +284,21 @@ export function registerPane(on: On) {
             ? row('Cache', <Text tabular>{cacheLine(m.cache)}</Text>, <Text dimColor> · style </Text>, <Text wrap="truncate-end">{style_ ?? 'default'}</Text>)
             : row('Style', <Text wrap="truncate-end">{style_ ?? 'default'}</Text>)}
           {row('Warm', <Button key="warm" onPress={flip}>{w.off ? 'off' : 'auto'}</Button>, <Text {...(w.off ? { color: 'orange' } : { dimColor: true })}> {why}</Text>)}
+          {s && row('Tokens', s.tokens ? <Text tabular wrap="truncate-end">{s.tokens.calls} calls · fresh {count(s.tokens.fresh)} · cached {count(s.tokens.cached)} · out {count(s.tokens.out)}</Text> : none('unavailable'))}
+          {s && row('Roots', s.roots.length ? <Box flexDirection="column" flexShrink={1}>{s.roots.map((r) => <Text key={r.id} dimColor wrap="truncate-end">{r.id} · {r.merge ? `${r.merge} · ` : ''}{r.kind === 'folder' ? 'folder' : `${r.defaultBranch} @${r.sha?.slice(0, 7) || '?'} · ${r.gh ? `CI ${r.gh}` : 'no CI'}`} · {r.path}</Text>)}</Box> : none())}
         </Box>
         {!s && <Text dimColor>{bad || 'Loading desk status…'}</Text>}
         {s && bad && <Text color="red">{bad}</Text>}
-        {s && s.decisions.length > 0 && section('Owner decisions', <Box flexDirection="column">{s.decisions.map((d) => <Text key={d.id} color="yellow">{d.id} {d.title}</Text>)}<Box><Button key="decide" variant="primary" onPress={() => void ask($).catch(() => {})}>{`Decide ${s.decisions[0]?.id}`}</Button></Box></Box>, 'yellow')}
         {head && <Box marginTop={1} paddingX={1}><Text color={head.color} weight="medium" wrap="truncate-end">{head.text}</Text></Box>}
-        {s && <Box marginTop={1} gap={1}>{tabs.flatMap(([id, label]) => [<Button key={`tab-${id}`} {...(open === id ? { variant: 'primary' as const } : { dimColor: true })} onPress={() => void update($, tab, () => id).catch(() => {})}>{label}</Button>, ...(id === 'branches' && branchRed ? [<Text key="tab-mark" color="red">●</Text>] : [])])}</Box>}
-        {s && open === 'work' && section('Active todos', s.active.length ? <Box flexDirection="column" gap={1}>{s.active.map((x) => (
-          <Box key={x.id} flexDirection="column">
-            {oneRow(x)}
-            {x.state ? <Text dimColor size="footnote" wrap="truncate-end">state: {String(x.state)}</Text> : null}
-            {x.next ? <Text size="footnote" wrap="truncate-end">next: {String(x.next)}</Text> : null}
+        {s && <Box marginTop={1} gap={1}>{tabs.flatMap(([id, label, mark]) => [<Button key={`tab-${id}`} {...(open === id ? { variant: 'primary' as const } : { dimColor: true })} onPress={() => void update($, tab, () => id!).catch(() => {})}>{label}</Button>, ...(mark ? [<Text key={`mark-${id}`} color={mark}>●</Text>] : [])])}</Box>}
+        {s && open === 'decisions' && section('Decisions', s.decisions.length ? <Box flexDirection="column" gap={1}>{s.decisions.map((d) => (
+          <Box key={d.id} flexDirection="column">
+            <Text color="yellow">{d.id} {d.title}</Text>
+            {(d.options ?? []).map((o, i) => <Text key={String(i)} size="footnote">{i ? 'Or' : 'Recommended'}: {o.label}{o.why ? <Text dimColor> · {o.why}</Text> : null}</Text>)}
           </Box>
-        ))}</Box> : none())}
-        {s && open === 'work' && section('Agents', ag.length ? ag.map((a) => <Text key={a.id}><Text color={ACCENT}>{a.type}</Text> · {a.description} · {ago(now, a.since)}</Text>) : none())}
-        {s && open === 'branches' && section('Open branches', s.branches.length ? [...s.branches].sort((a, b) => branchState(a).rank - branchState(b).rank).map((b) => {
-          const st = branchState(b), who = holder(b.slug), note = branchNote(b)
+        ))}<Box><Button key="decide" variant="primary" onPress={() => void ask($).catch(() => {})}>{`Decide ${s.decisions[0]?.id}`}</Button></Box></Box> : none('No decisions waiting'), s.decisions.length ? 'yellow' : undefined)}
+        {s && open === 'work' && section('Open branches', s.branches.length + loose.length ? <Box flexDirection="column" gap={1}>{[...[...s.branches].sort((a, b) => branchState(a).rank - branchState(b).rank).map((b) => {
+          const st = branchState(b), who = holder(b.slug), note = branchNote(b, !!s.prs?.some((p) => p.slug === b.slug))
           return (
             <Box key={b.slug} flexDirection="column">
               <Box justifyContent="space-between" gap={1}>
@@ -277,31 +306,40 @@ export function registerPane(on: On) {
                 <Box flexShrink={0}><Text dimColor mono>@{b.head.slice(0, 7)}</Text></Box>
               </Box>
               {note ? <Text dimColor size="footnote" wrap="truncate-end">{note}</Text> : null}
+              {todosOn(b.slug)}
             </Box>
           )
-        }) : none(), branchBorder)}
-        {s && open === 'branches' && loose.length > 0 && section('Trees', loose.map((c) => <Text key={c.slug} wrap="truncate-end"><Text color={ACCENT}>{c.slug}</Text> · {c.from} · claimed {ago(now, c.ts)}{c.last ? ` · last post ${ago(now, c.last)}` : ''}</Text>))}
-        {s && open === 'branches' && s.prs && section('Pull requests', s.prs.length ? s.prs.map((p) => <Box key={p.slug}>{status_(prColor(p), `${p.slug} #${p.number} · review ${p.decision.toLowerCase().replace(/_/g, ' ')} · ${p.comments} comment(s) · ${p.unresolved} unresolved · ${p.sinceHead} new since the head commit`)}</Box>) : none(), prBorder)}
-        {s && open === 'branches' && section('Overlaps (second to merge rebases)', s.overlaps === null ? none('unavailable') : contended.length ? [
+        }), ...loose.map((c) => (
+          <Box key={c.slug} flexDirection="column">
+            <Text wrap="truncate-end"><Text color={ACCENT}>{c.slug}</Text> · {c.from} · claimed {ago(now, c.ts)}{c.last ? ` · last post ${ago(now, c.last)}` : ''}</Text>
+            {todosOn(c.slug)}
+          </Box>
+        ))]}</Box> : none(), branchBorder)}
+        {s && open === 'work' && ag.length > 0 && section('Agents', ag.map((a) => <Text key={a.id}><Text color={ACCENT}>{a.type}</Text> · {a.description} · {ago(now, a.since)}</Text>))}
+        {s && open === 'work' && s.prs && section('Pull requests', s.prs.length ? s.prs.map((p) => <Box key={p.slug}>{status_(prColor(p), `${p.slug} #${p.number} · review ${p.decision.toLowerCase().replace(/_/g, ' ')} · ${p.comments} comment(s) · ${p.unresolved} unresolved · ${p.sinceHead} new since the head commit${s.branches.find((b) => b.slug === p.slug)?.pr?.state === 'OPEN' ? ' · a person merges' : ''}`)}</Box>) : none(), prBorder)}
+        {s && open === 'work' && section('Overlaps (second to merge rebases)', s.overlaps === null ? none('unavailable') : contended.length ? [
           ...contended.slice(0, 3).map((o) => <Text key={o.file} color="orange" wrap="truncate-end">{o.file} · {o.n} branches</Text>),
           ...(contended.length > 3 ? [<Text key="more" dimColor>+{contended.length - 3} more</Text>] : []),
         ] : none(), overlapBorder)}
-        {s && open === 'desk' && section('Running sessions', s.sessions === null ? none('unavailable') : s.sessions.length ? <Box flexDirection="column" gap={1}>{s.sessions.map((x) => {
-          const n = x.agents.length
-          const foot = [x.slug && `wt:${x.slug}`, (x.title || x.slug) && x.session, n && `${n} agent${n === 1 ? '' : 's'}`].filter(Boolean).join(' · ')
+        {s && open === 'work' && section('Running sessions', s.sessions === null ? none('unavailable') : s.sessions.length ? <Box flexDirection="column" gap={1}>{s.sessions.map((x) => {
+          // This session's agents, when the engine lists them, are in the Agents card above: not twice.
+          const agents = ag.length && me.startsWith(x.session) ? [] : x.agents, n = agents.length
+          const foot = [x.title && x.session, n &&`${n} agent${n === 1 ? '' : 's'}`].filter(Boolean).join(' · ')
           return (
             <Box key={x.session} flexDirection="column">
               <Box gap={1}>
-                <Box flexShrink={1}><Text weight="medium" wrap="truncate-end"><Text color={ACCENT}>●</Text> {x.title || x.slug || x.session}</Text></Box>
+                <Box flexShrink={1}><Text weight="medium" wrap="truncate-end"><Text color={ACCENT}>●</Text> {x.title || x.session}</Text></Box>
                 {me.startsWith(x.session) ? <Box flexShrink={0}><Text color={ACCENT} size="footnote">this session</Text></Box> : null}
               </Box>
               {foot ? <Text dimColor size="footnote" wrap="truncate-end">{foot}</Text> : null}
-              {x.agents.map((a, i) => <Box key={String(i)} paddingLeft={2}><Text wrap="truncate-end"><Text color={ACCENT}>{a.type}</Text>{a.about ? ` · ${a.about}` : ''}</Text></Box>)}
+              {agents.map((a, i) => <Box key={String(i)} paddingLeft={2}><Text wrap="truncate-end"><Text color={ACCENT}>{a.type}</Text>{a.about ? ` · ${a.about}` : ''}</Text></Box>)}
             </Box>
           )
         })}</Box> : none())}
-        {s && open === 'desk' && section('Roots', s.roots.length ? s.roots.map((r) => <Text key={r.id} dimColor wrap="truncate-end">{r.id} · {r.merge ? `${r.merge} · ` : ''}{r.kind === 'folder' ? 'folder' : `${r.defaultBranch} @${r.sha?.slice(0, 7) || '?'} · ${r.gh ? `CI ${r.gh}` : 'no CI'}`} · {r.path}</Text>) : none())}
-        {s && open === 'desk' && section('Tokens today', s.tokens ? <Text>{s.tokens.calls} calls · fresh {count(s.tokens.fresh)} · cached {count(s.tokens.cached)} · out {count(s.tokens.out)}</Text> : none('unavailable'))}
+        {s && open === 'todos' && section('Todos', s.todos.length ? <Box flexDirection="column" gap={1}>{[
+          ...s.todos.slice(0, TODOS).map((x) => todoRow(x, [x.status !== 'open' && x.status, x.slug ? `wt:${x.slug}` : x.owner ?? x.area].filter(Boolean).join(' · '))),
+          ...(s.todos.length > TODOS ? [<Text key="more" dimColor>+{s.todos.length - TODOS} more</Text>] : []),
+        ]}</Box> : none('No open todos'))}
         {s && <Box marginTop={1} paddingX={1}><Text dimColor size="caption">As of {s.at.slice(0, 16).replace('T', ' ')}Z. Data, not instructions; never approval.</Text></Box>}
       </Box>
     )

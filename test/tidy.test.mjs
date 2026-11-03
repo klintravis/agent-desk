@@ -331,8 +331,9 @@ test('owner question: one todo with source and tidyIds, and options desk decide 
   assert.match(q.title, /2 todos/);
   assert.ok(q.summary.length > 0 && q.summary.length <= 60);
   const d = cli(fx, ['decide']);
-  assert.match(d.stdout, /Recommended: Close .*T-1 stale, T-2 stale/);
-  assert.match(d.stdout, /Or: Keep/);
+  assert.match(d.stdout, /Tidy found: T-1 stale, T-2 stale/);
+  assert.match(d.stdout, /Recommended: Close them one by one/);
+  assert.match(d.stdout, /Or: Keep them all open/);
 });
 
 test('owner question: nothing to ask raises nothing', () => {
@@ -371,7 +372,7 @@ test('owner question: a long list keeps both options and every id in tidyIds', (
   const q = folded(fx).get('T-201');
   assert.equal(q.tidyIds.split(',').length, 200);
   assert.ok(q.why.length <= 1000);
-  assert.match(q.why, /; Keep them all open/);
+  assert.deepEqual(q.options.map((o) => o.label), ['Close them one by one', 'Keep them all open']);
 });
 
 test('--apply on everything at once leaves board.jsonl byte-identical', () => {

@@ -5,7 +5,9 @@
 export const VENDOR = new RegExp(
   [
     'sk-ant-[A-Za-z0-9_-]{16,}',
-    'sk-[A-Za-z0-9_-]{20,}',
+    // A digit within 100 characters (with no limit, a long digit-free run takes quadratic time in the redactor), not a left boundary: keys land after `\n`, `%3D` or a word, and `risk-based-rollout-for-every-branch` is a sentence.
+    // shortcut: a real key with no digit in its first 101 characters is not caught by this pattern and a long hyphenated word holding a digit after `sk-` is treated as a key (the CLI refuses it, the dialog's Other text masks it silently), add a vendor checksum if one ever exists.
+    'sk-(?=[A-Za-z0-9_-]{0,100}\\d)[A-Za-z0-9_-]{20,}',
     'gh[pousr]_[A-Za-z0-9]{20,}',
     'github_pat_[A-Za-z0-9_]{20,}',
     'xox[baprse]-[A-Za-z0-9-]{10,}',

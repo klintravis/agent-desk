@@ -2,12 +2,14 @@
 export type DeskStatus = {
   v: 2
   at: string
-  decisions: { id: string; title: string }[]
+  decisions: { id: string; title: string; options?: { label: string; why?: string }[] }[]
   active: { id: string; title: string; status: string; [k: string]: unknown }[]
+  /** Open, blocked and active todos except an active one on a branch or claim (that one is in Work); active first, then by priority; never owner decisions, nor ideas unless active. */
+  todos: { id: string; title: string; status: string; [k: string]: unknown }[]
   claims: { slug: string; from: string; ts: string; last: string | null }[]
   sessions: { session: string; title?: string; slug?: string; agents: { type: string; about: string }[] }[] | null
   roots: { id: string; kind: string; path: string; gh?: string; defaultBranch?: string; merge?: 'direct' | 'review'; sha?: string }[]
-  branches: { slug: string; head: string; ci: string; verdict: string | null; behind: { base: string; n: number } | null; pr?: { number: number; state: string; url: string } }[]
+  branches: { slug: string; head: string; ci: string; state: string; verdictOld?: true; verdict: string | null; behind: { base: string; n: number } | null; pr?: { number: number; state: string; url: string; stale?: boolean } }[]
   prs: { slug: string; number: number; decision: string; comments: number; unresolved: number; sinceHead: number }[] | null
   overlaps: string[] | null
   tokens: { calls: number; fresh: number; cached: number; out: number } | null

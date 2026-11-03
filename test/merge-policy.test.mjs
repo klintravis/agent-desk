@@ -12,6 +12,7 @@ import { loadConfig } from '../lib/config.mjs';
 import { mergeChecks, statusData, statusText } from '../bin/desk.mjs';
 import { validate, schema } from '../lib/schema.mjs';
 import { hasSecret } from '../hooks/secretpatterns.mjs';
+import { prText } from '../hooks/prtext.mjs';
 
 const STUB = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), 'gh-stub.mjs')).href;
 const ok = (r) => { assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`); return r.stdout; };
@@ -571,7 +572,7 @@ test('status --json: review rows carry pr and validate; a failed lookup leaves t
   assert.equal('merge' in o.roots.find((r) => r.id === 'b'), false);
   assert.match(o.text, /- a: review, git, CI o\/r /);
   assert.match(o.text, /PR #7 open, a person merges/);
-  assert.deepEqual(f.calls().find((c) => c.args[2] === 'pr' && c.args[3] === 'list').args, ['-R', 'o/r', 'pr', 'list', '--state', 'all', '--limit', '100', '--json', 'number,state,headRefName,url,isCrossRepository']);
+  assert.deepEqual(f.calls().find((c) => c.args[2] === 'pr' && c.args[3] === 'list').args, ['-R', 'o/r', 'pr', 'list', '--state', 'all', '--limit', '100', '--json', 'number,state,headRefName,headRefOid,url,isCrossRepository']);
   const fork = JSON.parse(ok(f.run({ prs: [{ ...open, number: 9, isCrossRepository: true }] }, 'status', '--json')));
   assert.equal('pr' in fork.branches.find((b) => b.slug === 'demo'), false, 'a fork row does not show');
 
@@ -580,6 +581,47 @@ test('status --json: review rows carry pr and validate; a failed lookup leaves t
   const row = down.branches.find((b) => b.slug === 'demo');
   assert.ok(f.sha.startsWith(row.head));
   assert.equal('pr' in row, false);
+});
+
+test('status: a merged PR that does not hold the row\'s head says merged, without the close hint', () => {
+  const input = (held, heads) => ({ ...rowInput([{ ...prRow(3, 'MERGED'), headRefOid: 'def5678ffff' }]), held, ...(heads ? { heads } : {}) });
+  const text = (i) => statusText(i).split('\n').find((l) => l.startsWith('- x @'));
+  const stale = (i) => statusData(i).branches[0].pr.stale;
+  // gatherStatus asks git: false = the PR head is not a descendant of the local head, absent/true = held or unknown
+  assert.match(text(input(new Map([['x', false]]))), /; PR #3 merged$/);
+  assert.equal(stale(input(new Map([['x', false]]))), true);
+  assert.deepEqual(validate(schema('desk-status'), { ...statusData(input(new Map([['x', false]]))), text: '' }), []);
+  // Update branch: the PR head sits on top of the local head, so wt merge would close it
+  assert.match(text(input(new Map([['x', true]]))), /; PR #3 merged: desk wt merge x to close$/);
+  assert.equal(stale(input(new Map([['x', true]]))), undefined);
+  // the object is missing locally (no fetch): unknown, not stale
+  assert.match(text(input(new Map())), /: desk wt merge x to close$/);
+  // no head known: never stale
+  assert.equal(stale(input(new Map([['x', false]]), new Map([['x', '']]))), undefined);
+});
+
+test('status: gatherStatus marks a merged PR stale only when git says it lacks the local head', () => {
+  const f = fixture(REVIEW);
+  const descendant = commit(f.wt, 'two.txt', 'two\n'); // the "Update branch" shape: on top of the local head
+  git(f.wt, 'reset', '-q', '--hard', f.sha); // the object stays in the shared store
+  const unrelated = git(f.wt, 'commit-tree', `${f.sha}^{tree}`, '-m', 'other'); // a root commit, not a descendant
+  const row = (headRefOid) => JSON.parse(ok(f.run({ prs: [{ number: 7, state: 'MERGED', headRefName: 'agent/demo', headRefOid, url: 'https://github.example/o/r/pull/7' }] }, 'status', '--json'))).branches.find((b) => b.slug === 'demo').pr;
+  const held = row(descendant);
+  assert.equal(held.stale, undefined);
+  assert.match(prText('demo', held), /: desk wt merge demo to close$/);
+  assert.equal(row(unrelated).stale, true);
+  assert.equal(row('f'.repeat(40)).stale, undefined, 'a head this clone lacks is unknown, not stale');
+});
+
+test('status: an open fork PR with the branch name does not fill the slug\'s PR review row', () => {
+  const f = fixture({ gh: 'o/r', merge: 'review' });
+  const node = { number: 5, headRefName: 'agent/demo', reviewDecision: 'CHANGES_REQUESTED', comments: { totalCount: 3, nodes: [] }, reviewThreads: { nodes: [] }, commits: { nodes: [] } };
+  const prs = (...nodes) => JSON.parse(ok(f.run({ graphql: nodes }, 'status', '--json'))).prs;
+  const fork = { ...node, number: 9, isCrossRepository: true };
+  assert.deepEqual(prs(node).map((p) => p.number), [5]);
+  assert.deepEqual(prs(fork, node).map((p) => p.number), [5], 'the fork comes first and still loses');
+  assert.deepEqual(prs(fork), []);
+  assert.match(f.calls().find((c) => c.args[0] === 'api').args.join(' '), /isCrossRepository/);
 });
 
 test('direct: status --json has no pr and no merge, and no extra gh call', () => {

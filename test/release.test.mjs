@@ -108,4 +108,8 @@ test('CI picks runners by visibility; releases run only on a public repo', () =>
   const yml = (f) => readFileSync(join(KIT, '.github/workflows', f), 'utf8');
   assert.ok(yml('ci.yml').includes(`github.event.repository.private && fromJSON('[["self-hosted","linux","adesk"]]') || fromJSON('["ubuntu-latest","windows-latest","macos-latest"]')`));
   assert.ok(yml('release.yml').includes('if: ${{ !github.event.repository.private }}'));
+  const rel = yml('release.yml');
+  const create = rel.indexOf('gh release create');
+  assert.ok(/gh release create.*\.vsix/.test(rel), 'release attaches the vsix');
+  assert.ok(rel.indexOf('vsce@') > -1 && rel.indexOf('vsce@') < create, 'vsce packages before the release exists');
 });
