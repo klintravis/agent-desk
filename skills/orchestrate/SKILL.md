@@ -146,7 +146,8 @@ closes the slug's todos. New work found on the way: `add` it with `--summary "<a
    theirs; for a list item no verdict on this head covers yet (a structure blocker, a claim you reran),
    post `desk board post verdict <slug> "FIXES NEEDED @<sha> <n> items"` yourself. An INCONCLUSIVE claim
    later settled by a rerun, or waived by the owner, is cleared with
-   `desk board post verdict <slug> "MERGE @<sha> overrides: <why>"`, never to skip a fix. Fix the list with an implementer under the branch's
+   `desk board post verdict <slug> "MERGE @<sha> overrides: <why>"`, never to skip a fix; a `DO NOT MERGE`
+   needs a new commit. Fix the list with an implementer under the branch's
    own approach (a structure blocker too: on a non-refactor branch it is fixed in place, or split into its
    own refactor todo when it is a restructure), finish again.
    **Close the loop with a fix-verification review**, not another full review: a fresh `verifier`

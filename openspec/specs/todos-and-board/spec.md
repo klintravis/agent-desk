@@ -182,8 +182,8 @@ none, and otherwise print `claimed by <id> <age> ago: stop and report` and exit 
 starting `MERGE @<sha>` with `sha` 7 to 40 hex characters that is a prefix of `head`. A later
 `FIXES NEEDED`, a `MERGE AFTER FIXES` text, no verdict, or a head that differs from the reviewed sha
 SHALL print `merge blocked: <reason>` and exit 1. A `FIXES NEEDED`, `DO NOT MERGE` or `MERGE AFTER FIXES`
-verdict whose sha is a prefix of `head` SHALL block whatever verdict follows it, unless the newest verdict
-is `MERGE @<sha> overrides: <why>` for that head.
+verdict whose sha is a prefix of `head` SHALL block whatever verdict follows it, unless a later verdict is
+`MERGE @<sha> overrides: <why>` for that head; a `DO NOT MERGE` on the head SHALL NOT be overridden.
 
 #### Scenario: A blocker outlives a later MERGE
 - **WHEN** `FIXES NEEDED @abcdef1 validation: 1 not verified` is followed by `MERGE @abcdef1 by opus/high`

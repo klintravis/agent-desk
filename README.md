@@ -401,7 +401,8 @@ not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <rep
   first 8 characters of `CLAUDE_CODE_SESSION_ID`, else `owner`.
 - `board merge-ok <slug> <head-sha>` exits 0 only when the newest verdict is `MERGE @<sha>` (7 to 40
   hex characters) that is a prefix of the head, and no `FIXES NEEDED`, `DO NOT MERGE` or `MERGE AFTER FIXES`
-  verdict names that head, unless the newest is `MERGE @<sha> overrides: <why>`. `board tail [n]` prints the open claims, the files in
+  verdict names that head after its last `MERGE @<sha> overrides: <why>` (a `DO NOT MERGE` on the head is never
+  overridden: only a new commit clears it). `board tail [n]` prints the open claims, the files in
   `streams/` and the last `n` (default 8) lines; the session-start context embeds it.
 - A review verdict reads `<VERDICT> @<sha> by <model>/<effort>`, from what the agent's brief states (`by <model>`
   alone if the brief gives no effort). The merge gate ignores the suffix. The record reaches only people who can read

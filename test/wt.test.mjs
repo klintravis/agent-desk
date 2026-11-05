@@ -145,6 +145,11 @@ test('stream starts the claude on PATH and its output reaches the log files (T-7
   const out = join(home, 'scratch', 'side-run.jsonl');
   for (let i = 0; i < 100 && !(statSync(out).size || statSync(`${out}.err`).size); i++) await new Promise((res) => setTimeout(res, 100));
   assert.ok(statSync(out).size || statSync(`${out}.err`).size, 'the claude process wrote nothing to the log or err file');
+  // A second run for the slug appends: it must not wipe a live run's log.
+  const before = statSync(out).size + statSync(`${out}.err`).size;
+  ok(spawnSync(process.execPath, [BIN, 'stream', 'side', 'task.md', '--repo', 'a'], { cwd: home, encoding: 'utf8', env: { ...e, [pathKey]: `${bin}${delimiter}${e[pathKey]}` } }));
+  for (let i = 0; i < 100 && statSync(out).size + statSync(`${out}.err`).size <= before; i++) await new Promise((res) => setTimeout(res, 100));
+  assert.ok(statSync(out).size + statSync(`${out}.err`).size > before, 'the second run appended');
 });
 
 test('stream budget: --budget or front matter budgetUsd becomes --max-budget-usd, default none', () => {

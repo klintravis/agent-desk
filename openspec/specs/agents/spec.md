@@ -82,14 +82,14 @@ The kit SHALL ship approach skills `fix` and `refactor`, each ending in a `## Do
 - **AND** the implementer follows `refactor`, and the validator shows no pinned test edited after its pinning commit
 
 ### Requirement: Validator
-The kit SHALL ship a `validate` skill and an agent `validator`, model `sonnet`, effort `medium`, tools `Read`, `Grep`, `Glob`, `Bash`, `Write` and `Skill`, that reruns a branch's acceptance claims (`accept: <claim> | <command> | <expected>` todo notes and new spec scenarios) in a detached copy of the head, and of the base for fix, refactor and perf, and reports VERIFIED, NOT VERIFIED or INCONCLUSIVE per claim. The `validate` skill SHALL be the one list of what each kind proves. The validator SHALL change nothing in the worktree, SHALL run nothing in it, SHALL remove every copy it adds, and SHALL post `FIXES NEEDED @<head>` when any claim is not VERIFIED. The `orchestrate` skill SHALL run it beside the `reviewer` for every kind but docs, and for a feature only when a claim is not run by CI, and SHALL keep one must-fix list per branch (reviewer findings, failed or unsettled claims, structure blockers). The merge gate SHALL refuse a head that any `FIXES NEEDED`, `DO NOT MERGE` or `MERGE AFTER FIXES` verdict names, whatever verdict comes after it, unless the newest verdict is `MERGE @<head> overrides: <why>`. `todo start` and `desk stream --todo` SHALL refuse a todo whose `kind` is other than `docs` and that has no `accept:` note; `--kind` SHALL be one of `fix`, `feature`, `refactor`, `perf`, `docs`.
+The kit SHALL ship a `validate` skill and an agent `validator`, model `sonnet`, effort `medium`, tools `Read`, `Grep`, `Glob`, `Bash`, `Write` and `Skill`, that reruns a branch's acceptance claims (`accept: <claim> | <command> | <expected>` todo notes and new spec scenarios) in a detached copy of the head, and of the base for fix, refactor and perf, and reports VERIFIED, NOT VERIFIED or INCONCLUSIVE per claim. The `validate` skill SHALL be the one list of what each kind proves. The validator SHALL change nothing in the worktree, SHALL run nothing in it, SHALL remove every copy it adds, and SHALL post `FIXES NEEDED @<head>` when any claim is not VERIFIED. The `orchestrate` skill SHALL run it beside the `reviewer` for every kind but docs, and for a feature only when a claim is not run by CI, and SHALL keep one must-fix list per branch (reviewer findings, failed or unsettled claims, structure blockers). The merge gate SHALL refuse a head that any `FIXES NEEDED`, `DO NOT MERGE` or `MERGE AFTER FIXES` verdict names, whatever verdict comes after it, unless a later verdict is `MERGE @<head> overrides: <why>` (never for `DO NOT MERGE`). `todo start` and `desk stream --todo` SHALL refuse a todo whose `kind` is other than `docs` and that has no `accept:` note; `--kind` SHALL be one of `fix`, `feature`, `refactor`, `perf`, `docs`.
 
 #### Scenario: A fix that did not fix
 - **WHEN** the validator posts `FIXES NEEDED @<head>` and the reviewer later posts `MERGE @<head>`
 - **THEN** `desk wt merge` refuses the head
 
 #### Scenario: A claim settled by a rerun
-- **WHEN** the newest verdict is `MERGE @<head> overrides: rerun verified`
+- **WHEN** `MERGE @<head> overrides: rerun verified` follows it
 - **THEN** the earlier `FIXES NEEDED @<head>` no longer blocks
 
 #### Scenario: A typed todo without a claim

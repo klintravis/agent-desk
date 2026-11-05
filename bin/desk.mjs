@@ -61,21 +61,21 @@ export function openClaims(lines, exists = claimExists) {
   return [...latest.values()].filter((c) => c.kind === 'claim' && exists(c));
 }
 
-// A FIXES NEEDED, DO NOT MERGE or MERGE AFTER FIXES verdict that names the head blocks it whatever is posted after
-// (a reviewer's MERGE beside a validator's FIXES NEEDED), until the newest verdict is `MERGE @<head> overrides: <why>`.
+// A FIXES NEEDED or MERGE AFTER FIXES verdict that names the head blocks it whatever is posted after it (a reviewer's
+// MERGE beside a validator's FIXES NEEDED), until a later `MERGE @<head> overrides: <why>`. A DO NOT MERGE on the head
+// is never overridden: only a new commit clears it.
 const BLOCKING = /^(FIXES|DO NOT|MERGE AFTER)/;
 export function headBlock(lines, slug, head) {
   const vs = lines.filter((l) => l.kind === 'verdict' && l.slug === slug), onHead = (text) => { const sha = /@([0-9a-f]{7,40})\b/.exec(text)?.[1]; return !!sha && head.startsWith(sha); };
-  const last = vs.at(-1)?.text ?? '';
-  if (/^MERGE @[0-9a-f]{7,40}\b.*\boverrides:/.test(last) && onHead(last)) return null;
-  return vs.findLast((v) => BLOCKING.test(v.text) && onHead(v.text))?.text ?? null;
+  const cleared = vs.findLastIndex((v) => /^MERGE @[0-9a-f]{7,40}\b.*\boverrides:/.test(v.text) && onHead(v.text));
+  return vs.findLast((v, i) => onHead(v.text) && (/^DO NOT/.test(v.text) || (BLOCKING.test(v.text) && i > cleared)))?.text ?? null;
 }
 
 // The merge gate: no blocking verdict on the head, and the newest verdict for the slug is MERGE naming the
 // branch head, so any commit after the review (or a later FIXES NEEDED) blocks the merge.
 export function mergeOk(lines, slug, head) {
   const block = headBlock(lines, slug, head);
-  if (block) return `"${block}" names the head; once it is settled, post MERGE @<sha> overrides: <why>`;
+  if (block) return `"${block}" names the head; fix it in a new commit${/^DO NOT/.test(block) ? '' : ', or post MERGE @<sha> overrides: <why> once it is settled'}`;
   const v = lines.filter((l) => l.kind === 'verdict' && l.slug === slug).at(-1);
   const m = v && /^MERGE @([0-9a-f]{7,40})\b/.exec(v.text);
   if (!m) return v ? `newest verdict is "${v.text}"` : 'no verdict on the board';
@@ -160,6 +160,10 @@ function boardTest() {
     mergeOk([V('FIXES NEEDED @abcdef1 validation: 1 not verified'), V('MERGE @abcdef1 by opus/high')], 'v', head) !== null, // a blocker on the head outlives a later MERGE
     mergeOk([V('FIXES NEEDED @abcdef1 validation'), V('MERGE @abcdef1 overrides: rerun verified')], 'v', head) === null, // until an override
     mergeOk([V('FIXES NEEDED @1234567'), V('MERGE @abcdef1')], 'v', head) === null, // a blocker on an older head does not count
+    mergeOk([V('FIXES NEEDED @abcdef1'), V('MERGE @abcdef1 overrides: x'), V('FIXES NEEDED @abcdef1 validation')], 'v', head) !== null, // a blocker after an override blocks again
+    mergeOk([V('FIXES NEEDED @abcdef1'), V('MERGE @1234567 overrides: x'), V('MERGE @abcdef1')], 'v', head) !== null, // an override for another head clears nothing
+    mergeOk([V('FIXES NEEDED @abcdef1'), V('MERGE @abcdef1 overrides: x'), V('MERGE @abcdef1 by sonnet/medium')], 'v', head) === null, // a late plain MERGE does not re-block
+    mergeOk([V('DO NOT MERGE @abcdef1'), V('MERGE @abcdef1 overrides: x')], 'v', head) !== null, // DO NOT MERGE needs a new commit
     mergeOk([V(`MERGE @${head.padEnd(40, '0')} by opus/high`)], 'v', head.padEnd(40, '0')) === null,
     mergeOk([V('MERGE @1234567 by opus/high')], 'v', head) !== null,
     mergeOk([V('FIXES NEEDED @abcdef1 by opus')], 'v', head) !== null,
@@ -301,7 +305,8 @@ export function todo([cmd, ...argv]) {
     console.log([todoLine(now.get(p.id)), ...made.map((id) => '  ' + todoLine(now.get(id)))].join('\n'));
   } else if (cmd === 'start') {
     const x = need(rest[0]);
-    if (needsClaim({ ...x, ...f })) { console.error(`${x.id} is a ${f.kind ?? x.kind} with no acceptance claim: add one first, desk todo note ${x.id} "accept: <claim> | <command> | <expected>"`); process.exit(1); }
+    // Retyping the todo in the same command does not skip its claim.
+    if (needsClaim(x) || needsClaim({ ...x, ...f })) { console.error(`${x.id} is a ${f.kind ?? x.kind} with no acceptance claim: add one first, desk todo note ${x.id} "accept: <claim> | <command> | <expected>"`); process.exit(1); }
     mutate(x.id, { status: 'active', owner: me(), ...f });
   }
   else if (['done', 'drop', 'block', 'open'].includes(cmd)) {
@@ -326,7 +331,7 @@ export function todo([cmd, ...argv]) {
 // from `split`, which carry no slug or the same one). An open or blocked todo merely tagged with the slug stays.
 export function doneSlug(slug, note = `merged (${slug})`) {
   const t = todos(), hit = [];
-  const close = (x) => { hit.push(x); for (const c of children(t, x.id)) if (OPEN.has(c.status) && (!c.slug || c.slug === slug) && !hit.includes(c)) close(c); };
+  const close = (x) => { hit.push(x); for (const c of children(t, x.id)) if (OPEN.has(c.status) && (!c.slug || c.slug === slug) && !(c.status === 'active' && c.owner !== x.owner) && !hit.includes(c)) close(c); }; // a step another session works on stays
   for (const x of t.values()) if (x.slug === slug && x.status === 'active' && !hit.includes(x)) close(x);
   for (const x of hit) writeTodo(x.id, { status: 'done', note });
   console.log(hit.length ? `done: ${hit.map((x) => x.id).join(', ')}` : `no open todos for ${slug}`);
