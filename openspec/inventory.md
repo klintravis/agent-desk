@@ -228,7 +228,7 @@ Section names are README headings.
 | `scripts/release.mjs notes` | `scripts/release.mjs` `notes` | Versioning and upgrade |
 | `scripts/gh-review-live.mjs` | `scripts/gh-review-live.mjs`: live gh test of the merge review path on the private repo (throwaway PR: list, create, update, server merge, close proof, cleanup) | Versioning and upgrade |
 | `scripts/release.mjs publish` | `scripts/release.mjs` `publish`: one commit from the tag's tree on the public `main`, with the tag | Versioning and upgrade |
-| `.github/workflows/ci.yml` | push and pull request: `npm test` with Node 20 and 22, and `claude plugin test` on Node 22 with a pinned Claude Code CLI; self-hosted runner on a private repo, hosted Linux, Windows and macOS otherwise | Versioning and upgrade |
+| `.github/workflows/ci.yml` | push, and pull requests from forks: `npm test` with Node 22 on each OS and Node 20 on Linux, and `claude plugin test` on Node 22 with a pinned Claude Code CLI; self-hosted runner on a private repo, hosted Linux, Windows and macOS otherwise | Versioning and upgrade |
 | `.github/workflows/release.yml` | tag `v*` push (skipped on a private repo): `npm test`, gate on `main`, package `vscode/` with a pinned vsce, GitHub release with the vsix attached | Versioning and upgrade |
 
 ## Skills, agents, templates

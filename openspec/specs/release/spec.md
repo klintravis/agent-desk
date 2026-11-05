@@ -73,7 +73,7 @@ Pushing a tag `v*` SHALL run `.github/workflows/release.yml` with `contents: wri
 - **THEN** publish fails and the public repo is unchanged
 
 ### Requirement: CI runners
-`.github/workflows/ci.yml` SHALL run on the self-hosted runner when the repository the event belongs to is private and on hosted Linux, Windows and macOS otherwise. A runner SHALL never be registered on the public repo, since a fork's pull request runs its own copy of the workflow.
+`.github/workflows/ci.yml` SHALL run on the self-hosted runner when the repository the event belongs to is private and on hosted Linux, Windows and macOS otherwise: Node 22 on each, and Node 20 on Linux (or the self-hosted runner) only. It SHALL run once per commit: on push, and on `pull_request` only for a pull request from a fork. A runner SHALL never be registered on the public repo, since a fork's pull request runs its own copy of the workflow.
 
 #### Scenario: Push to the private repo
 - **WHEN** a branch is pushed to the private repo

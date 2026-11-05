@@ -6,12 +6,18 @@ on:
 
 jobs:
   test:
+    # One run per commit: a pull request from a branch of this repo already ran on its push. Only a fork's PR, which has no push here, runs on pull_request.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     strategy:
       fail-fast: false
       matrix:
-        node: [20, 22]
+        # Node 22 on every OS; Node 20 (the minimum in package.json engines) on Linux only: what breaks on one OS is not the Node version.
+        node: [22]
         # The private dev repo uses the owner's machine (hosted minutes ran out). A fork's PR can edit this file, so the real barrier is: never register a runner on the public repo.
         os: ${{ github.event.repository.private && fromJSON('[["self-hosted","linux","adesk"]]') || fromJSON('["ubuntu-latest","windows-latest","macos-latest"]') }}
+        include:
+          - node: 20
+            os: ${{ github.event.repository.private && fromJSON('["self-hosted","linux","adesk"]') || 'ubuntu-latest' }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
