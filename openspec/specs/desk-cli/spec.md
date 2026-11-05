@@ -509,7 +509,7 @@ An all-zero assistant line with the `requestId` of a call already counted SHALL 
 - **AND** `--by-worktree` prints neither pattern line nor the depth and parent columns
 
 ### Requirement: Branch state in status JSON
-Each branch of `desk status --json` SHALL carry `state`, computed once in the CLI: `CI failed` when a run of the head sha did not pass, `fixes needed` for an on-head `FIXES`, `DO NOT` or `MERGE AFTER` verdict, `rebase` when behind, then `ready` only when every run of the head sha passed (or the repo has no gh) and the merge gate's `mergeOk` holds, else `needs review`; with CI not yet decided `CI running`, `CI stale` (runs, none on the head), `no CI yet` or `CI unknown` (lookup failed). It SHALL add `verdictOld: true` when the newest verdict names another commit.
+Each branch of `desk status --json` SHALL carry `state`, computed once in the CLI: `CI failed` when a run of the head sha did not pass, `fixes needed` for an on-head `FIXES`, `DO NOT` or `MERGE AFTER` verdict (the newest, or any the merge gate counts), `rebase` when behind, then `not pushed` when the repo has an origin and `origin/<branch>` is not the head, then `ready` only when every run of the head sha passed (or the repo has no gh) and the merge gate's `mergeOk` holds, else `needs review`; with CI not yet decided `CI running`, `CI stale` (runs, none on the head), `no CI yet` or `CI unknown` (lookup failed). It SHALL add `verdictOld: true` when the newest verdict names another commit.
 
 #### Scenario: Several runs of the head
 - **WHEN** one run of the head sha succeeded and another failed

@@ -41,6 +41,13 @@ let rules = '';
 for (const f of [join(home, 'agent-rules.md'), join(home, '.claude', 'agent-rules.md')]) {
   try { rules = '\n' + readFileSync(f, 'utf8'); break; } catch {}
 }
+// Agents that write no code get the rules without Ponytail: its coding rules and "end with what you
+// skipped" tail don't apply to them (the reviewer judges leanness through its own ponytail-review skill). Plugin agent types carry a
+// `<plugin>:` prefix. No agent type in the payload (Copilot, older clients): Ponytail stays.
+const READ_ONLY = new Set(['Explore', 'archiver', 'ci-triage', 'reviewer', 'scribe', 'structure-reviewer', 'validator', 'verifier']);
+const agentType = String(input.agent_type ?? input.agentType ?? '').split(':').pop();
+const noPonytail = !/^sessionstart$/i.test(event) && READ_ONLY.has(agentType);
+if (noPonytail) rules = rules.split(/\r?\n/).filter((l) => !/^- Ponytail is active/.test(l)).join('\n');
 const deskMjs = join(deskKit(home), 'bin', 'desk.mjs');
 rules += `\n- The desk command (\`desk ...\` in the rules and skills) is not on PATH: run \`"${home.replace(/\\/g, '/')}/desk" ...\` in bash; in PowerShell \`$env:DESK_HOME = ${psq(home)}; node ${psq(deskMjs)} ...\`; in cmd \`set "DESK_HOME=${home}" && node "${deskMjs}" ...\`. Not \`npx desk\`.\n`;
 
@@ -61,4 +68,4 @@ if (/^sessionstart$/i.test(event)) try {
 } catch {}
 
 const name = /^sessionstart$/i.test(event) ? 'SessionStart' : 'SubagentStart';
-process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: name, additionalContext: `PONYTAIL MODE ACTIVE - level: full\n\n${ponytail}\n${rules}${board}` } }));
+process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: name, additionalContext: noPonytail ? rules.trimStart() + board : `PONYTAIL MODE ACTIVE - level: full\n\n${ponytail}\n${rules}${board}` } }));

@@ -34,8 +34,9 @@ stopping, run the `handoff` skill: it writes only your own todos.
 - Parallel streams: `desk stream <slug> <task-file> [--todo T-n]` starts a headless Claude session
   that claims, implements, reviews and stops before merge (log in the scratch folder); the desk
   session watches (`desk status --watch`) and merges.
-- Delegate with the `orchestrate` skill (agents `implementer`, `reviewer`, `verifier`,
-  `archiver`, `scribe`, `ci-triage`). Review with a fresh `reviewer` before merging.
+- Delegate with the `orchestrate` skill (agents `implementer`, `reviewer`, `structure-reviewer`,
+  `validator`, `verifier`, `archiver`, `scribe`, `ci-triage`; stack lenses from `stack-lens`). Review with a fresh
+  `reviewer` before merging.
 - Ask the owner first for owner decisions (rulings, breaking changes): add them as todos with
   `--area owner --why "<context>" --option "<label>: <why>" --option "<label>: <why>"` (2-4 options,
   recommendation first, labels up to 60 characters); the owner rules with `/decide` or `desk decide`.

@@ -17,8 +17,8 @@ It ships in two parts that share one version number:
   init and sync. `desk sync` also writes the session and subagent context hook (Ponytail, the desk
   rules, the board), which Claude Code and Copilot both read.
 - **Claude Code plugin**:
-  - skills: `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`
-  - agents: `implementer`, `reviewer`, `verifier`, `archiver`, `scribe`, `ci-triage`
+  - skills: `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, `fix`, `refactor`, `validate`, `stack-lens`, `structure-rubric`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `thermo-nuclear-code-quality-review`
+  - agents: `implementer`, `reviewer`, `structure-reviewer`, `validator`, `verifier`, `archiver`, `scribe`, `ci-triage`
   - a mod: the Desk pane, the owner-decisions band, `/desk` and `/decide`, auto-compaction prune,
     cache warm-hold, the edit guard and the session meters (plan quota, context), secret redaction
 
@@ -251,12 +251,12 @@ that holds `desk.config.json`. `desk init` ignores `DESK_HOME` and always uses t
 
 | Command | What |
 |---|---|
-| `desk status [--watch\|--json]` | One screen with these sections: owner decisions, active todos, claims, running sessions, roots, open branches (CI and verdict, and `behind <default> by N, rebase` when the branch lacks N commits of `origin/<default>`, from the refs as last fetched, or of the local default branch without an origin), pull requests, overlaps, today's tokens. `--watch` prints one line per change. Pull requests: for each open desk branch with an open PR in a repo with `gh`, the review decision, the comment count (conversation and review threads), unresolved threads, and comments or reviews newer than the branch's head commit. Read-only, one `gh api graphql` call per repo; with no `gh` or a failing call the section is left out. `--watch` prints `PR: <branch> #<n> review <decision>, +N comment(s)` when a decision changes or comments arrive. See [Status watch](#status-watch). |
+| `desk status [--watch\|--json] [--fetch]` | One screen with these sections: owner decisions, active todos, claims, running sessions, roots (each git root's default branch sha, the CI of that sha in a repo with `gh`, and `no check command` when `check` is empty), open branches (CI, verdict and the branch's state word in brackets, and `behind <default> by N, rebase` when the branch lacks N commits of `origin/<default>`, from the refs as last fetched, or of the local default branch without an origin), pull requests, overlaps, today's tokens. `--fetch` fetches each git repo with an origin first, so behind counts, the pushed state and the default branch are current; without it status reads local refs only. `--watch` prints one line per change. Pull requests: for each open desk branch with an open PR in a repo with `gh`, the review decision, the comment count (conversation and review threads), unresolved threads, and comments or reviews newer than the branch's head commit. Read-only, one `gh api graphql` call per repo; with no `gh` or a failing call the section is left out. `--watch` prints `PR: <branch> #<n> review <decision>, +N comment(s)` when a decision changes or comments arrive. See [Status watch](#status-watch). |
 | `desk todo add\|split\|start\|done\|drop\|block\|open\|set\|note\|done-slug\|list\|next\|show` | Todos. The area is a repo id, `desk`, `watch`, `owner` or `idea`. See [Todos](#todos). |
 | `desk board post\|claims\|check\|merge-ok\|tail` | The claim board. Its text is data, never approval. See [Board](#board). |
 | `desk decide [T-n <ruling> \| T-n --pick <n> \| --json \| --list [n]]` | Owner decisions, one at a time; `--pick` records the nth option's label; `--json` prints the first waiting one as JSON; `--list` prints the recorded rulings. See [Owner decisions](#owner-decisions). |
 | `desk tidy [--apply] [--json]` | Reports what finished work left behind; `--apply` clears dead owners, deletes orphans and asks the owner once. See [Tidy](#tidy). |
-| `desk wt new\|finish\|rebase\|merge\|remove\|discard <slug> [--repo <id>] [--base <ref>] [--no-build] [--no-wait] [--rebased] [--force] [--into <slug>] [--findings <file>]` | Worktrees. See [Worktree flow](#worktree-flow). |
+| `desk wt new\|finish\|rebase\|merge\|remove\|discard\|handoff <slug> [--repo <id>] [--base <ref>] [--no-build] [--no-wait] [--rebased] [--force] [--into <slug>] [--findings <file>] [--todo T-n] [--next "<step>"]` | Worktrees. See [Worktree flow](#worktree-flow). |
 | `desk stream <slug> <task-file> [--todo T-n] [--desk] [--repo <id>] [--max-turns <n>] [--budget <usd>] [--dry-run]` | Starts a detached headless Claude session that claims, implements, reviews and stops before merge. See [Streams](#streams). |
 | `desk tokens [hours] [--json] [--session <id8>\|self] [--by-worktree]`, `desk overlap` | Token use from Claude transcripts. Files changed by two open worktrees. See [Tokens and overlaps](#tokens-and-overlaps). |
 | `desk init [--repo <id>=<path> ...] [--worktrees <dir>] [--harness claude,copilot] [--no-install]` | Makes the current folder a desk. See [Quickstart](#quickstart). |
@@ -317,6 +317,10 @@ its value.
   current directory is inside the worktree. If git unregistered the worktree but the folder stayed, it
   finishes the same way as `merge`: branch deleted, `release` posted, a warning, exit 0.
 - **`wt discard`** drops the worktree and its branch, uncommitted work included, and posts `release`.
+- **`wt handoff <slug> --next "<step>" [--todo T-n]`** ends a session's turn on a worktree it keeps open: it writes the
+  slug's active todo's `state` from facts (`head <sha>, clean|uncommitted changes, pushed|not pushed, CI <result>, verdict
+  <verdict>`, the verdict without its `by` part, since `todo.jsonl` is committed) and `next`, then posts `release`.
+  It refuses a slug another session holds; `--todo` names the todo when none is active on the slug.
   It refuses a slug another session holds unless you pass `--force`, and, like `merge` and `remove`,
   runs only from outside the worktree. If only the folder stays (git no longer lists the worktree) it
   finishes with a warning naming the folder; if git still lists it, it fails and keeps branch and claim.
@@ -372,7 +376,7 @@ not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <rep
 `todo drop T-n` to let it go.
 
 - `todo add "<title>" [--area <repo id>|desk|owner|watch|idea] [--size ...] [--prio N] [--why ".."] [--parent T-n]
-  [--option "<label>: <why>"]... [--summary "<about 50 characters>"] [--change <spec change>] [--tasks 2.1-2.3] [--model sonnet/medium]`. With one repo `--area` defaults
+  [--option "<label>: <why>"]... [--summary "<about 50 characters>"] [--change <spec change>] [--tasks 2.1-2.3] [--model sonnet/medium] [--kind fix|feature|refactor|perf|docs]`. With one repo `--area` defaults
   to it; with several, `--area` is required. `--prio` must be an integer (anything else exits 1 and
   writes nothing). `--` ends the flags, so a title that starts with `--` is `todo add -- "--foo"`.
   A flag with no value, or whose value starts with `--`, exits 1 and writes nothing (`--all` takes none).
@@ -380,11 +384,12 @@ not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <rep
   an id row (id and summary, the title when unset), then `state:` and `next:`, each cut to one row at the edge,
   with one label on the id row, `wt:<slug>` else the owner (the summary is cut first). `todo show` and `todo list` keep the full title.
 - `todo split T-n "<child>" ["<child>" ...]`: children inherit the area, change and priority.
-- `todo start T-n [--slug <worktree slug>]` marks it active and yours; `todo done T-n`, `todo drop T-n`,
-  `todo block T-n` and `todo open T-n` set the status (`--why` adds a note). `todo done-slug <slug>` closes the active todos of that slug (`wt
-  merge` runs it).
+- `todo start T-n [--slug <worktree slug>]` marks it active and yours; it refuses a todo whose `--kind` is
+  other than `docs` and that has no `accept: <claim> | <command> | <expected>` note (the `validate` skill); `todo done T-n`, `todo drop T-n`,
+  `todo block T-n` and `todo open T-n` set the status (`--why` adds a note). `todo done-slug <slug>` closes the active todos of that slug and their open
+  children without another slug (`wt merge` runs it); an open or blocked todo only tagged with the slug stays.
 - `todo set T-n --<field> <value>` sets any field (handoff uses `--state` and `--next`); `todo note T-n
-  "<text>"` adds a dated note.
+  "<text>"` adds a dated note, up to 1000 characters, never cut: a longer note, or unquoted words, exit 1 and write nothing.
 - `todo list [--area x] [--all]` shows the open tree without ideas (`--area idea` shows them, `--all`
   adds ideas, done and dropped); `todo next [--area x]` picks the open todo with no open children (an idea child only counts under an idea) and
   the lowest priority number (default 50), never an `owner`, `watch` or `idea` todo unless you ask for that area; `todo show T-n` prints the merged JSON.
@@ -399,7 +404,9 @@ not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <rep
   prints `yours` or `unclaimed`, or exits 1 when another session holds it. Session identity is the
   first 8 characters of `CLAUDE_CODE_SESSION_ID`, else `owner`.
 - `board merge-ok <slug> <head-sha>` exits 0 only when the newest verdict is `MERGE @<sha>` (7 to 40
-  hex characters) that is a prefix of the head. `board tail [n]` prints the open claims, the files in
+  hex characters) that is a prefix of the head, and no `FIXES NEEDED`, `DO NOT MERGE` or `MERGE AFTER FIXES`
+  verdict names that head after its last `MERGE @<sha> overrides: <why>` (a `DO NOT MERGE` on the head is never
+  overridden: only a new commit clears it). `board tail [n]` prints the open claims, the files in
   `streams/` and the last `n` (default 8) lines; the session-start context embeds it.
 - A review verdict reads `<VERDICT> @<sha> by <model>/<effort>`, from what the agent's brief states (`by <model>`
   alone if the brief gives no effort). The merge gate ignores the suffix. The record reaches only people who can read
@@ -529,8 +536,9 @@ your file, then the desk's `floor`, which only raises. `desk settings` shows the
 
 The `orchestrate` skill applies resolved values when it spawns an agent, and falls back to its table if `desk settings`
 fails. An agent started outside `orchestrate` runs on its frontmatter or its caller's parameters, so none of this
-reaches it. `kickoff` and `handoff` record the `shared` value (no user layer) in `todo.jsonl`, because that file is
-committed.
+reaches it. `kickoff` and `handoff` write no model or effort into `todo.jsonl` (that file is committed, the user file is
+not): a todo carries its kind, and the task id it maps to is resolved at spawn. `desk wt handoff` drops the `by` part of a
+verdict for the same reason.
 
 **Floor limits.** A floor holds in the resolver's output and in what the skill passes. It is not a security boundary:
 
@@ -575,8 +583,8 @@ warn. Removing a value removes the key at the next full `desk sync`. A key writt
 | Part | Files |
 |---|---|
 | Plugin | `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `hooks/hooks.json` (registers `./register.ts`) |
-| Skills | `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, and the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt` |
-| Agents | `implementer`, `reviewer`, `verifier`, `archiver`, `scribe`, `ci-triage` |
+| Skills | `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, the approaches `fix`, `refactor` and `validate`, `stack-lens`, `structure-rubric`, the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, and Cursor's vendored `thermo-nuclear-code-quality-review` |
+| Agents | `implementer`, `reviewer`, `structure-reviewer`, `validator`, `verifier`, `archiver`, `scribe`, `ci-triage` |
 | Templates for `desk init` | `templates/AGENTS.md`, `templates/agent-rules.md` |
 | JSON Schemas of the desk files | `schemas/desk-config.schema.json`, `schemas/todo.schema.json`, `schemas/board.schema.json`, `schemas/decisions.schema.json` |
 | Hook scripts | `scripts/subagent-context.mjs` (session and subagent context), `scripts/edit-guard.mjs` (the edit guard as a `PreToolUse` script), `scripts/friction-scan.mjs [--since <ISO time>] [--json]` (workflow friction in the desk's transcripts: tool errors, denials, oversized outputs, repeated commands; default last 2 hours), `scripts/test.mjs` (what `npm test` runs: every `test/*.test.mjs`, no file list to keep), `scripts/docs-check.mjs [<checkout>]` (no model; runs in `npm test`; compares the README's links, Node version, Commands table with its actions and flags against `bin/desk.mjs` and `lib/`, and `openspec/inventory.md` against the code and the README; prints each gap, exit 1) |
@@ -585,6 +593,31 @@ warn. Removing a value removes the key at the next full `desk sync`. A key writt
 rows from its diff and edits nothing else; prose that describes behaviour comes back unwritten, listed in its report.
 Haiku is unproven on this work: compare its first few runs against Sonnet before relying on it. On Copilot the picker's
 model applies instead.
+
+Domain roles come from lenses, not more agents. `stack-lens` holds one short file per stack (`typescript`, `testing`,
+`state`, `perf`, `security`, `ui`), each with a build file the `implementer` follows and a review file the `reviewer`
+checks; the orchestrator names the lenses in each brief and the agent reads only those. `structure-reviewer` (opus,
+medium effort, read-only) runs the `structure-rubric` skill, a 3.5 KB condensed form of Cursor's thermo-nuclear
+maintainability rubric (the full vendored skill stays for asking by name), beside the `reviewer` when the change's
+kind calls for it (see below), and plans a refactor's target shape. The `orchestrate` table gains `implement-perf`,
+`review-structure` and `validate`.
+
+Each change is one kind, and the kind picks its approach (the `orchestrate` skill's Approach by kind table). A **fix**
+follows the `fix` skill: Ponytail at level full, a repro or test that fails before and passes after, the root cause
+fixed once in shared code. A **refactor** follows the `refactor` skill, which is deliberately aggressive and replaces
+Ponytail's smallest-diff and keep-the-structure rules for that run: pin today's behaviour with tests first, plan the
+target shape (a `structure-reviewer` run on the paths, for a refactor across several files), delete before adding, migrate every caller and drop the old
+path in the same branch, and prove the pinned tests pass unedited with a net reduction in lines and concepts. A
+**feature** keeps Ponytail and the lenses. Every non-docs todo carries acceptance claims as notes
+(`accept: <claim> | <command> | <expected>`, see the `validate` skill), written at kickoff before any code. After
+`desk wt finish`, a `validator` (sonnet, medium) runs beside the `reviewer`, in its own detached copies: it reruns each
+claim on the head, and on the base for fix, refactor and perf, and reports VERIFIED, NOT VERIFIED or INCONCLUSIVE per
+claim (a feature whose claims CI already runs skips it), and posts `FIXES NEEDED @<head>` when one fails. The merge gate
+refuses a head that any `FIXES NEEDED`, `DO NOT MERGE` or `MERGE AFTER FIXES` verdict names, whatever is posted after it,
+so a reviewer's `MERGE` beside a failed claim does not merge; the orchestrator posts one more for structure blockers, and
+clears a settled or owner-waived claim with `MERGE @<head> overrides: <why>`. Todos carry their kind (`todo set --kind
+fix|feature|refactor|perf|docs`); `todo start` and `desk stream` refuse a typed todo other than docs with no `accept:`
+note. The kind table in the `orchestrate` skill is the one place the pass triggers are set.
 
 ## Specs
 
@@ -680,8 +713,8 @@ folder. Open the desk folder, or the generated `.code-workspace`, in VS Code.
 |---|---|---|
 | Desk instructions | `CLAUDE.md` (imports `AGENTS.md`) | `AGENTS.md` |
 | Skills (kickoff, handoff, orchestrate, ponytail, ...) | plugin | `.github/skills/<name>/` (copied by `desk sync`) |
-| Agents (implementer, reviewer, verifier, archiver, scribe, ci-triage) | plugin | `.github/agents/<name>.agent.md`. `model` is dropped (use the picker); `effort` becomes `reasoning-effort`; tools map to Copilot's `read`, `search`, `edit`, `execute`, `web`, `agent`. |
-| Ponytail and `agent-rules.md` at session and subagent start, plus the board at session start | `SessionStart`/`SubagentStart` hooks in `.claude/settings.local.json` | the same hooks: Copilot reads `.claude/settings.json` and `settings.local.json` |
+| Agents (implementer, reviewer, structure-reviewer, validator, verifier, archiver, scribe, ci-triage) | plugin | `.github/agents/<name>.agent.md`. `model` is dropped (use the picker); `effort` becomes `reasoning-effort`; tools map to Copilot's `read`, `search`, `edit`, `execute`, `web`, `agent`. |
+| Ponytail and `agent-rules.md` at session and subagent start (agents that write no code, `reviewer`, `validator`, `verifier`, `structure-reviewer`, `ci-triage`, `scribe`, `archiver` and `Explore`, get the rules only), plus the board at session start | `SessionStart`/`SubagentStart` hooks in `.claude/settings.local.json` | the same hooks: Copilot reads `.claude/settings.json` and `settings.local.json` |
 | `desk` CLI: todos, board, status, worktrees, merge gate, decide | yes | yes |
 | Desk pane, owner-decisions band, `/desk`, `/decide` | yes (mod) | no (the `decide` skill walks the decisions) |
 | Auto-compaction prune, cache warm-hold | yes (mod) | no |
@@ -763,7 +796,8 @@ Claude Code and Copilot would otherwise run both.
 
 Development: `npm test` (node:test, no dependencies). `desk check` adds the plugin's own tests and
 validation. `npm run typecheck` type-checks `hooks/`, tests included, with `tsc` (settings in `hooks/tsconfig.json`: strict plus `noUncheckedIndexedAccess`) through `npx` against the engine types in `.claude-plugin/types/` (gitignored, written once an interactive `claude --plugin-dir .` session loads the hooks, not by `claude -p`, `claude plugin test` or `claude plugin validate`; or load the plugin-authoring skill (it names the path of its `types/claude-code.d.ts`) and copy that file to `.claude-plugin/types/claude-code/index.d.ts`, creating the folder); the main checkout must hold the file and the repo must list it in `copy` for `wt new` to bring it into a worktree; it exits 1 when they are missing and is not part of `npm test` or `desk check`. Day-to-day work happens in a private development repo (git remote `origin`); this public
-repo (git remote `public`) receives one commit per release, on `main`, with its tag. CI (`.github/workflows/ci.yml`) runs `npm test` with Node 20 and 22 and, on Node 22 only, `claude plugin test` with a pinned Claude Code CLI installed under the job's temp folder (no API key), on hosted Linux, Windows and macOS here
+repo (git remote `public`) receives one commit per release, on `main`, with its tag. CI (`.github/workflows/ci.yml`) runs once per commit (on push; on pull requests only from forks), `npm test` with Node 22 on
+every OS and Node 20 on Linux and, on Node 22 only, `claude plugin test` with a pinned Claude Code CLI installed under the job's temp folder (no API key), on hosted Linux, Windows and macOS here
 and on one self-hosted Linux runner in the private repo, where Windows is covered by the check in
 `desk wt finish`. No runner is ever registered on this repo: a fork's pull request can edit the
 workflow, and it must find nothing of the owner's to run on.

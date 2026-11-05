@@ -39,6 +39,66 @@ test('ci-triage cannot edit: Claude tools and their Copilot form', () => {
   assert.deepEqual(JSON.parse(parseFrontmatter(copilotAgent(src)).meta.tools), ['read', 'search', 'execute']);
 });
 
+test('structure-reviewer cannot edit and loads the condensed rubric; the vendored one stays invocable', () => {
+  const src = readFileSync(join(KIT, 'agents', 'structure-reviewer.md'), 'utf8');
+  const { meta, body } = parseFrontmatter(src);
+  assert.equal(meta.tools, 'Read, Grep, Glob, Bash, Skill');
+  assert.deepEqual([meta.model, meta.effort], ['opus', 'medium']);
+  assert.ok(!JSON.parse(parseFrontmatter(copilotAgent(src)).meta.tools).includes('edit'));
+  assert.match(body, /`structure-rubric` skill/);
+  assert.match(readFileSync(join(KIT, 'skills', 'structure-rubric', 'SKILL.md'), 'utf8'), /^## Presumptive blockers$/m);
+  assert.doesNotMatch(body, /desk board post/);
+  const rubric = parseFrontmatter(readFileSync(join(KIT, 'skills', 'thermo-nuclear-code-quality-review', 'SKILL.md'), 'utf8')).meta;
+  assert.equal(rubric.name, 'thermo-nuclear-code-quality-review');
+  assert.equal(rubric['disable-model-invocation'], undefined);
+});
+
+test('stack-lens: every lens in the table has a build and a review file, and no stray file', () => {
+  const dir = join(KIT, 'skills', 'stack-lens');
+  const listed = [...readFileSync(join(dir, 'SKILL.md'), 'utf8').matchAll(/^\| ([a-z]+) \| /gm)].map((m) => m[1]).filter((l) => l !== 'Lens');
+  assert.deepEqual(readdirSync(join(dir, 'lenses')).sort(), listed.flatMap((l) => [`${l}.build.md`, `${l}.review.md`]).sort());
+  for (const f of readdirSync(join(dir, 'lenses'))) assert.ok(readFileSync(join(dir, 'lenses', f), 'utf8').trim().split('\n').length > 3, f);
+  assert.match(readFileSync(join(KIT, 'agents', 'implementer.md'), 'utf8'), /`stack-lens` skill[\s\S]{0,120}build files/);
+  assert.match(readFileSync(join(KIT, 'agents', 'reviewer.md'), 'utf8'), /`stack-lens` skill and check the review file/);
+});
+
+test('validator: proves claims through the validate skill, edits no code, posts no verdict', () => {
+  const { meta, body } = parseFrontmatter(readFileSync(join(KIT, 'agents', 'validator.md'), 'utf8'));
+  assert.equal(meta.tools, 'Read, Grep, Glob, Bash, Write, Skill');
+  assert.deepEqual([meta.model, meta.effort], ['sonnet', 'medium']);
+  assert.match(body, /`validate` skill/);
+  assert.match(body, /desk board post verdict <slug> "FIXES NEEDED @<head sha> validation:/);
+  const skill = ['SKILL.md', 'proving.md'].map((f) => readFileSync(join(KIT, 'skills', 'validate', f), 'utf8')).join('\n');
+  for (const v of ['VERIFIED', 'NOT VERIFIED', 'INCONCLUSIVE', 'accept: <claim> | <command> | <expected>', 'worktree remove --force']) assert.ok(skill.includes(v), v);
+});
+
+test('approaches: fix and refactor end in Done when; only the refactor skill overrides Ponytail; the kind table is the one source', () => {
+  const read = (n) => readFileSync(join(KIT, 'skills', n, 'SKILL.md'), 'utf8');
+  for (const n of ['fix', 'refactor']) assert.match(read(n), /^## Done when$/m, n);
+  assert.match(read('refactor'), /replaces two Ponytail rules/);
+  assert.doesNotMatch(read('fix'), /replaces .*Ponytail/);
+  assert.doesNotMatch(readFileSync(join(KIT, 'templates', 'agent-rules.md'), 'utf8'), /refactor/, 'every subagent loads agent-rules: the override stays in the refactor skill');
+  const o = read('orchestrate');
+  const kinds = o.slice(o.indexOf('## Approach by kind'), o.indexOf('## Parallel or sequential'));
+  for (const k of ['fix:', 'feature:', 'refactor:', 'perf:', 'docs and bookkeeping |']) assert.ok(kinds.includes(`\n| ${k}`), k);
+  assert.match(kinds, /\*\*Big\*\* means over about 300 changed lines/);
+  for (const row of o.split('\n').filter((l) => /^\| (review-structure|validate) \|/.test(l))) assert.match(row, /Approach by kind/, 'triggers are not restated in the task table');
+  assert.match(readFileSync(join(KIT, 'agents', 'implementer.md'), 'utf8'), /approach \(`fix`, `refactor`\)/);
+  assert.match(readFileSync(join(KIT, 'agents', 'reviewer.md'), 'utf8'), /brief's approach sets the scope/);
+});
+
+test('the must-fix list reaches the board: orchestrate posts FIXES NEEDED, and the stream prompt runs the validator', () => {
+  const o = readFileSync(join(KIT, 'skills', 'orchestrate', 'SKILL.md'), 'utf8');
+  assert.match(o, /must-fix list[\s\S]{0,700}names, whatever is posted after it[\s\S]{0,300}desk board post verdict <slug> "FIXES NEEDED @<sha>/);
+  assert.match(o, /"MERGE @<sha> overrides: <why>"`, never to skip a fix/);
+  assert.match(o, /the must-fix list empty/);
+  assert.match(o, /rebuild the must-fix list[\s\S]{0,120}post `FIXES NEEDED` again/);
+  assert.match(readFileSync(join(KIT, 'agents', 'verifier.md'), 'utf8'), /NOT VERIFIED or INCONCLUSIVE there is NOT FIXED/);
+  const wt = readFileSync(join(KIT, 'lib', 'wt.mjs'), 'utf8');
+  assert.match(wt, /fresh \\`reviewer\\` \+ \\`validator\\`/);
+  assert.match(wt, /`Validation:` line/);
+});
+
 test('claudeSettings: DESK_HOME plus the desk and worktrees readable, user permissions kept', () => {
   const s = claudeSettings({ home: '/d', worktreesDir: '/w', permissions: { deny: ['Read(x)'], additionalDirectories: ['/extra'] } });
   assert.equal(s.env.DESK_HOME, '/d');
@@ -301,7 +361,7 @@ test('sync: Claude settings per checkout, Copilot files in the desk only, worksp
   assert.ok(!existsSync(join(root, 'notes', '.claude')), 'a plain folder gets no settings file');
   assert.equal(git(join(root, 'a'), 'status', '--porcelain'), '', 'settings ignored via info/exclude');
   for (const s of readdirSync(join(KIT, 'skills'))) assert.ok(existsSync(join(home, '.github', 'skills', s, 'SKILL.md')), s);
-  for (const a of ['archiver', 'ci-triage', 'implementer', 'reviewer', 'scribe', 'verifier']) assert.ok(existsSync(join(home, '.github', 'agents', `${a}.agent.md`)), a);
+  for (const a of ['archiver', 'ci-triage', 'implementer', 'reviewer', 'scribe', 'structure-reviewer', 'validator', 'verifier']) assert.ok(existsSync(join(home, '.github', 'agents', `${a}.agent.md`)), a);
   const scribe = parseFrontmatter(readFileSync(join(KIT, 'agents', 'scribe.md'), 'utf8')).meta;
   assert.deepEqual([scribe.model, scribe.effort], ['haiku', 'low']);
   const scribeCopilot = readFileSync(join(home, '.github', 'agents', 'scribe.agent.md'), 'utf8');

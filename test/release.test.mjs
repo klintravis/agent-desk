@@ -106,7 +106,10 @@ test('publish pushes each tag as one commit on the public main; private history 
 
 test('CI picks runners by visibility; releases run only on a public repo', () => {
   const yml = (f) => readFileSync(join(KIT, '.github/workflows', f), 'utf8');
-  assert.ok(yml('ci.yml').includes(`github.event.repository.private && fromJSON('[["self-hosted","linux","adesk"]]') || fromJSON('["ubuntu-latest","windows-latest","macos-latest"]')`));
+  const ci = yml('ci.yml');
+  assert.ok(ci.includes(`github.event.repository.private && fromJSON('[["self-hosted","linux","adesk"]]') || fromJSON('["ubuntu-latest","windows-latest","macos-latest"]')`));
+  assert.ok(ci.includes(`github.event.repository.private && fromJSON('["self-hosted","linux","adesk"]') || 'ubuntu-latest'`), 'Node 20 on Linux only');
+  assert.ok(ci.includes(`if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository`), 'one run per commit: pull_request only for forks');
   assert.ok(yml('release.yml').includes('if: ${{ !github.event.repository.private }}'));
   const rel = yml('release.yml');
   const create = rel.indexOf('gh release create');

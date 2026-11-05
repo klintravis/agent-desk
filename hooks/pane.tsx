@@ -143,7 +143,7 @@ type Branch = DeskStatus['branches'][number]
 // gives the word a colour and a rank. rank: 0 and 1 need action, 2 is ready, 3 is in progress.
 const LOOK: Record<string, { color: string; rank: number }> = {
   'CI failed': { color: 'red', rank: 0 }, 'fixes needed': { color: 'red', rank: 0 }, rebase: { color: 'orange', rank: 1 },
-  'needs review': { color: 'orange', rank: 1 }, ready: { color: 'green', rank: 2 },
+  'needs review': { color: 'orange', rank: 1 }, 'not pushed': { color: 'orange', rank: 1 }, ready: { color: 'green', rank: 2 },
 }
 export function branchState(b: Branch): { word: string; color: string; rank: number } {
   const word = b.state || 'CI unknown' // an older desk CLI sends no state

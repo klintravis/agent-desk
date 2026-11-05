@@ -67,12 +67,14 @@ Section names are README headings.
 | `wt merge` | `lib/wt.mjs` `merge` | Worktree flow |
 | `wt remove` | `lib/wt.mjs` `remove` | Worktree flow |
 | `wt discard` | `lib/wt.mjs` `discard` | Worktree flow |
+| `wt handoff` | `lib/wt.mjs` `handoff` | Worktree flow |
 
 ## Flags
 
 | item | where in code | README section |
 |---|---|---|
 | `--watch` | `bin/desk.mjs` `status`, `watch` | Status watch |
+| `--fetch` | `bin/desk.mjs` `status` | Commands |
 | `--json` | `bin/desk.mjs` `status`, `statusData`; `lib/tidy.mjs` `tidy` | Status watch, Tidy |
 | `--apply` | `lib/tidy.mjs` `tidy` | Tidy |
 | `tidyIds` | `lib/tidy.mjs` `raiseQuestion` (with `source`) | Tidy |
@@ -93,6 +95,7 @@ Section names are README headings.
 | `--change` | `bin/desk.mjs` `todoLine` | Todos |
 | `--tasks` | `bin/desk.mjs` `todoLine` | Todos |
 | `--model` | `bin/desk.mjs` `todoLine` | Todos |
+| `--kind` | `bin/desk.mjs` `flags`, `CHANGE_KINDS`, `needsClaim`, `todoLine`; `lib/wt.mjs` `stream` | Todos |
 | `--slug` | `bin/desk.mjs` `doneSlug` (field set by `todo start`) | Todos |
 | `--state` | handoff skill, shown by `statusText` | Todos |
 | `--next` | handoff skill, shown by `statusText` | Todos |
@@ -225,7 +228,7 @@ Section names are README headings.
 | `scripts/release.mjs notes` | `scripts/release.mjs` `notes` | Versioning and upgrade |
 | `scripts/gh-review-live.mjs` | `scripts/gh-review-live.mjs`: live gh test of the merge review path on the private repo (throwaway PR: list, create, update, server merge, close proof, cleanup) | Versioning and upgrade |
 | `scripts/release.mjs publish` | `scripts/release.mjs` `publish`: one commit from the tag's tree on the public `main`, with the tag | Versioning and upgrade |
-| `.github/workflows/ci.yml` | push and pull request: `npm test` with Node 20 and 22, and `claude plugin test` on Node 22 with a pinned Claude Code CLI; self-hosted runner on a private repo, hosted Linux, Windows and macOS otherwise | Versioning and upgrade |
+| `.github/workflows/ci.yml` | push, and pull requests from forks: `npm test` with Node 22 on each OS and Node 20 on Linux, and `claude plugin test` on Node 22 with a pinned Claude Code CLI; self-hosted runner on a private repo, hosted Linux, Windows and macOS otherwise | Versioning and upgrade |
 | `.github/workflows/release.yml` | tag `v*` push (skipped on a private repo): `npm test`, gate on `main`, package `vscode/` with a pinned vsce, GitHub release with the vsix attached | Versioning and upgrade |
 
 ## Skills, agents, templates
@@ -234,15 +237,23 @@ Section names are README headings.
 |---|---|---|
 | `kickoff` | `skills/kickoff/SKILL.md` | What is in the kit |
 | `handoff` | `skills/handoff/SKILL.md` | What is in the kit |
-| `orchestrate` | `skills/orchestrate/SKILL.md` | What is in the kit |
+| `orchestrate` | `skills/orchestrate/SKILL.md`, `skills/orchestrate/merge-review.md` | What is in the kit |
 | `ponytail` | `skills/ponytail/SKILL.md` | What is in the kit |
 | `ponytail-review` | `skills/ponytail-review/SKILL.md` | What is in the kit |
 | `ponytail-audit` | `skills/ponytail-audit/SKILL.md` | What is in the kit |
 | `ponytail-debt` | `skills/ponytail-debt/SKILL.md` | What is in the kit |
 | `decide` | `skills/decide/SKILL.md` | What is in the kit |
 | `walkthrough` | `skills/walkthrough/SKILL.md` | What is in the kit |
+| `fix` | `skills/fix/SKILL.md` | What is in the kit |
+| `refactor` | `skills/refactor/SKILL.md` | What is in the kit |
+| `validate` | `skills/validate/SKILL.md`, `skills/validate/proving.md` | What is in the kit |
+| `stack-lens` | `skills/stack-lens/SKILL.md`, `skills/stack-lens/lenses/*.md` | What is in the kit |
+| `structure-rubric` | `skills/structure-rubric/SKILL.md` | What is in the kit |
+| `thermo-nuclear-code-quality-review` | `skills/thermo-nuclear-code-quality-review/SKILL.md` (vendored) | What is in the kit |
 | `implementer` | `agents/implementer.md` | What is in the kit |
 | `reviewer` | `agents/reviewer.md` | What is in the kit |
+| `structure-reviewer` | `agents/structure-reviewer.md` | What is in the kit |
+| `validator` | `agents/validator.md` | What is in the kit |
 | `verifier` | `agents/verifier.md` | What is in the kit |
 | `archiver` | `agents/archiver.md` | What is in the kit |
 | `scribe` | `agents/scribe.md` | What is in the kit |
