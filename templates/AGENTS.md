@@ -35,7 +35,7 @@ stopping, run the `handoff` skill: it writes only your own todos.
   that claims, implements, reviews and stops before merge (log in the scratch folder); the desk
   session watches (`desk status --watch`) and merges.
 - Delegate with the `orchestrate` skill (agents `implementer`, `reviewer`, `structure-reviewer`,
-  `verifier`, `archiver`, `scribe`, `ci-triage`; stack lenses from `stack-lens`). Review with a fresh
+  `validator`, `verifier`, `archiver`, `scribe`, `ci-triage`; stack lenses from `stack-lens`). Review with a fresh
   `reviewer` before merging.
 - Ask the owner first for owner decisions (rulings, breaking changes): add them as todos with
   `--area owner --why "<context>" --option "<label>: <why>" --option "<label>: <why>"` (2-4 options,

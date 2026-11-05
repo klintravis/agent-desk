@@ -12,6 +12,8 @@ The vendored `skills/thermo-nuclear-code-quality-review/` (Cursor's thermos plug
 | `hooks/meters.ts` `cacheLine` (cache hit) | token-ledger 0.1.0, github.com/Arunjay4213/claude-mods | Arunjay. MIT per the plugin's `plugin.json`; the repo has no LICENSE file. |
 | `hooks/redact.ts`, `hooks/secretpatterns.mjs` (secret redaction) | secret-redactor 1.0.0, github.com/ray-amjad/awesome-claude-code-function-hooks | Copyright (c) 2026 Ray Amjad |
 | `bin/desk.mjs` `ghPrs`, `prState` (PR review state in `desk status`) | pr-pulse 0.1.0 | Copyright (c) 2026 Gerric Chaplin |
+| `skills/fix/SKILL.md`, `skills/refactor/SKILL.md` (adapted from the bug-fix and refactoring playbooks and the `tdd`, `principle-*` skills) | pstack, github.com/cursor/plugins `pstack/` | Copyright (c) 2026 Lauren Tan |
+| `skills/validate/SKILL.md` (adapted from `verify-this`) | cursor-team-kit, github.com/cursor/plugins | Copyright (c) 2026 Cursor |
 | `skills/stack-lens/lenses/*.md` (rules adapted from `typescript-best-practices`, `tdd`, `benchmark-checklist` and the `principle-*` skills) | pstack, github.com/cursor/plugins `pstack/` | Copyright (c) 2026 Lauren Tan |
 | `skills/stack-lens/lenses/*.md` (`typescript-exhaustive-switch`, `no-inline-imports`, `deslop`), `agents/reviewer.md` and `skills/stack-lens/lenses/security.md` (rules from `thermo-nuclear-review`), `agents/implementer.md` (self-deslop step) | cursor-team-kit and thermos, github.com/cursor/plugins | Copyright (c) 2026 Cursor |
 

@@ -17,7 +17,9 @@ check command and the one verdict post at the end only.
    ticked task really done, nothing outside the scope.
 3. Check the repo's written rules explicitly (names, licensing headers, secrets, logging).
 4. Load the `stack-lens` skill and check the Review half of each lens the brief names or the diff's
-   files match.
+   files match. If the brief names an approach (`fix`, `refactor`), load it and check its **Done when**
+   list: each unmet item is a finding. A refactor that adds behaviour, or a fix with no failing-before
+   evidence, is one.
 5. Beyond the skill, also find: a devex break (a renamed or new required env var, a moved secret, a
    remapped port, a new step every developer must run); a feature reachable without its flag or gate;
    a file this branch pushed past 1000 lines; a new special-case branch in an unrelated flow. A break the

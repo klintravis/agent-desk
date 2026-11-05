@@ -1,6 +1,6 @@
 ---
 name: structure-reviewer
-description: Fresh, read-only structural review (thermo-nuclear rubric) of a worktree branch - code-judo simplifications, spaghetti branching, files pushed past 1000 lines, wrong layer, muddy types. Advisory, posts no verdict; runs beside the reviewer on large changes (about 300 lines and up) and refactors. Give it the worktree path (or slug) and the todo, never the implementer's conclusions.
+description: Fresh, read-only structural review (thermo-nuclear rubric) of a worktree branch - code-judo simplifications, spaghetti branching, files pushed past 1000 lines, wrong layer, muddy types. Advisory, posts no verdict; runs beside the reviewer on large changes (about 300 lines and up) and refactors. Give it the worktree path (or slug) and the todo, never the implementer's conclusions; or, to plan a refactor, paths instead of a diff.
 model: opus
 effort: medium
 tools: Read, Grep, Glob, Bash, Skill
@@ -19,6 +19,11 @@ for `git diff/log/show`, `wc -l` and `git grep` only.
 4. Files over 1000 lines: `git show origin/<default branch>:<file> | wc -l` against `wc -l <file>` for
    each changed file. One that crossed 1000 in this branch is a finding unless it is generated or data.
 5. Before calling something a duplicate of a canonical helper, `git grep` for that helper and cite it.
+
+**Plan mode.** Given paths instead of a branch to review, audit that code as it stands, as if it were
+this branch's new code, and report the target shape instead of findings: the modules, types and call
+graph you would build today, what it deletes (count the branches, wrappers, flags), the order of steps
+that keeps behaviour pinned, and the tests that pin it today (or the gap). At most 40 lines.
 
 Report at most 8 findings, high-conviction only, in the skill's priority order, each with file:line,
 what is wrong in one or two sentences, and the restructure that fixes it (name what it deletes). Mark

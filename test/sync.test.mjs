@@ -60,6 +60,26 @@ test('stack-lens: every lens in the table has its file, each with a Build and a 
   for (const a of ['implementer', 'reviewer']) assert.match(readFileSync(join(KIT, 'agents', `${a}.md`), 'utf8'), /`stack-lens` skill/, a);
 });
 
+test('validator: proves claims through the validate skill, edits no code, posts no verdict', () => {
+  const { meta, body } = parseFrontmatter(readFileSync(join(KIT, 'agents', 'validator.md'), 'utf8'));
+  assert.equal(meta.tools, 'Read, Grep, Glob, Bash, Write, Skill');
+  assert.deepEqual([meta.model, meta.effort], ['sonnet', 'medium']);
+  assert.match(body, /`validate` skill/);
+  assert.doesNotMatch(body, /desk board post/);
+  const skill = readFileSync(join(KIT, 'skills', 'validate', 'SKILL.md'), 'utf8');
+  for (const v of ['VERIFIED', 'NOT VERIFIED', 'INCONCLUSIVE', 'accept: <claim> | <command> | <expected>', 'worktree remove --force']) assert.ok(skill.includes(v), v);
+});
+
+test('approaches: fix and refactor each end in a Done when list; only refactor overrides Ponytail; orchestrate maps every kind', () => {
+  const read = (n) => readFileSync(join(KIT, 'skills', n, 'SKILL.md'), 'utf8');
+  for (const n of ['fix', 'refactor']) assert.match(read(n), /^## Done when$/m, n);
+  assert.match(read('refactor'), /replaces two Ponytail rules/);
+  assert.doesNotMatch(read('fix'), /replaces .*Ponytail/);
+  const o = read('orchestrate');
+  for (const k of ['fix', 'feature', 'refactor', 'perf', 'docs']) assert.match(o, new RegExp(`^\\| ${k}[: ]`, 'm'), k);
+  for (const a of ['implementer', 'reviewer']) assert.match(readFileSync(join(KIT, 'agents', `${a}.md`), 'utf8'), /approach \(`fix`, `refactor`\)/, a);
+});
+
 test('claudeSettings: DESK_HOME plus the desk and worktrees readable, user permissions kept', () => {
   const s = claudeSettings({ home: '/d', worktreesDir: '/w', permissions: { deny: ['Read(x)'], additionalDirectories: ['/extra'] } });
   assert.equal(s.env.DESK_HOME, '/d');
@@ -322,7 +342,7 @@ test('sync: Claude settings per checkout, Copilot files in the desk only, worksp
   assert.ok(!existsSync(join(root, 'notes', '.claude')), 'a plain folder gets no settings file');
   assert.equal(git(join(root, 'a'), 'status', '--porcelain'), '', 'settings ignored via info/exclude');
   for (const s of readdirSync(join(KIT, 'skills'))) assert.ok(existsSync(join(home, '.github', 'skills', s, 'SKILL.md')), s);
-  for (const a of ['archiver', 'ci-triage', 'implementer', 'reviewer', 'scribe', 'structure-reviewer', 'verifier']) assert.ok(existsSync(join(home, '.github', 'agents', `${a}.agent.md`)), a);
+  for (const a of ['archiver', 'ci-triage', 'implementer', 'reviewer', 'scribe', 'structure-reviewer', 'validator', 'verifier']) assert.ok(existsSync(join(home, '.github', 'agents', `${a}.agent.md`)), a);
   const scribe = parseFrontmatter(readFileSync(join(KIT, 'agents', 'scribe.md'), 'utf8')).meta;
   assert.deepEqual([scribe.model, scribe.effort], ['haiku', 'low']);
   const scribeCopilot = readFileSync(join(home, '.github', 'agents', 'scribe.agent.md'), 'utf8');
