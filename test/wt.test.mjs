@@ -391,11 +391,12 @@ test('status: a branch in a repo without origin counts behind the local default 
 });
 
 test('watchRuns gives each watch only the time left of the bound', () => {
+  // A fake clock: each watch takes 120 ms of it, so the test does not depend on how busy the runner is.
   const seen = [];
-  const fake = (_cmd, _args, opts) => { seen.push(opts.timeout); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120); };
-  watchRuns({ gh: 'o/r' }, [1, 2, 3], 200, fake);
-  assert.equal(seen.length, 2);
-  assert.ok(seen[0] <= 200 && seen[1] < seen[0], String(seen));
+  let t = 0;
+  const fake = (_cmd, _args, opts) => { seen.push(opts.timeout); t += 120; };
+  watchRuns({ gh: 'o/r' }, [1, 2, 3], 200, fake, () => t);
+  assert.deepEqual(seen, [200, 80], 'the second watch gets only what is left; the third none');
 });
 
 // A worktree `rb` with one commit editing line N of a 10-line f.txt, reviewed at that commit, then
