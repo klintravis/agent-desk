@@ -241,8 +241,11 @@ Section names are README headings.
 | `ponytail-debt` | `skills/ponytail-debt/SKILL.md` | What is in the kit |
 | `decide` | `skills/decide/SKILL.md` | What is in the kit |
 | `walkthrough` | `skills/walkthrough/SKILL.md` | What is in the kit |
+| `stack-lens` | `skills/stack-lens/SKILL.md`, `skills/stack-lens/lenses/*.md` | What is in the kit |
+| `thermo-nuclear-code-quality-review` | `skills/thermo-nuclear-code-quality-review/SKILL.md` (vendored) | What is in the kit |
 | `implementer` | `agents/implementer.md` | What is in the kit |
 | `reviewer` | `agents/reviewer.md` | What is in the kit |
+| `structure-reviewer` | `agents/structure-reviewer.md` | What is in the kit |
 | `verifier` | `agents/verifier.md` | What is in the kit |
 | `archiver` | `agents/archiver.md` | What is in the kit |
 | `scribe` | `agents/scribe.md` | What is in the kit |

@@ -17,8 +17,8 @@ It ships in two parts that share one version number:
   init and sync. `desk sync` also writes the session and subagent context hook (Ponytail, the desk
   rules, the board), which Claude Code and Copilot both read.
 - **Claude Code plugin**:
-  - skills: `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`
-  - agents: `implementer`, `reviewer`, `verifier`, `archiver`, `scribe`, `ci-triage`
+  - skills: `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, `stack-lens`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `thermo-nuclear-code-quality-review`
+  - agents: `implementer`, `reviewer`, `structure-reviewer`, `verifier`, `archiver`, `scribe`, `ci-triage`
   - a mod: the Desk pane, the owner-decisions band, `/desk` and `/decide`, auto-compaction prune,
     cache warm-hold, the edit guard and the session meters (plan quota, context), secret redaction
 
@@ -575,8 +575,8 @@ warn. Removing a value removes the key at the next full `desk sync`. A key writt
 | Part | Files |
 |---|---|
 | Plugin | `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `hooks/hooks.json` (registers `./register.ts`) |
-| Skills | `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, and the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt` |
-| Agents | `implementer`, `reviewer`, `verifier`, `archiver`, `scribe`, `ci-triage` |
+| Skills | `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, `stack-lens`, the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, and Cursor's vendored `thermo-nuclear-code-quality-review` |
+| Agents | `implementer`, `reviewer`, `structure-reviewer`, `verifier`, `archiver`, `scribe`, `ci-triage` |
 | Templates for `desk init` | `templates/AGENTS.md`, `templates/agent-rules.md` |
 | JSON Schemas of the desk files | `schemas/desk-config.schema.json`, `schemas/todo.schema.json`, `schemas/board.schema.json`, `schemas/decisions.schema.json` |
 | Hook scripts | `scripts/subagent-context.mjs` (session and subagent context), `scripts/edit-guard.mjs` (the edit guard as a `PreToolUse` script), `scripts/friction-scan.mjs [--since <ISO time>] [--json]` (workflow friction in the desk's transcripts: tool errors, denials, oversized outputs, repeated commands; default last 2 hours), `scripts/test.mjs` (what `npm test` runs: every `test/*.test.mjs`, no file list to keep), `scripts/docs-check.mjs [<checkout>]` (no model; runs in `npm test`; compares the README's links, Node version, Commands table with its actions and flags against `bin/desk.mjs` and `lib/`, and `openspec/inventory.md` against the code and the README; prints each gap, exit 1) |
@@ -585,6 +585,14 @@ warn. Removing a value removes the key at the next full `desk sync`. A key writt
 rows from its diff and edits nothing else; prose that describes behaviour comes back unwritten, listed in its report.
 Haiku is unproven on this work: compare its first few runs against Sonnet before relying on it. On Copilot the picker's
 model applies instead.
+
+Domain roles come from lenses, not more agents. `stack-lens` holds one short file per stack (`typescript`, `testing`,
+`state`, `perf`, `security`, `ui`), each with a Build half the `implementer` follows and a Review half the `reviewer`
+checks; the orchestrator names the lenses in each brief and the agent reads only those. `structure-reviewer` (opus,
+high effort, read-only) runs Cursor's thermo-nuclear maintainability rubric beside the `reviewer` on changes over
+about 150 lines, refactors, and changes that push a file past 1000 lines. It posts no verdict: the orchestrator merges
+its blockers into the reviewer's findings for one fix round, so the merge gate is unchanged. The `orchestrate` table
+gains `implement-perf`, `refactor` and `review-structure`.
 
 ## Specs
 
@@ -680,7 +688,7 @@ folder. Open the desk folder, or the generated `.code-workspace`, in VS Code.
 |---|---|---|
 | Desk instructions | `CLAUDE.md` (imports `AGENTS.md`) | `AGENTS.md` |
 | Skills (kickoff, handoff, orchestrate, ponytail, ...) | plugin | `.github/skills/<name>/` (copied by `desk sync`) |
-| Agents (implementer, reviewer, verifier, archiver, scribe, ci-triage) | plugin | `.github/agents/<name>.agent.md`. `model` is dropped (use the picker); `effort` becomes `reasoning-effort`; tools map to Copilot's `read`, `search`, `edit`, `execute`, `web`, `agent`. |
+| Agents (implementer, reviewer, structure-reviewer, verifier, archiver, scribe, ci-triage) | plugin | `.github/agents/<name>.agent.md`. `model` is dropped (use the picker); `effort` becomes `reasoning-effort`; tools map to Copilot's `read`, `search`, `edit`, `execute`, `web`, `agent`. |
 | Ponytail and `agent-rules.md` at session and subagent start, plus the board at session start | `SessionStart`/`SubagentStart` hooks in `.claude/settings.local.json` | the same hooks: Copilot reads `.claude/settings.json` and `settings.local.json` |
 | `desk` CLI: todos, board, status, worktrees, merge gate, decide | yes | yes |
 | Desk pane, owner-decisions band, `/desk`, `/decide` | yes (mod) | no (the `decide` skill walks the decisions) |

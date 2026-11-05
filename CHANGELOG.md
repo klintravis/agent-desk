@@ -7,6 +7,11 @@ what an existing desk must do on upgrade; `desk check` warns while `kitVersion` 
 
 ## Unreleased
 
+- Added: skill `stack-lens`, one short file per stack (`typescript`, `testing`, `state`, `perf`, `security`, `ui`), each with a Build half for the `implementer` and a Review half for the `reviewer`. The `orchestrate` skill names the lenses in each brief and the agent reads only those. Adapted from Lauren Tan's pstack and Cursor's cursor-team-kit and thermos plugins (MIT). Nothing to do.
+- Added: agent `structure-reviewer` (opus, high, read-only) and the vendored skill `thermo-nuclear-code-quality-review` from Cursor's thermos plugin (MIT). It reviews structure (code-judo simplifications, spaghetti branching, files pushed past 1000 lines, wrong layer) beside the `reviewer` on changes over about 150 lines and on refactors, and posts no verdict: its blockers join the reviewer's findings for one fix round, so the merge gate is unchanged. Nothing to do.
+- Added: `orchestrate` task ids `implement-perf` (opus, high), `refactor` (sonnet, high) and `review-structure` (opus, high); `desk settings` and the user settings file accept them. Nothing to do.
+- Changed: the `implementer` names the data shape first, keeps files under 1000 lines, writes a failing test before a bug fix where a cheap one exists, and removes slop from its own diff before committing. The `reviewer` also flags devex breaks (env vars, ports, secrets, new setup steps), feature-gate leaks and new files over 1000 lines, reads the other side before reporting, and reads a PR's threads only after its own pass. Nothing to do.
+
 ## 0.6.0 - 2026-11-03
 
 - Added: each GitHub release carries the VS Code extension as `agent-desk-vX.Y.Z.vsix`; install it with `code --install-extension agent-desk-vX.Y.Z.vsix`. Nothing to do if you do not use it.

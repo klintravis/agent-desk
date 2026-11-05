@@ -39,6 +39,27 @@ test('ci-triage cannot edit: Claude tools and their Copilot form', () => {
   assert.deepEqual(JSON.parse(parseFrontmatter(copilotAgent(src)).meta.tools), ['read', 'search', 'execute']);
 });
 
+test('structure-reviewer cannot edit and loads the vendored rubric, which the model may invoke', () => {
+  const src = readFileSync(join(KIT, 'agents', 'structure-reviewer.md'), 'utf8');
+  const { meta, body } = parseFrontmatter(src);
+  assert.equal(meta.tools, 'Read, Grep, Glob, Bash, Skill');
+  assert.deepEqual([meta.model, meta.effort], ['opus', 'high']);
+  assert.ok(!JSON.parse(parseFrontmatter(copilotAgent(src)).meta.tools).includes('edit'));
+  assert.match(body, /`thermo-nuclear-code-quality-review` skill/);
+  assert.doesNotMatch(body, /desk board post/);
+  const rubric = parseFrontmatter(readFileSync(join(KIT, 'skills', 'thermo-nuclear-code-quality-review', 'SKILL.md'), 'utf8')).meta;
+  assert.equal(rubric.name, 'thermo-nuclear-code-quality-review');
+  assert.equal(rubric['disable-model-invocation'], undefined);
+});
+
+test('stack-lens: every lens in the table has its file, each with a Build and a Review half, and no stray file', () => {
+  const dir = join(KIT, 'skills', 'stack-lens');
+  const listed = [...readFileSync(join(dir, 'SKILL.md'), 'utf8').matchAll(/\| `(lenses\/[\w-]+\.md)` \|/g)].map((m) => m[1]);
+  assert.deepEqual(listed.sort(), readdirSync(join(dir, 'lenses')).map((f) => `lenses/${f}`).sort());
+  for (const f of listed) assert.match(readFileSync(join(dir, f), 'utf8'), /^## Build$[\s\S]+^## Review$/m, f);
+  for (const a of ['implementer', 'reviewer']) assert.match(readFileSync(join(KIT, 'agents', `${a}.md`), 'utf8'), /`stack-lens` skill/, a);
+});
+
 test('claudeSettings: DESK_HOME plus the desk and worktrees readable, user permissions kept', () => {
   const s = claudeSettings({ home: '/d', worktreesDir: '/w', permissions: { deny: ['Read(x)'], additionalDirectories: ['/extra'] } });
   assert.equal(s.env.DESK_HOME, '/d');
@@ -301,7 +322,7 @@ test('sync: Claude settings per checkout, Copilot files in the desk only, worksp
   assert.ok(!existsSync(join(root, 'notes', '.claude')), 'a plain folder gets no settings file');
   assert.equal(git(join(root, 'a'), 'status', '--porcelain'), '', 'settings ignored via info/exclude');
   for (const s of readdirSync(join(KIT, 'skills'))) assert.ok(existsSync(join(home, '.github', 'skills', s, 'SKILL.md')), s);
-  for (const a of ['archiver', 'ci-triage', 'implementer', 'reviewer', 'scribe', 'verifier']) assert.ok(existsSync(join(home, '.github', 'agents', `${a}.agent.md`)), a);
+  for (const a of ['archiver', 'ci-triage', 'implementer', 'reviewer', 'scribe', 'structure-reviewer', 'verifier']) assert.ok(existsSync(join(home, '.github', 'agents', `${a}.agent.md`)), a);
   const scribe = parseFrontmatter(readFileSync(join(KIT, 'agents', 'scribe.md'), 'utf8')).meta;
   assert.deepEqual([scribe.model, scribe.effort], ['haiku', 'low']);
   const scribeCopilot = readFileSync(join(home, '.github', 'agents', 'scribe.agent.md'), 'utf8');
