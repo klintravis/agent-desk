@@ -37,12 +37,12 @@ const icon = (id, color) => ({ id, color });
 const section = (key, title, children, open = true, ic) => ({ id: key, label: `${title} (${children.length})`, children, open, icon: ic });
 
 // The colour of the state word `desk status --json` computes per branch (branchWord in bin/desk.mjs); nothing is decided here.
-const COLOUR = { 'CI failed': 'red', 'fixes needed': 'red', ready: 'green', 'CI running': 'yellow', 'needs review': 'yellow', rebase: 'yellow' };
+const COLOUR = { 'CI failed': 'red', 'fixes needed': 'red', ready: 'green', 'CI running': 'yellow', 'needs review': 'yellow', 'not pushed': 'yellow', rebase: 'yellow' };
 const branchState = (b) => COLOUR[b.state] ?? 'blue';
 const STATE = { red: icon('error', 'charts.red'), green: icon('pass', 'charts.green'), yellow: icon('sync', 'charts.yellow'), blue: icon('circle-large-filled', 'charts.blue') };
 
 // Most urgent first, as the pane orders its branches; 3 is in progress, 4 a claim with no branch.
-const RANK = { 'CI failed': 0, 'fixes needed': 0, rebase: 1, 'needs review': 1, ready: 2 };
+const RANK = { 'CI failed': 0, 'fixes needed': 0, rebase: 1, 'needs review': 1, 'not pushed': 1, ready: 2 };
 // The pane's rule (prColor in hooks/pane.tsx) for a pull request's review.
 const prColour = (p) => (p.decision === 'CHANGES_REQUESTED' ? 'red' : p.decision === 'APPROVED' && !p.unresolved && !p.sinceHead ? 'green' : 'orange');
 const PR = { red: icon('error', 'charts.red'), green: icon('pass', 'charts.green'), orange: icon('circle-large-filled', 'charts.orange') };

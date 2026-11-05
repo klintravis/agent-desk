@@ -284,6 +284,19 @@ test('todo add: the only repo by default, --area required with several repos', (
   assert.notEqual(r.status, 0);
 });
 
+test('todo note: kept whole up to 1000 characters, refused over it or unquoted; a stray --notes breaks nothing', () => {
+  const home = tmp();
+  assert.equal(desk(home, 'todo', 'add', 'x', '--area', 'desk', '--notes', 'see PR').status, 0);
+  const claim = `accept: ${'c'.repeat(330)} | npm test -- x | exit 0`;
+  assert.equal(desk(home, 'todo', 'note', 'T-1', claim).status, 0);
+  assert.deepEqual(JSON.parse(desk(home, 'todo', 'show', 'T-1').stdout).notes.map((n) => n.split(': ').slice(1).join(': ')), [claim]);
+  const unquoted = desk(home, 'todo', 'note', 'T-1', 'accept:', 'x', 'y');
+  assert.notEqual(unquoted.status, 0); assert.match(unquoted.stderr, /one quoted text/);
+  const long = desk(home, 'todo', 'note', 'T-1', 'n'.repeat(1001));
+  assert.notEqual(long.status, 0); assert.match(long.stderr, /over 1000; nothing was written/);
+  assert.equal(desk(home, 'todo', 'list').status, 0);
+});
+
 test('todo add: --prio must be an integer; a title starting with -- needs --', () => {
   const home = tmp();
   const file = join(home, 'todo.jsonl'), read = () => { try { return readFileSync(file, 'utf8'); } catch { return ''; } };
@@ -649,6 +662,7 @@ test('status --json: the branch state is computed in the CLI by the merge gate r
   assert.equal(state(v(`FIXES NEEDED @${head}`), [pass]), 'fixes needed');
   assert.equal(state(ok, [pass], { behind: new Map([['x', { base: 'develop', n: 1 }]]) }), 'rebase');
   assert.equal(state(ok, null, { branches: new Map([['x', { branch: 'agent/x', gh: '' }]]) }), 'ready'); // a repo without gh has no CI to wait for
+  assert.equal(state(ok, null, { branches: new Map([['x', { branch: 'agent/x', gh: '' }]]), pushed: new Map([['x', false]]) }), 'not pushed'); // the gate's first check
   const behind = { behind: new Map([['x', { base: 'develop', n: 1 }]]) }, old = run(other, 'completed', 'success');
   assert.equal(state(v(`MERGE AFTER FIXES @${head}`), [pass]), 'fixes needed');
   assert.equal(state(v('DO NOT MERGE'), [pass]), 'fixes needed'); // no sha: applies to any head

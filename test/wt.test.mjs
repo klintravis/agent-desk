@@ -17,6 +17,7 @@ test('wt new -> finish -> merge gate -> merge, no gh (no CI)', () => {
 
   ok(desk(home, 'wt', 'new', 'demo', '--repo', 'a'));
   assert.equal(git(wt, 'branch', '--show-current'), 'agent/demo');
+  assert.equal(spawnSync('git', ['-C', wt, 'rev-parse', '--abbrev-ref', '@{upstream}']).status, 128, 'no upstream: a bare git push cannot land on main');
   assert.equal(JSON.parse(readFileSync(join(wt, '.claude', 'settings.local.json'), 'utf8')).env.DESK_HOME, home);
   assert.equal(git(wt, 'status', '--porcelain'), '', 'synced settings must not dirty the worktree');
   assert.deepEqual(board(home).at(-1), { ...board(home).at(-1), kind: 'claim', slug: 'demo', repo: 'a', from: 'testsess' });
@@ -25,6 +26,8 @@ test('wt new -> finish -> merge gate -> merge, no gh (no CI)', () => {
 
   ok(desk(home, 'todo', 'add', 'demo work', '--area', 'a'));
   ok(desk(home, 'todo', 'start', 'T-1', '--slug', 'demo'));
+  ok(desk(home, 'todo', 'split', 'T-1', 'step one', 'step two')); // T-2, T-3: steps of the change
+  ok(desk(home, 'todo', 'add', 'follow-up', '--area', 'a', '--slug', 'demo')); // T-4: tagged, not started
   const first = commit(wt, 'src/one.txt', 'one\n');
   writeFileSync(join(wt, 'dirty.txt'), 'x');
   fails(desk(home, 'wt', 'finish', 'demo'), /uncommitted changes/);
@@ -43,7 +46,8 @@ test('wt new -> finish -> merge gate -> merge, no gh (no CI)', () => {
   assert.ok(!existsSync(join(wt, '.git')), 'worktree removed');
   assert.equal(git(join(root, 'a'), 'branch', '--list', 'agent/demo'), '');
   assert.deepEqual(board(home).slice(-2).map((l) => [l.kind, l.text.split(/[=;]/)[0]]), [['merged', 'main'], ['release', 'removed']]);
-  assert.equal(JSON.parse(ok(desk(home, 'todo', 'show', 'T-1'))).status, 'done');
+  const status = (id) => JSON.parse(ok(desk(home, 'todo', 'show', id))).status;
+  assert.deepEqual(['T-1', 'T-2', 'T-3', 'T-4'].map(status), ['done', 'done', 'done', 'open'], 'the active todo and its steps close; a tagged open todo stays');
 });
 
 test('wt merge refuses a branch that is not pushed', () => {
@@ -158,9 +162,28 @@ test('stream budget: --budget or front matter budgetUsd becomes --max-budget-usd
   fails(desk(home, 'stream', 'side', 'task.md', '--repo', 'a', '--dry-run', '--budget', 'lots'), /budget must be/);
 });
 
+test('stream refuses before starting: a missing or closed todo, a typed todo with no claim, a slug another session holds', () => {
+  const { home } = multiDesk();
+  writeFileSync(join(home, 'task.md'), 'Do the thing.\n');
+  const dry = (...a) => desk(home, 'stream', 'side', 'task.md', '--repo', 'a', '--dry-run', ...a);
+  fails(dry('--todo', 'T-9'), /T-9 does not exist; nothing was started/);
+  ok(desk(home, 'todo', 'add', 'typed', '--area', 'a', '--kind', 'fix'));
+  fails(dry('--todo', 'T-1'), /T-1 is a fix with no acceptance claim/);
+  fails(desk(home, 'todo', 'start', 'T-1'), /no acceptance claim/);
+  ok(desk(home, 'todo', 'note', 'T-1', 'accept: repro passes | npm test | exit 0'));
+  ok(dry('--todo', 'T-1'));
+  ok(desk(home, 'todo', 'done', 'T-1'));
+  fails(dry('--todo', 'T-1'), /T-1 is done/);
+  fails(desk(home, 'todo', 'add', 'bad kind', '--area', 'a', '--kind', 'chore'), /--kind is one of/);
+  ok(desk(home, 'wt', 'new', 'side', '--repo', 'a', '--no-build'));
+  appendFileSync(join(home, 'board.jsonl'), JSON.stringify({ v: 1, ts: new Date().toISOString(), from: 'otherses', kind: 'claim', slug: 'side', repo: 'a' }) + '\n');
+  fails(dry(), /claimed by session otherses; nothing was started/);
+});
+
 test('stream --dry-run writes the brief and prints the claude command', () => {
   const { home } = multiDesk();
   writeFileSync(join(home, 'task.md'), 'Do the thing.\n');
+  for (let i = 0; i < 7; i++) ok(desk(home, 'todo', 'add', `todo ${i + 1}`, '--area', 'a'));
   const out = ok(desk(home, 'stream', 'side', 'task.md', '--repo', 'a', '--todo', 'T-7', '--dry-run'));
   assert.match(out, /^claude -p --max-turns 80 /);
   assert.match(out, /Your slug is `side` \(repo a, worktree /);

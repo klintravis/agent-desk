@@ -30,7 +30,7 @@
         "next": { "type": "string" },
         "change": { "type": "string" },
         "tasks": { "type": "string" },
-        "model": { "type": "string" }
+        "kind": { "enum": ["fix", "feature", "refactor", "perf", "docs"] }, "model": { "type": "string" }
       }
     }
   }

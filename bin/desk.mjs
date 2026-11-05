@@ -61,9 +61,21 @@ export function openClaims(lines, exists = claimExists) {
   return [...latest.values()].filter((c) => c.kind === 'claim' && exists(c));
 }
 
-// The merge gate: the newest verdict for the slug must be MERGE and name the branch head, so any
-// commit after the review (or a later FIXES NEEDED) blocks the merge.
+// A FIXES NEEDED, DO NOT MERGE or MERGE AFTER FIXES verdict that names the head blocks it whatever is posted after
+// (a reviewer's MERGE beside a validator's FIXES NEEDED), until the newest verdict is `MERGE @<head> overrides: <why>`.
+const BLOCKING = /^(FIXES|DO NOT|MERGE AFTER)/;
+export function headBlock(lines, slug, head) {
+  const vs = lines.filter((l) => l.kind === 'verdict' && l.slug === slug), onHead = (text) => { const sha = /@([0-9a-f]{7,40})\b/.exec(text)?.[1]; return !!sha && head.startsWith(sha); };
+  const last = vs.at(-1)?.text ?? '';
+  if (/^MERGE @[0-9a-f]{7,40}\b.*\boverrides:/.test(last) && onHead(last)) return null;
+  return vs.findLast((v) => BLOCKING.test(v.text) && onHead(v.text))?.text ?? null;
+}
+
+// The merge gate: no blocking verdict on the head, and the newest verdict for the slug is MERGE naming the
+// branch head, so any commit after the review (or a later FIXES NEEDED) blocks the merge.
 export function mergeOk(lines, slug, head) {
+  const block = headBlock(lines, slug, head);
+  if (block) return `"${block}" names the head; once it is settled, post MERGE @<sha> overrides: <why>`;
   const v = lines.filter((l) => l.kind === 'verdict' && l.slug === slug).at(-1);
   const m = v && /^MERGE @([0-9a-f]{7,40})\b/.exec(v.text);
   if (!m) return v ? `newest verdict is "${v.text}"` : 'no verdict on the board';
@@ -85,13 +97,13 @@ const VERDICT_SHA = /@([0-9a-f]{7,40})\b/;
 // ci: conclusion() of the runs of the head, or 'none' (no run at all), 'old' (runs, none on the head), 'unknown' (gh unavailable), 'skip' (repo without gh).
 // 'ready' follows the gate's rules (CI success or no gh, and mergeOk), not the gate itself.
 // shortcut: only the newest 40 runs per repo, query by commit when an idle reviewed branch must still read ready
-export function branchWord({ ci, board, slug, head, behind }) {
+export function branchWord({ ci, board, slug, head, behind, pushed = true }) {
   const v = board.filter((l) => l.kind === 'verdict' && l.slug === slug).at(-1)?.text ?? '';
   const sha = VERDICT_SHA.exec(v)?.[1];
   if (!['running', 'success', 'none', 'old', 'unknown', 'skip'].includes(ci)) return 'CI failed';
-  if (/^(FIXES|DO NOT|MERGE AFTER)/.test(v) && (!sha || head.startsWith(sha))) return 'fixes needed';
+  if ((BLOCKING.test(v) && (!sha || head.startsWith(sha))) || headBlock(board, slug, head)) return 'fixes needed';
   if (behind) return 'rebase';
-  if (ci === 'success' || ci === 'skip') return mergeOk(board, slug, head) ? 'needs review' : 'ready';
+  if (ci === 'success' || ci === 'skip') return !pushed ? 'not pushed' : mergeOk(board, slug, head) ? 'needs review' : 'ready'; // the gate's first check
   return { running: 'CI running', old: 'CI stale', none: 'no CI yet' }[ci] ?? 'CI unknown';
 }
 
@@ -145,6 +157,9 @@ function boardTest() {
     mergeOk([V('MERGE @1234567')], 'v', head) !== null, // commits after the review
     mergeOk([V('MERGE AFTER FIXES @abcdef1')], 'v', head) !== null,
     mergeOk([V('MERGE @abcdef1 by sonnet/medium')], 'v', head) === null, // the suffix records the review model
+    mergeOk([V('FIXES NEEDED @abcdef1 validation: 1 not verified'), V('MERGE @abcdef1 by opus/high')], 'v', head) !== null, // a blocker on the head outlives a later MERGE
+    mergeOk([V('FIXES NEEDED @abcdef1 validation'), V('MERGE @abcdef1 overrides: rerun verified')], 'v', head) === null, // until an override
+    mergeOk([V('FIXES NEEDED @1234567'), V('MERGE @abcdef1')], 'v', head) === null, // a blocker on an older head does not count
     mergeOk([V(`MERGE @${head.padEnd(40, '0')} by opus/high`)], 'v', head.padEnd(40, '0')) === null,
     mergeOk([V('MERGE @1234567 by opus/high')], 'v', head) !== null,
     mergeOk([V('FIXES NEEDED @abcdef1 by opus')], 'v', head) !== null,
@@ -171,13 +186,17 @@ function boardTest() {
 //        todo done-slug <slug>                     (finish-worktree -Merge: active todos of that slug)
 //        todo list [--area x] [--all]   |   next [--area x]   |   show T-n
 export const OPEN = new Set(['open', 'active', 'blocked']);
+// The change kinds of the orchestrate skill's Approach by kind table. Every kind but docs needs an `accept:` note to start.
+export const CHANGE_KINDS = ['fix', 'feature', 'refactor', 'perf', 'docs'];
+export const needsClaim = (x) => !!x.kind && x.kind !== 'docs' && !x.notes.some((n) => /^\S+ [^:]*: accept: /.test(n)); // a note is `<date> <from>: <text>`
 
 export function fold(lines) {
   const t = new Map();
   for (const l of lines) {
     if (!l?.id || !l.set) continue;
     const cur = t.get(l.id) ?? { id: l.id, created: l.ts, notes: [] };
-    const { note, ...set } = l.set;
+    // Reserved keys never come from a line: a stray `--notes x` must not turn the notes list into text.
+    const { note, notes, id, created, updated, ...set } = l.set;
     Object.assign(cur, set, { updated: l.ts });
     if (note) cur.notes.push(`${l.ts.slice(0, 10)} ${l.from}: ${note}`);
     t.set(l.id, cur);
@@ -202,7 +221,7 @@ export function next(t, area) {
 }
 
 export const todoLine = (x) => `${x.id} [${x.status}${x.owner && x.status === 'active' ? ' ' + x.owner : ''}] ${x.title}` +
-  [x.area, x.size, x.prio !== undefined && `p${x.prio}`, x.change && `${x.change}${x.tasks ? ' ' + x.tasks : ''}`, x.slug && `wt:${x.slug}`, x.model].filter(Boolean).map((s) => ` · ${s}`).join('');
+  [x.area, x.kind, x.size, x.prio !== undefined && `p${x.prio}`, x.change && `${x.change}${x.tasks ? ' ' + x.tasks : ''}`, x.slug && `wt:${x.slug}`, x.model].filter(Boolean).map((s) => ` · ${s}`).join('');
 
 export function tree(t, { area, all } = {}) {
   // Kickoff reads the plain list for work, so ideas stay out of it unless asked for.
@@ -231,6 +250,7 @@ function flags(argv) {
     i++;
   }
   if (option.length) f.options = parseOptions(option);
+  if ('kind' in f && !CHANGE_KINDS.includes(f.kind)) { console.error(`--kind is one of ${CHANGE_KINDS.join(', ')}; got "${f.kind}"`); process.exit(1); }
   if ('prio' in f) {
     if (!/^-?\d+$/.test(f.prio ?? '')) { console.error(`--prio needs an integer, got ${f.prio === undefined ? 'nothing' : `"${f.prio}"`}`); process.exit(1); }
     f.prio = Number(f.prio);
@@ -279,12 +299,22 @@ export function todo([cmd, ...argv]) {
     }
     const now = todos();
     console.log([todoLine(now.get(p.id)), ...made.map((id) => '  ' + todoLine(now.get(id)))].join('\n'));
-  } else if (cmd === 'start') mutate(need(rest[0]).id, { status: 'active', owner: me(), ...f });
+  } else if (cmd === 'start') {
+    const x = need(rest[0]);
+    if (needsClaim({ ...x, ...f })) { console.error(`${x.id} is a ${f.kind ?? x.kind} with no acceptance claim: add one first, desk todo note ${x.id} "accept: <claim> | <command> | <expected>"`); process.exit(1); }
+    mutate(x.id, { status: 'active', owner: me(), ...f });
+  }
   else if (['done', 'drop', 'block', 'open'].includes(cmd)) {
     const status = { done: 'done', drop: 'dropped', block: 'blocked', open: 'open' }[cmd];
     mutate(need(rest[0]).id, { status, ...(f.why && { note: f.why }) });
   } else if (cmd === 'set') mutate(need(rest[0]).id, f);
-  else if (cmd === 'note') mutate(need(rest[0]).id, { note: clean(rest[1]) });
+  else if (cmd === 'note') {
+    // A note is never cut: an `accept:` claim loses its expected result if it is. Unquoted words are refused, not dropped.
+    if (rest.length !== 2) { console.error('note takes one quoted text: desk todo note T-n "<text>"'); process.exit(1); }
+    const text = clean(rest[1], Infinity);
+    if (text.length > 1000) { console.error(`the note is ${text.length} characters, over 1000; nothing was written`); process.exit(1); }
+    mutate(need(rest[0]).id, { note: text });
+  }
   else if (cmd === 'done-slug') doneSlug(rest[0]);
   else if (cmd === 'list') console.log(tree(t, { area: f.area, all: 'all' in f }));
   else if (cmd === 'next') { const x = next(t, f.area); console.log(x ? todoLine(x) + (x.why ? `\n  why: ${x.why}` : '') : 'nothing open'); }
@@ -292,9 +322,12 @@ export function todo([cmd, ...argv]) {
   else { console.error('usage: desk todo add|split|start|done|drop|block|open|set|note|done-slug|list|next|show|--self-test'); process.exit(1); }
 }
 
-// wt merge: the active todos started with --slug close with the merge.
+// wt merge: the active todos started with --slug close with the merge, and so do their open steps (children
+// from `split`, which carry no slug or the same one). An open or blocked todo merely tagged with the slug stays.
 export function doneSlug(slug, note = `merged (${slug})`) {
-  const hit = [...todos().values()].filter((x) => x.slug === slug && OPEN.has(x.status));
+  const t = todos(), hit = [];
+  const close = (x) => { hit.push(x); for (const c of children(t, x.id)) if (OPEN.has(c.status) && (!c.slug || c.slug === slug) && !hit.includes(c)) close(c); };
+  for (const x of t.values()) if (x.slug === slug && x.status === 'active' && !hit.includes(x)) close(x);
   for (const x of hit) writeTodo(x.id, { status: 'done', note });
   console.log(hit.length ? `done: ${hit.map((x) => x.id).join(', ')}` : `no open todos for ${slug}`);
 }
@@ -305,6 +338,9 @@ function todoTest() {
     L('T-3', { title: 'c', status: 'open', area: 'desk', prio: 0 }), L('T-3', { status: 'done', note: 'x' }), L('T-9', { title: 'd', status: 'open', area: 'repo', prio: 9 })]);
   return [
     t2.get('T-3').status === 'done' && t2.get('T-3').notes.length === 1, // later lines win; notes accumulate
+    fold([L('T-1', { title: 'a', notes: 'see PR', id: 'T-9' }), L('T-1', { note: 'n' })]).get('T-1').notes.length === 1, // reserved keys never come from a line
+    needsClaim(fold([L('T-1', { title: 'a', kind: 'fix' }), L('T-1', { note: 'we will accept: later' })]).get('T-1')) && !needsClaim(fold([L('T-1', { title: 'a', kind: 'fix' }), L('T-1', { note: 'accept: x | y | z' })]).get('T-1')),
+    !needsClaim(fold([L('T-1', { title: 'a' })]).get('T-1')) && !needsClaim(fold([L('T-1', { title: 'a', kind: 'docs' })]).get('T-1')), // untyped and docs todos start as before
     next(t2, 'repo').id === 'T-2', // the open child comes before its parent
     next(fold([L('T-1', { title: 'a', status: 'open', prio: 5 }), L('T-2', { title: 'b', status: 'active', parent: 'T-1' })])) === undefined, // parent waits for an active child
     nextId(t2) === 'T-10',
@@ -584,7 +620,7 @@ const prFor = (reviewPrs, b) => {
   return mine.find((x) => x.state === 'OPEN') ?? mine.toSorted((x, y) => y.number - x.number)[0];
 };
 // reviewPrs: PRs of every state from the repos under merge "review", one per row at most.
-export function statusData({ t, board, rows, runs, prs = null, reviewPrs = [], held = new Map(), heads, behind = new Map(), branches: branchOf = new Map(), overlaps: ov, roots = [], user = null, now = Date.now(), exists }) {
+export function statusData({ t, board, rows, runs, prs = null, reviewPrs = [], held = new Map(), pushed = new Map(), heads, behind = new Map(), branches: branchOf = new Map(), overlaps: ov, roots = [], user = null, now = Date.now(), exists }) {
   const open = openClaims(board, exists);
   const last = new Map(board.map((l) => [l.from, l.ts]));
   const slugs = [...heads.keys()].sort();
@@ -615,7 +651,7 @@ export function statusData({ t, board, rows, runs, prs = null, reviewPrs = [], h
       const ci = b.gh === '' ? 'CI -' : !runs ? 'CI unavailable' : !run ? 'no CI run' : onHead ? `CI ${head.slice(0, 7)} ${onHead}` : `CI ${run.headSha.slice(0, 7)} ${run.status === 'completed' ? run.conclusion : run.status} (not the head)`;
       const bh = behind.get(slug), vsha = VERDICT_SHA.exec(v?.text ?? '')?.[1];
       const pr = prFor(reviewPrs, b);
-      const state = branchWord({ ci: b.gh === '' ? 'skip' : !runs ? 'unknown' : onHead || (mine.length ? 'old' : 'none'), board, slug, head, behind: bh?.n > 0 });
+      const state = branchWord({ ci: b.gh === '' ? 'skip' : !runs ? 'unknown' : onHead || (mine.length ? 'old' : 'none'), board, slug, head, behind: bh?.n > 0, pushed: pushed.get(slug) ?? true });
       return { slug, head, ci, state, ...(vsha && !head.startsWith(vsha) ? { verdictOld: true } : {}), verdict: v ? v.text.slice(0, 120) : null, behind: bh?.n > 0 ? { base: bh.base, n: bh.n } : null, ...(pr ? { pr: { number: pr.number, state: pr.state, url: pr.url, ...(pr.state === 'MERGED' && head !== '?' && held.get(slug) === false ? { stale: true } : {}) } } : {}) };
     }),
     prs: prs ? slugs.flatMap((slug) => {
@@ -660,6 +696,8 @@ export function gatherStatus() {
   const branches = new Map(wts.map(({ slug, repo }) => [slug, { branch: repo.branchPrefix + slug, repo: repo.id, gh: repo.gh }]));
   // Local refs only (no fetch, status stays fast): origin/<default> as of the last fetch, else the local default branch.
   const behind = new Map(wts.map(({ slug, dir, repo }) => [slug, { base: repo.defaultBranch, n: tryOr(() => Number(git(dir, 'rev-list', '--count', `HEAD..${baseRef(repo)}`)), 0) }]));
+  // Same test as the merge gate's first one, from local refs: origin/<branch> is the head (no origin: nothing to push).
+  const pushed = new Map(wts.map(({ slug, dir, repo }) => [slug, !hasOrigin(repo) || tryOr(() => git(dir, 'rev-parse', `origin/${repo.branchPrefix + slug}`) === heads.get(slug), false)]));
   const reviewPrs = tryOr(ghReviewPrs, []);
   // Same test as `wt merge`: the PR holds the head when it is the head or a descendant of it (Update branch). No fetch here:
   // a PR head this clone lacks stays unknown (not stale) and `wt merge` decides after its own fetch.
@@ -671,7 +709,7 @@ export function gatherStatus() {
     held.set(slug, tryOr(() => (git(dir, 'merge-base', '--is-ancestor', head, pr.headRefOid), true), false));
   }
   return {
-    t: tryOr(todos, new Map()), board: tryOr(read, []), heads, behind, branches,
+    t: tryOr(todos, new Map()), board: tryOr(read, []), heads, behind, branches, pushed,
     roots: tryOr(() => config().repos, []).map((r) => (r.kind === 'folder' ? r : { ...r, sha: tryOr(() => git(r.path, 'rev-parse', baseRef(r)), '') })),
     rows: tryOr(() => tokenRows(Math.max(RUNNING_MIN / 60, (Date.now() - midnight) / 3600e3)), null),
     runs: tryOr(() => ghRuns(40), null), prs: tryOr(ghPrs, null), reviewPrs, held,
