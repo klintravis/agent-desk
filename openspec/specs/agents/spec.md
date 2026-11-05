@@ -60,6 +60,7 @@ The kit SHALL ship an agent `structure-reviewer`, model `opus`, effort `medium`,
 #### Scenario: Small change
 - **WHEN** a feature of 40 lines that grows no file past 1000 lines reaches review
 - **THEN** no structure pass runs
+
 ### Requirement: Stack lenses
 The kit SHALL ship a `stack-lens` skill whose table maps each lens to one file under `lenses/`, each file with a `## Build` and a `## Review` section. The `implementer` SHALL follow the Build half and the `reviewer` SHALL check the Review half of the lenses its brief names or its files match, reading no other lens. The `orchestrate` skill SHALL name the lenses in every `implementer` and `reviewer` brief.
 
@@ -79,6 +80,7 @@ The kit SHALL ship approach skills `fix` and `refactor`, each ending in a `## Do
 - **WHEN** a todo of kind refactor spans several files
 - **THEN** a `structure-reviewer` in plan mode returns the target shape for the area's paths first
 - **AND** the implementer follows `refactor`, and the validator shows no pinned test edited after its pinning commit
+
 ### Requirement: Validator
 The kit SHALL ship a `validate` skill and an agent `validator`, model `sonnet`, effort `medium`, tools `Read`, `Grep`, `Glob`, `Bash`, `Write` and `Skill`, that reruns a branch's acceptance claims (`accept: <claim> | <command> | <expected>` todo notes and new spec scenarios) in a detached copy of the head, and of the base for fix, refactor and perf, and reports VERIFIED, NOT VERIFIED or INCONCLUSIVE per claim. The `validate` skill SHALL be the one list of what each kind proves. The validator SHALL change nothing in the worktree, SHALL run nothing in it, SHALL remove every copy it adds, and SHALL post no board verdict. The `orchestrate` skill SHALL run it beside the `reviewer` for every kind but docs, and for a feature only when a claim is not run by CI; it SHALL put every reviewer finding, NOT VERIFIED claim, INCONCLUSIVE claim not settled or waived by the owner, and structure blocker on one must-fix list, and when that list is not empty SHALL post `FIXES NEEDED` on the board after the reviewer's verdict, so `desk wt merge` refuses the head until the `verifier` posts `MERGE`.
 

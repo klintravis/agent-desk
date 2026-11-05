@@ -86,7 +86,8 @@ rules live. Mixed work (a fix that needs a restructure) is split into two todos,
   them and what each kind must prove. A spec workflow's new scenarios count. A claim you can't write
   means the todo is not ready: ask the owner. With no validator (a feature whose claims CI runs), run
   one claim's command yourself before merge.
-- **Unknown cause.** The `debug` run reproduces, pins a failing test (committed) and finds the root cause,
+- **Unknown cause.** The `debug` run reproduces, pins a failing test (committed, or left uncommitted and
+  named in its report when a commit hook runs the tests) and finds the root cause,
   and reports the repro command, the test path and the cause in one sentence. The `fix-known` brief
   passes those on; the implementer starts at the `fix` skill's step 5.
 - **Refactor plan.** A refactor across several files first gets a `structure-reviewer` (`review-structure`)
@@ -146,7 +147,8 @@ closes the slug's todos. New work found on the way: `add` it with `--summary "<a
    gets the slug, the reviewed SHA and the must-fix list verbatim, and answers only "is each item
    fixed, and did the fix diff add a new defect?" with a verdict and the HEAD SHA it covers. Re-run the
    `validator` first on the new head, for the claims the fixes touched or that were not VERIFIED, and give
-   the verifier its blocks. Full reviews again only if the fixes were large (new files or >~150 changed
+   the verifier its blocks. Whatever the verifier posts, rebuild the must-fix list from its report and the
+   rerun; if it is not empty, post `FIXES NEEDED` again and do another round. Full reviews again only if the fixes were large (new files or >~150 changed
    lines). This keeps reviews converging and gives every commit on the branch a review, which the merge
    gate requires.
 5. **Merge**: when the desk's CLAUDE.md / AGENTS.md grants it (CI green, fast-forward, last review or
@@ -167,7 +169,8 @@ Usage (Claude Code): agents can't see their own token counts; you can. When you 
 work, add `desk tokens 24 --session self` (one row per agent).
 
 The subagent gets the desk rules from the SubagentStart hook, not your context. Every brief states:
-slug and full worktree path (`desk tokens` attributes by it), the todo and steps, the approach and lenses
+slug and full worktree path (`desk tokens` attributes by it), the repo's `gh` owner/name (agents pass it
+as `-R`), the todo and steps, the approach and lenses
 (implementer and reviewer), what is already
 decided or ruled out, what "done" means, and the commit trailer. Ask for a report of results, files
 and doubts in about 20 lines plus the raw verify output (a reviewer or verifier lists every finding,

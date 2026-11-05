@@ -89,6 +89,8 @@ test('the must-fix list reaches the board: orchestrate posts FIXES NEEDED, and t
   const o = readFileSync(join(KIT, 'skills', 'orchestrate', 'SKILL.md'), 'utf8');
   assert.match(o, /must-fix list[\s\S]{0,700}desk board post verdict <slug> "FIXES NEEDED @<sha>[\s\S]{0,80}after the reviewer's verdict/);
   assert.match(o, /the must-fix list empty/);
+  assert.match(o, /rebuild the must-fix list[\s\S]{0,120}post `FIXES NEEDED` again/);
+  assert.match(readFileSync(join(KIT, 'agents', 'verifier.md'), 'utf8'), /NOT VERIFIED or INCONCLUSIVE there is NOT FIXED/);
   const wt = readFileSync(join(KIT, 'lib', 'wt.mjs'), 'utf8');
   assert.match(wt, /fresh \\`reviewer\\` \+ \\`validator\\`/);
   assert.match(wt, /`Validation:` line/);
