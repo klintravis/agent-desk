@@ -35,7 +35,6 @@ advisory: pass what the harness lets you; it has no user layer.
 | fix-known | Fix a failing check whose cause is known | `implementer` | sonnet | low |
 | implement-hard | Parsers, security-sensitive code, protocols, concurrency | `implementer` | opus | high |
 | implement-perf | Make something faster or smaller against a measured baseline (lens `perf`) | `implementer` | sonnet | high |
-| refactor | Behaviour-preserving restructure: a `structure-reviewer` blocker, a decomposition, a migration across callers | `implementer` | sonnet | medium |
 | propose | Write a proposal or design (when the repo's workflow wants one) | `general-purpose` | opus | high |
 | debug | Find the cause of a failure with no known cause: steps 1-4 of the `fix` skill, then report | `general-purpose` | opus | medium |
 | review | Pre-merge review | `reviewer` | opus | high |
@@ -55,13 +54,9 @@ advisory: pass what the harness lets you; it has no user layer.
 
 ## Stack lenses
 
-Domain roles are an agent from the table plus lenses, not more agents: the `stack-lens` skill holds
-one short file per stack (`typescript`, `testing`, `state`, `perf`, `security`, `ui`), each with a Build
-file for the implementer and a review file for the reviewer. Name the lenses in every `implementer` and
-`reviewer` brief ("lenses: typescript, state"), from the files the change touches and what it does;
-the agent reads only those. A UI change is `implement` + `ui`; a lock or a retry loop is
-`implement-hard` + `state`; a speed-up is `implement-perf` + `perf`; a review of auth code is
-`review-sensitive` + `security`. Name none when none fits; never all of them.
+Domain roles are a task id plus lenses, not more agents. Name the lenses from the `stack-lens` skill's
+table in every `implementer` and `reviewer` brief ("lenses: typescript, state"), from the files the change
+touches and what it does; none when none fits, never all.
 
 ## Approach by kind
 
@@ -73,7 +68,7 @@ rules live. Mixed work (a fix that needs a restructure) is split into two todos,
 |---|---|---|---|---|
 | fix: wrong behaviour, a regression, a red check | `fix` (Ponytail full) | `fix-known`; `debug` first when the cause is unknown | yes | if big |
 | feature: new or changed behaviour | none (Ponytail full + lenses) | `implement`, `implement-hard` | only for claims CI does not run | if big |
-| refactor: same behaviour, better structure | `refactor` (aggressive) | `refactor` | yes | yes, once |
+| refactor: same behaviour, better structure | `refactor` (aggressive) | `implement`, `implement-hard` | yes | yes, once |
 | perf: a faster or smaller number | none + lens `perf` | `implement-perf` | yes | if big |
 | docs and bookkeeping | none | `docs`, `scribe` | no; spot-check | no |
 

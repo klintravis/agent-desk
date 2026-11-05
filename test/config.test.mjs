@@ -93,7 +93,7 @@ test('readUserSettings: __proto__ and constructor warn as unknown and change no 
 
 test('orchestrateTable: every row parses, ids are unique, in the table the kit ships', () => {
   const rows = orchestrateTable();
-  assert.deepEqual(rows.map((r) => r.task), ['find', 'ci-summary', 'check-summary', 'close-out', 'scribe', 'docs', 'implement', 'fix-known', 'implement-hard', 'implement-perf', 'refactor', 'propose', 'debug', 'review', 'review-sensitive', 'validate', 'review-structure', 'fix-verify', 'memo']);
+  assert.deepEqual(rows.map((r) => r.task), ['find', 'ci-summary', 'check-summary', 'close-out', 'scribe', 'docs', 'implement', 'fix-known', 'implement-hard', 'implement-perf', 'propose', 'debug', 'review', 'review-sensitive', 'validate', 'review-structure', 'fix-verify', 'memo']);
   assert.equal(new Set(rows.map((r) => r.task)).size, rows.length);
   assert.deepEqual(rows.find((r) => r.task === 'memo'), { task: 'memo', agent: 'Plan', model: 'opus', effort: 'high' });
   const pick = (t) => { const r = rows.find((x) => x.task === t); return `${r.model}/${r.effort}`; };

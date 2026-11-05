@@ -248,6 +248,7 @@ Section names are README headings.
 | `refactor` | `skills/refactor/SKILL.md` | What is in the kit |
 | `validate` | `skills/validate/SKILL.md`, `skills/validate/proving.md` | What is in the kit |
 | `stack-lens` | `skills/stack-lens/SKILL.md`, `skills/stack-lens/lenses/*.md` | What is in the kit |
+| `structure-rubric` | `skills/structure-rubric/SKILL.md` | What is in the kit |
 | `thermo-nuclear-code-quality-review` | `skills/thermo-nuclear-code-quality-review/SKILL.md` (vendored) | What is in the kit |
 | `implementer` | `agents/implementer.md` | What is in the kit |
 | `reviewer` | `agents/reviewer.md` | What is in the kit |

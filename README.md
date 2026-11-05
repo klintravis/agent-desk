@@ -17,7 +17,7 @@ It ships in two parts that share one version number:
   init and sync. `desk sync` also writes the session and subagent context hook (Ponytail, the desk
   rules, the board), which Claude Code and Copilot both read.
 - **Claude Code plugin**:
-  - skills: `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, `fix`, `refactor`, `validate`, `stack-lens`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `thermo-nuclear-code-quality-review`
+  - skills: `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, `fix`, `refactor`, `validate`, `stack-lens`, `structure-rubric`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `thermo-nuclear-code-quality-review`
   - agents: `implementer`, `reviewer`, `structure-reviewer`, `validator`, `verifier`, `archiver`, `scribe`, `ci-triage`
   - a mod: the Desk pane, the owner-decisions band, `/desk` and `/decide`, auto-compaction prune,
     cache warm-hold, the edit guard and the session meters (plan quota, context), secret redaction
@@ -583,7 +583,7 @@ warn. Removing a value removes the key at the next full `desk sync`. A key writt
 | Part | Files |
 |---|---|
 | Plugin | `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `hooks/hooks.json` (registers `./register.ts`) |
-| Skills | `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, the approaches `fix`, `refactor` and `validate`, `stack-lens`, the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, and Cursor's vendored `thermo-nuclear-code-quality-review` |
+| Skills | `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, the approaches `fix`, `refactor` and `validate`, `stack-lens`, `structure-rubric`, the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, and Cursor's vendored `thermo-nuclear-code-quality-review` |
 | Agents | `implementer`, `reviewer`, `structure-reviewer`, `validator`, `verifier`, `archiver`, `scribe`, `ci-triage` |
 | Templates for `desk init` | `templates/AGENTS.md`, `templates/agent-rules.md` |
 | JSON Schemas of the desk files | `schemas/desk-config.schema.json`, `schemas/todo.schema.json`, `schemas/board.schema.json`, `schemas/decisions.schema.json` |
@@ -597,9 +597,10 @@ model applies instead.
 Domain roles come from lenses, not more agents. `stack-lens` holds one short file per stack (`typescript`, `testing`,
 `state`, `perf`, `security`, `ui`), each with a build file the `implementer` follows and a review file the `reviewer`
 checks; the orchestrator names the lenses in each brief and the agent reads only those. `structure-reviewer` (opus,
-medium effort, read-only) runs Cursor's thermo-nuclear maintainability rubric beside the `reviewer` when the change's
+medium effort, read-only) runs the `structure-rubric` skill, a 3.5 KB condensed form of Cursor's thermo-nuclear
+maintainability rubric (the full vendored skill stays for asking by name), beside the `reviewer` when the change's
 kind calls for it (see below), and plans a refactor's target shape. The `orchestrate` table gains `implement-perf`,
-`refactor`, `review-structure` and `validate`.
+`review-structure` and `validate`.
 
 Each change is one kind, and the kind picks its approach (the `orchestrate` skill's Approach by kind table). A **fix**
 follows the `fix` skill: Ponytail at level full, a repro or test that fails before and passes after, the root cause

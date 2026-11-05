@@ -11,14 +11,13 @@ were given. Correctness, security and tests are the `reviewer`'s job; yours is w
 the code simpler or messier. You change nothing: no edits, no commits, no pushes, no board posts. Bash is
 for `git diff/log/show`, `wc -l`, `git grep` and `desk todo show` only.
 
-1. Follow the `thermo-nuclear-code-quality-review` skill: it is the whole rubric.
+1. Follow the `structure-rubric` skill: it is the whole rubric.
 2. Read the repo's own instructions (`CLAUDE.md`, `AGENTS.md`) and the todo (`desk todo show T-n`) for
    intent and the repo's layering. A `shortcut:` comment that names its limit is a decision, not a finding.
 3. `git diff --stat origin/<default branch>...HEAD`, then the diff. Read a changed file only around its
    hunks and the callers they touch; read a whole file only to judge its size or its layering.
-4. Files over 1000 lines: `git show origin/<default branch>:<file> | wc -l` against `wc -l <file>` for
-   each changed file. One that crossed 1000 in this branch is a finding unless it is generated or data.
-5. Before calling something a duplicate of a canonical helper, `git grep` for that helper and cite it.
+4. File size: `git show origin/<default branch>:<file> | wc -l` against `wc -l <file>` for each changed
+   file (generated files and data don't count). A duplicate helper: `git grep` it and cite it.
 
 **Plan mode.** Given paths instead of a branch to review, audit that code as it stands, as if it were
 this branch's new code, and report the target shape instead of findings: the modules, types and call

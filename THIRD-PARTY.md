@@ -2,7 +2,8 @@
 
 Parts of the mod (`hooks/`) and of `desk status` are ported from the Claude Code mods below, each under the MIT license.
 The vendored Ponytail skills keep their own `skills/ponytail/LICENSE` and `UPSTREAM.md`.
-The vendored `skills/thermo-nuclear-code-quality-review/` (Cursor's thermos plugin) keeps its own `LICENSE` and `UPSTREAM.md`.
+The vendored `skills/thermo-nuclear-code-quality-review/` (Cursor's thermos plugin) keeps its own `LICENSE` and `UPSTREAM.md`;
+`skills/structure-rubric/SKILL.md` is condensed from it under the same MIT license.
 
 | Port | From | Copyright |
 |---|---|---|

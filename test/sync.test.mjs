@@ -39,13 +39,14 @@ test('ci-triage cannot edit: Claude tools and their Copilot form', () => {
   assert.deepEqual(JSON.parse(parseFrontmatter(copilotAgent(src)).meta.tools), ['read', 'search', 'execute']);
 });
 
-test('structure-reviewer cannot edit and loads the vendored rubric, which the model may invoke', () => {
+test('structure-reviewer cannot edit and loads the condensed rubric; the vendored one stays invocable', () => {
   const src = readFileSync(join(KIT, 'agents', 'structure-reviewer.md'), 'utf8');
   const { meta, body } = parseFrontmatter(src);
   assert.equal(meta.tools, 'Read, Grep, Glob, Bash, Skill');
   assert.deepEqual([meta.model, meta.effort], ['opus', 'medium']);
   assert.ok(!JSON.parse(parseFrontmatter(copilotAgent(src)).meta.tools).includes('edit'));
-  assert.match(body, /`thermo-nuclear-code-quality-review` skill/);
+  assert.match(body, /`structure-rubric` skill/);
+  assert.match(readFileSync(join(KIT, 'skills', 'structure-rubric', 'SKILL.md'), 'utf8'), /^## Presumptive blockers$/m);
   assert.doesNotMatch(body, /desk board post/);
   const rubric = parseFrontmatter(readFileSync(join(KIT, 'skills', 'thermo-nuclear-code-quality-review', 'SKILL.md'), 'utf8')).meta;
   assert.equal(rubric.name, 'thermo-nuclear-code-quality-review');
