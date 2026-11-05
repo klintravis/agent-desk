@@ -17,16 +17,16 @@ argument, else the payload's `hook_event_name`, else `SubagentStart`.
 - **WHEN** the hook runs for `SubagentStart` in a desk
 - **THEN** `additionalContext` begins `PONYTAIL MODE ACTIVE - level: full`
 
-### Requirement: Ponytail for every agent that writes or reviews code
+### Requirement: Ponytail for every agent that writes code
 The context SHALL contain the body of the kit's `skills/ponytail/SKILL.md` with its front matter removed
 and the table rows for the `lite` and `ultra` levels dropped. Every session and every agent SHALL receive
 it, except a `SubagentStart` whose payload `agent_type`, after any `<plugin>:` prefix, is one of
-`Explore`, `ci-triage`, `scribe`, `structure-reviewer`, `validator` or `verifier`: those agents write no code
-and report in a fixed format, so they SHALL receive the desk's agent rules without Ponytail and without the
+`Explore`, `archiver`, `ci-triage`, `reviewer`, `scribe`, `structure-reviewer`, `validator` or `verifier`:
+those agents write no code (the reviewer judges leanness through its `ponytail-review` skill), so they SHALL receive the desk's agent rules without Ponytail and without the
 rule line that says Ponytail is active. A payload with no agent type SHALL receive Ponytail.
 
-#### Scenario: Reviewer gets Ponytail
-- **WHEN** a `SubagentStart` fires for `agent-desk:reviewer`, `agent-desk:implementer`, or with no agent type
+#### Scenario: Implementer gets Ponytail
+- **WHEN** a `SubagentStart` fires for `agent-desk:implementer`, `general-purpose`, or with no agent type
 - **THEN** the same Ponytail text is delivered
 
 #### Scenario: Validator does not

@@ -52,12 +52,13 @@ test('structure-reviewer cannot edit and loads the vendored rubric, which the mo
   assert.equal(rubric['disable-model-invocation'], undefined);
 });
 
-test('stack-lens: every lens in the table has its file, each with a Build and a Review half, and no stray file', () => {
+test('stack-lens: every lens in the table has a build and a review file, and no stray file', () => {
   const dir = join(KIT, 'skills', 'stack-lens');
-  const listed = [...readFileSync(join(dir, 'SKILL.md'), 'utf8').matchAll(/\| `(lenses\/[\w-]+\.md)` \|/g)].map((m) => m[1]);
-  assert.deepEqual(listed.sort(), readdirSync(join(dir, 'lenses')).map((f) => `lenses/${f}`).sort());
-  for (const f of listed) assert.match(readFileSync(join(dir, f), 'utf8'), /^## Build$[\s\S]+^## Review$/m, f);
-  for (const a of ['implementer', 'reviewer']) assert.match(readFileSync(join(KIT, 'agents', `${a}.md`), 'utf8'), /`stack-lens` skill/, a);
+  const listed = [...readFileSync(join(dir, 'SKILL.md'), 'utf8').matchAll(/^\| ([a-z]+) \| /gm)].map((m) => m[1]).filter((l) => l !== 'Lens');
+  assert.deepEqual(readdirSync(join(dir, 'lenses')).sort(), listed.flatMap((l) => [`${l}.build.md`, `${l}.review.md`]).sort());
+  for (const f of readdirSync(join(dir, 'lenses'))) assert.ok(readFileSync(join(dir, 'lenses', f), 'utf8').trim().split('\n').length > 3, f);
+  assert.match(readFileSync(join(KIT, 'agents', 'implementer.md'), 'utf8'), /`stack-lens` skill[\s\S]{0,120}build files/);
+  assert.match(readFileSync(join(KIT, 'agents', 'reviewer.md'), 'utf8'), /`stack-lens` skill and check the review file/);
 });
 
 test('validator: proves claims through the validate skill, edits no code, posts no verdict', () => {
@@ -65,8 +66,8 @@ test('validator: proves claims through the validate skill, edits no code, posts 
   assert.equal(meta.tools, 'Read, Grep, Glob, Bash, Write, Skill');
   assert.deepEqual([meta.model, meta.effort], ['sonnet', 'medium']);
   assert.match(body, /`validate` skill/);
-  assert.doesNotMatch(body, /desk board post/);
-  const skill = readFileSync(join(KIT, 'skills', 'validate', 'SKILL.md'), 'utf8');
+  assert.match(body, /desk board post verdict <slug> "FIXES NEEDED @<head sha> validation:/);
+  const skill = ['SKILL.md', 'proving.md'].map((f) => readFileSync(join(KIT, 'skills', 'validate', f), 'utf8')).join('\n');
   for (const v of ['VERIFIED', 'NOT VERIFIED', 'INCONCLUSIVE', 'accept: <claim> | <command> | <expected>', 'worktree remove --force']) assert.ok(skill.includes(v), v);
 });
 
@@ -87,7 +88,8 @@ test('approaches: fix and refactor end in Done when; only the refactor skill ove
 
 test('the must-fix list reaches the board: orchestrate posts FIXES NEEDED, and the stream prompt runs the validator', () => {
   const o = readFileSync(join(KIT, 'skills', 'orchestrate', 'SKILL.md'), 'utf8');
-  assert.match(o, /must-fix list[\s\S]{0,700}desk board post verdict <slug> "FIXES NEEDED @<sha>[\s\S]{0,80}after the reviewer's verdict/);
+  assert.match(o, /must-fix list[\s\S]{0,700}names, whatever is posted after it[\s\S]{0,300}desk board post verdict <slug> "FIXES NEEDED @<sha>/);
+  assert.match(o, /"MERGE @<sha> overrides: <why>"`, never to skip a fix/);
   assert.match(o, /the must-fix list empty/);
   assert.match(o, /rebuild the must-fix list[\s\S]{0,120}post `FIXES NEEDED` again/);
   assert.match(readFileSync(join(KIT, 'agents', 'verifier.md'), 'utf8'), /NOT VERIFIED or INCONCLUSIVE there is NOT FIXED/);

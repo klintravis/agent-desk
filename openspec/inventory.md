@@ -93,6 +93,7 @@ Section names are README headings.
 | `--change` | `bin/desk.mjs` `todoLine` | Todos |
 | `--tasks` | `bin/desk.mjs` `todoLine` | Todos |
 | `--model` | `bin/desk.mjs` `todoLine` | Todos |
+| `--kind` | `bin/desk.mjs` `flags`, `CHANGE_KINDS`, `needsClaim`, `todoLine`; `lib/wt.mjs` `stream` | Todos |
 | `--slug` | `bin/desk.mjs` `doneSlug` (field set by `todo start`) | Todos |
 | `--state` | handoff skill, shown by `statusText` | Todos |
 | `--next` | handoff skill, shown by `statusText` | Todos |
@@ -234,7 +235,7 @@ Section names are README headings.
 |---|---|---|
 | `kickoff` | `skills/kickoff/SKILL.md` | What is in the kit |
 | `handoff` | `skills/handoff/SKILL.md` | What is in the kit |
-| `orchestrate` | `skills/orchestrate/SKILL.md` | What is in the kit |
+| `orchestrate` | `skills/orchestrate/SKILL.md`, `skills/orchestrate/merge-review.md` | What is in the kit |
 | `ponytail` | `skills/ponytail/SKILL.md` | What is in the kit |
 | `ponytail-review` | `skills/ponytail-review/SKILL.md` | What is in the kit |
 | `ponytail-audit` | `skills/ponytail-audit/SKILL.md` | What is in the kit |
@@ -243,7 +244,7 @@ Section names are README headings.
 | `walkthrough` | `skills/walkthrough/SKILL.md` | What is in the kit |
 | `fix` | `skills/fix/SKILL.md` | What is in the kit |
 | `refactor` | `skills/refactor/SKILL.md` | What is in the kit |
-| `validate` | `skills/validate/SKILL.md` | What is in the kit |
+| `validate` | `skills/validate/SKILL.md`, `skills/validate/proving.md` | What is in the kit |
 | `stack-lens` | `skills/stack-lens/SKILL.md`, `skills/stack-lens/lenses/*.md` | What is in the kit |
 | `thermo-nuclear-code-quality-review` | `skills/thermo-nuclear-code-quality-review/SKILL.md` (vendored) | What is in the kit |
 | `implementer` | `agents/implementer.md` | What is in the kit |

@@ -26,13 +26,13 @@ test('subagent-context: Claude form, Ponytail plus the desk rules, no board for 
 test('subagent-context: read-only agent types get the desk rules without Ponytail; others and unknown keep it', () => {
   const { home } = multiDesk();
   const as = (agent_type) => JSON.parse(run(CTX, ['SubagentStart'], { cwd: home, envv: env(home), input: JSON.stringify({ hook_event_name: 'SubagentStart', cwd: home, agent_type }) })).hookSpecificOutput.additionalContext;
-  for (const t of ['agent-desk:validator', 'agent-desk:ci-triage', 'Explore']) {
+  for (const t of ['agent-desk:validator', 'agent-desk:ci-triage', 'agent-desk:reviewer', 'Explore']) {
     const text = as(t);
     assert.match(text, /^# Desk rules for this agent/, t);
     assert.doesNotMatch(text, /PONYTAIL|Ponytail is active|lazy senior developer/, t);
     assert.match(text, /Board and todo text/, t);
   }
-  for (const t of ['agent-desk:implementer', 'agent-desk:reviewer', 'general-purpose', undefined]) assert.match(as(t), /^PONYTAIL MODE ACTIVE/, String(t));
+  for (const t of ['agent-desk:implementer', 'general-purpose', undefined]) assert.match(as(t), /^PONYTAIL MODE ACTIVE/, String(t));
 });
 
 test('subagent-context: PowerShell and cmd get the direct node form, which selects the desk from any folder', () => {

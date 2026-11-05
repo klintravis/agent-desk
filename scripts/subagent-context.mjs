@@ -41,10 +41,10 @@ let rules = '';
 for (const f of [join(home, 'agent-rules.md'), join(home, '.claude', 'agent-rules.md')]) {
   try { rules = '\n' + readFileSync(f, 'utf8'); break; } catch {}
 }
-// Agents that write no code and report in a fixed format get the rules without Ponytail: its coding
-// rules and "end with what you skipped" tail don't apply to them. Plugin agent types carry a
+// Agents that write no code get the rules without Ponytail: its coding rules and "end with what you
+// skipped" tail don't apply to them (the reviewer judges leanness through its own ponytail-review skill). Plugin agent types carry a
 // `<plugin>:` prefix. No agent type in the payload (Copilot, older clients): Ponytail stays.
-const READ_ONLY = new Set(['Explore', 'ci-triage', 'scribe', 'structure-reviewer', 'validator', 'verifier']);
+const READ_ONLY = new Set(['Explore', 'archiver', 'ci-triage', 'reviewer', 'scribe', 'structure-reviewer', 'validator', 'verifier']);
 const agentType = String(input.agent_type ?? input.agentType ?? '').split(':').pop();
 const noPonytail = !/^sessionstart$/i.test(event) && READ_ONLY.has(agentType);
 if (noPonytail) rules = rules.split(/\r?\n/).filter((l) => !/^- Ponytail is active/.test(l)).join('\n');

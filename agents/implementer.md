@@ -17,7 +17,7 @@ default `agent/<slug>`). The desk's agent rules reach you through the SubagentSt
    section with grep or the repo's inventory, don't read a long doc whole.
    If the brief names an approach (`fix`, `refactor`), load that skill and follow it: its steps come
    before the ones below where they differ. Load the `stack-lens` skill and read the lenses your brief
-   names, or that your files match; follow their Build half.
+   names, or that your files match; follow their build files.
 3. Name the data shape before you write logic. A new case belongs in a union, table or state machine,
    not one more `if` in an unrelated flow. Don't push a file past 1000 lines: split it by job first.
 4. Add or update a test for every behaviour you change, where the repo has tests. Docs that explain your

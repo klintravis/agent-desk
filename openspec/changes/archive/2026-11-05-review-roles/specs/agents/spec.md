@@ -12,8 +12,8 @@ The kit SHALL ship an agent `structure-reviewer`, model `opus`, effort `medium`,
 - **WHEN** a feature of 40 lines that grows no file past 1000 lines reaches review
 - **THEN** no structure pass runs
 ### Requirement: Stack lenses
-The kit SHALL ship a `stack-lens` skill whose table maps each lens to one file under `lenses/`, each file with a `## Build` and a `## Review` section. The `implementer` SHALL follow the Build half and the `reviewer` SHALL check the Review half of the lenses its brief names or its files match, reading no other lens. The `orchestrate` skill SHALL name the lenses in every `implementer` and `reviewer` brief.
+The kit SHALL ship a `stack-lens` skill whose table lists each lens, with two files under `lenses/`: `<lens>.build.md` and `<lens>.review.md`. The `implementer` SHALL follow the build file and the `reviewer` SHALL check the review file of the lenses its brief names or its files match, reading no other lens file. The `orchestrate` skill SHALL name the lenses in every `implementer` and `reviewer` brief.
 
 #### Scenario: TypeScript change with a retry loop
 - **WHEN** a brief names the lenses `typescript` and `state`
-- **THEN** the agent reads those two lens files and no other
+- **THEN** an implementer reads `typescript.build.md` and `state.build.md` and no other lens file

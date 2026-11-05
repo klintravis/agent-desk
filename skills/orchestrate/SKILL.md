@@ -58,7 +58,7 @@ advisory: pass what the harness lets you; it has no user layer.
 
 Domain roles are an agent from the table plus lenses, not more agents: the `stack-lens` skill holds
 one short file per stack (`typescript`, `testing`, `state`, `perf`, `security`, `ui`), each with a Build
-half for the implementer and a Review half for the reviewer. Name the lenses in every `implementer` and
+file for the implementer and a review file for the reviewer. Name the lenses in every `implementer` and
 `reviewer` brief ("lenses: typescript, state"), from the files the change touches and what it does;
 the agent reads only those. A UI change is `implement` + `ui`; a lock or a retry loop is
 `implement-hard` + `state`; a speed-up is `implement-perf` + `perf`; a review of auth code is
@@ -137,13 +137,16 @@ closes the slug's todos. New work found on the way: `add` it with `--summary "<a
    The reviewer gets only the worktree path, slug, todo, approach, lenses and the model and effort it runs
    at (the verdict's `by` part), never your conclusions. The validator gets the slug, todo, approach, a
    scratch folder outside the worktree and the repo's install command. The structure reviewer gets the
-   path, slug and todo; it and the validator post no verdict.
+   path, slug and todo, and posts no verdict; the validator posts `FIXES NEEDED` when a claim fails.
    When all are back, build one **must-fix list**: every reviewer finding; every NOT VERIFIED claim; every
    INCONCLUSIVE claim you cannot settle by a rerun, unless the owner waives it; each structure **blocker**
    unless you can say in one line why it is wrong. A structure **suggest** goes on only when it deletes code
-   cheaply; the rest becomes a todo. If the list is not empty, post
-   `desk board post verdict <slug> "FIXES NEEDED @<sha> <n> items"` after the reviewer's verdict, so the
-   board blocks the merge whatever the reviewer said. Fix the list with an implementer under the branch's
+   cheaply; the rest becomes a todo. The board blocks a head that any `FIXES NEEDED`, `DO NOT MERGE` or
+   `MERGE AFTER FIXES` verdict names, whatever is posted after it: the reviewer and the validator post
+   theirs; for a list item no verdict on this head covers yet (a structure blocker, a claim you reran),
+   post `desk board post verdict <slug> "FIXES NEEDED @<sha> <n> items"` yourself. An INCONCLUSIVE claim
+   later settled by a rerun, or waived by the owner, is cleared with
+   `desk board post verdict <slug> "MERGE @<sha> overrides: <why>"`, never to skip a fix. Fix the list with an implementer under the branch's
    own approach (a structure blocker too: on a non-refactor branch it is fixed in place, or split into its
    own refactor todo when it is a restructure), finish again.
    **Close the loop with a fix-verification review**, not another full review: a fresh `verifier`
@@ -151,19 +154,18 @@ closes the slug's todos. New work found on the way: `add` it with `--summary "<a
    fixed, and did the fix diff add a new defect?" with a verdict and the HEAD SHA it covers. Re-run the
    `validator` first on the new head, for the claims the fixes touched or that were not VERIFIED, and give
    the verifier its blocks. Whatever the verifier posts, rebuild the must-fix list from its report and the
-   rerun; if it is not empty, post `FIXES NEEDED` again and do another round. Full reviews again only if the fixes were large (new files or >~150 changed
+   rerun; if it is not empty, post `FIXES NEEDED` again and do another round. Write the list to
+   `streams/<slug>.md` under `## Must-fix @<sha>` each round (`wt merge` deletes the file), so a compaction
+   or the next session does not lose it. Full reviews again only if the fixes were large (new files or >~150 changed
    lines). This keeps reviews converging and gives every commit on the branch a review, which the merge
    gate requires.
 5. **Merge**: when the desk's CLAUDE.md / AGENTS.md grants it (CI green, fast-forward, last review or
    fix-verification clean, the must-fix list empty, no commits after it), run `desk wt merge <slug>` and tell the owner in one
-   line; otherwise ask first. `wt merge` checks the board: the newest verdict must be `MERGE @<head sha>`
+   line; otherwise ask first. `wt merge` checks the board: the newest verdict must be `MERGE @<head sha>`, with no blocker on that head,
    (reviewer and verifier post it). For a docs-only commit you spot-checked, post it yourself:
    `desk board post verdict <slug> "MERGE @<sha> spot-check"`.
-   **Repo with `merge: "review"`** (`desk status` shows `review` on the Roots line): copy the `PR findings:`
-   block of the reviewer's report (the verifier's, after a fix round) into a scratch file yourself, then `desk wt merge <slug> --findings <file>`
-   opens the PR and stops. Tell the owner the PR URL and wait for a person to merge on the server; after that,
-   re-run `desk wt merge <slug>` to close. Never `git push` or `git merge` a protected branch or `gh pr merge`:
-   only the server rule enforces that, the hook is best effort.
+   **Repo with `merge: "review"`** (`desk status` shows `review` on the Roots line): read `merge-review.md`
+   beside this file before step 5; never `git push` or `git merge` a protected branch, or `gh pr merge`.
 6. **Handoff**: run the `handoff` skill at the end of the session.
 
 ## Brief

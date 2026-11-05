@@ -372,7 +372,7 @@ not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <rep
 `todo drop T-n` to let it go.
 
 - `todo add "<title>" [--area <repo id>|desk|owner|watch|idea] [--size ...] [--prio N] [--why ".."] [--parent T-n]
-  [--option "<label>: <why>"]... [--summary "<about 50 characters>"] [--change <spec change>] [--tasks 2.1-2.3] [--model sonnet/medium]`. With one repo `--area` defaults
+  [--option "<label>: <why>"]... [--summary "<about 50 characters>"] [--change <spec change>] [--tasks 2.1-2.3] [--model sonnet/medium] [--kind fix|feature|refactor|perf|docs]`. With one repo `--area` defaults
   to it; with several, `--area` is required. `--prio` must be an integer (anything else exits 1 and
   writes nothing). `--` ends the flags, so a title that starts with `--` is `todo add -- "--foo"`.
   A flag with no value, or whose value starts with `--`, exits 1 and writes nothing (`--all` takes none).
@@ -380,11 +380,12 @@ not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <rep
   an id row (id and summary, the title when unset), then `state:` and `next:`, each cut to one row at the edge,
   with one label on the id row, `wt:<slug>` else the owner (the summary is cut first). `todo show` and `todo list` keep the full title.
 - `todo split T-n "<child>" ["<child>" ...]`: children inherit the area, change and priority.
-- `todo start T-n [--slug <worktree slug>]` marks it active and yours; `todo done T-n`, `todo drop T-n`,
-  `todo block T-n` and `todo open T-n` set the status (`--why` adds a note). `todo done-slug <slug>` closes the active todos of that slug (`wt
-  merge` runs it).
+- `todo start T-n [--slug <worktree slug>]` marks it active and yours; it refuses a todo whose `--kind` is
+  other than `docs` and that has no `accept: <claim> | <command> | <expected>` note (the `validate` skill); `todo done T-n`, `todo drop T-n`,
+  `todo block T-n` and `todo open T-n` set the status (`--why` adds a note). `todo done-slug <slug>` closes the active todos of that slug and their open
+  children without another slug (`wt merge` runs it); an open or blocked todo only tagged with the slug stays.
 - `todo set T-n --<field> <value>` sets any field (handoff uses `--state` and `--next`); `todo note T-n
-  "<text>"` adds a dated note.
+  "<text>"` adds a dated note, up to 1000 characters, never cut: a longer note, or unquoted words, exit 1 and write nothing.
 - `todo list [--area x] [--all]` shows the open tree without ideas (`--area idea` shows them, `--all`
   adds ideas, done and dropped); `todo next [--area x]` picks the open todo with no open children (an idea child only counts under an idea) and
   the lowest priority number (default 50), never an `owner`, `watch` or `idea` todo unless you ask for that area; `todo show T-n` prints the merged JSON.
@@ -399,7 +400,8 @@ not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <rep
   prints `yours` or `unclaimed`, or exits 1 when another session holds it. Session identity is the
   first 8 characters of `CLAUDE_CODE_SESSION_ID`, else `owner`.
 - `board merge-ok <slug> <head-sha>` exits 0 only when the newest verdict is `MERGE @<sha>` (7 to 40
-  hex characters) that is a prefix of the head. `board tail [n]` prints the open claims, the files in
+  hex characters) that is a prefix of the head, and no `FIXES NEEDED`, `DO NOT MERGE` or `MERGE AFTER FIXES`
+  verdict names that head, unless the newest is `MERGE @<sha> overrides: <why>`. `board tail [n]` prints the open claims, the files in
   `streams/` and the last `n` (default 8) lines; the session-start context embeds it.
 - A review verdict reads `<VERDICT> @<sha> by <model>/<effort>`, from what the agent's brief states (`by <model>`
   alone if the brief gives no effort). The merge gate ignores the suffix. The record reaches only people who can read
@@ -587,7 +589,7 @@ Haiku is unproven on this work: compare its first few runs against Sonnet before
 model applies instead.
 
 Domain roles come from lenses, not more agents. `stack-lens` holds one short file per stack (`typescript`, `testing`,
-`state`, `perf`, `security`, `ui`), each with a Build half the `implementer` follows and a Review half the `reviewer`
+`state`, `perf`, `security`, `ui`), each with a build file the `implementer` follows and a review file the `reviewer`
 checks; the orchestrator names the lenses in each brief and the agent reads only those. `structure-reviewer` (opus,
 medium effort, read-only) runs Cursor's thermo-nuclear maintainability rubric beside the `reviewer` when the change's
 kind calls for it (see below), and plans a refactor's target shape. The `orchestrate` table gains `implement-perf`,
@@ -603,11 +605,12 @@ path in the same branch, and prove the pinned tests pass unedited with a net red
 (`accept: <claim> | <command> | <expected>`, see the `validate` skill), written at kickoff before any code. After
 `desk wt finish`, a `validator` (sonnet, medium) runs beside the `reviewer`, in its own detached copies: it reruns each
 claim on the head, and on the base for fix, refactor and perf, and reports VERIFIED, NOT VERIFIED or INCONCLUSIVE per
-claim (a feature whose claims CI already runs skips it). The validator and the structure reviewer post no verdict: the
-orchestrator puts every reviewer finding, NOT VERIFIED or unsettled INCONCLUSIVE claim and structure blocker on one
-must-fix list and, if it is not empty, posts `FIXES NEEDED` on the board after the reviewer's verdict, so `desk wt
-merge` refuses the head until the `verifier` posts `MERGE`. The kind table in the `orchestrate` skill is the one place
-these triggers are set.
+claim (a feature whose claims CI already runs skips it), and posts `FIXES NEEDED @<head>` when one fails. The merge gate
+refuses a head that any `FIXES NEEDED`, `DO NOT MERGE` or `MERGE AFTER FIXES` verdict names, whatever is posted after it,
+so a reviewer's `MERGE` beside a failed claim does not merge; the orchestrator posts one more for structure blockers, and
+clears a settled or owner-waived claim with `MERGE @<head> overrides: <why>`. Todos carry their kind (`todo set --kind
+fix|feature|refactor|perf|docs`); `todo start` and `desk stream` refuse a typed todo other than docs with no `accept:`
+note. The kind table in the `orchestrate` skill is the one place the pass triggers are set.
 
 ## Specs
 
@@ -704,7 +707,7 @@ folder. Open the desk folder, or the generated `.code-workspace`, in VS Code.
 | Desk instructions | `CLAUDE.md` (imports `AGENTS.md`) | `AGENTS.md` |
 | Skills (kickoff, handoff, orchestrate, ponytail, ...) | plugin | `.github/skills/<name>/` (copied by `desk sync`) |
 | Agents (implementer, reviewer, structure-reviewer, validator, verifier, archiver, scribe, ci-triage) | plugin | `.github/agents/<name>.agent.md`. `model` is dropped (use the picker); `effort` becomes `reasoning-effort`; tools map to Copilot's `read`, `search`, `edit`, `execute`, `web`, `agent`. |
-| Ponytail and `agent-rules.md` at session and subagent start (read-only agents such as `validator`, `verifier`, `ci-triage`, `scribe`, `structure-reviewer` and `Explore` get the rules only), plus the board at session start | `SessionStart`/`SubagentStart` hooks in `.claude/settings.local.json` | the same hooks: Copilot reads `.claude/settings.json` and `settings.local.json` |
+| Ponytail and `agent-rules.md` at session and subagent start (agents that write no code, `reviewer`, `validator`, `verifier`, `structure-reviewer`, `ci-triage`, `scribe`, `archiver` and `Explore`, get the rules only), plus the board at session start | `SessionStart`/`SubagentStart` hooks in `.claude/settings.local.json` | the same hooks: Copilot reads `.claude/settings.json` and `settings.local.json` |
 | `desk` CLI: todos, board, status, worktrees, merge gate, decide | yes | yes |
 | Desk pane, owner-decisions band, `/desk`, `/decide` | yes (mod) | no (the `decide` skill walks the decisions) |
 | Auto-compaction prune, cache warm-hold | yes (mod) | no |

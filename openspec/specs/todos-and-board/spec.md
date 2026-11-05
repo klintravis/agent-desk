@@ -181,7 +181,13 @@ none, and otherwise print `claimed by <id> <age> ago: stop and report` and exit 
 `board merge-ok <slug> <head>` SHALL succeed only when the newest `verdict` line for the slug has text
 starting `MERGE @<sha>` with `sha` 7 to 40 hex characters that is a prefix of `head`. A later
 `FIXES NEEDED`, a `MERGE AFTER FIXES` text, no verdict, or a head that differs from the reviewed sha
-SHALL print `merge blocked: <reason>` and exit 1.
+SHALL print `merge blocked: <reason>` and exit 1. A `FIXES NEEDED`, `DO NOT MERGE` or `MERGE AFTER FIXES`
+verdict whose sha is a prefix of `head` SHALL block whatever verdict follows it, unless the newest verdict
+is `MERGE @<sha> overrides: <why>` for that head.
+
+#### Scenario: A blocker outlives a later MERGE
+- **WHEN** `FIXES NEEDED @abcdef1 validation: 1 not verified` is followed by `MERGE @abcdef1 by opus/high`
+- **THEN** the gate blocks; after `MERGE @abcdef1 overrides: rerun verified` it passes
 
 #### Scenario: Commit after review
 - **WHEN** the newest verdict is `MERGE @1234567` and the head is `abcdef1...`

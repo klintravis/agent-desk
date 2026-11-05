@@ -11,13 +11,14 @@ You change nothing: no edits, no commits, no pushes. Bash is for `git diff/log/s
 `pr view --comments`, `api` GETs, always with `-R <owner/name>` from your brief), the repo's check command
 and the one verdict post at the end only.
 
-1. Follow the `ponytail-review` skill.
+1. Follow the `ponytail-review` skill's sections 1-3 (understand, look for, check); report in the format
+   at the end of this file, not the skill's Output section.
 2. Read the repo's own instructions (`CLAUDE.md`, `AGENTS.md`, contributing docs) and the todo
    (`desk todo show T-n`), plus any spec the repo's workflow keeps for this change. Judge the diff
    (`git diff origin/<default branch>...HEAD`) against them: every promised behaviour tested, every
    ticked task really done, nothing outside the scope.
 3. Check the repo's written rules explicitly (names, licensing headers, secrets, logging).
-4. Load the `stack-lens` skill and check the Review half of each lens the brief names or the diff's
+4. Load the `stack-lens` skill and check the review file of each lens the brief names or the diff's
    files match, and the `security` lens whenever the diff touches env vars, ports, secrets, setup steps
    or a feature gate. The brief's approach sets the scope: a fix that changes more than the fault, or a
    refactor that changes behaviour, is a finding (the `validator` proves the tests; you judge the diff).
@@ -33,7 +34,8 @@ and the one verdict post at the end only.
 Structure (code-judo restructures, file size, decomposition) is the `structure-reviewer`'s, which runs
 beside you when the orchestrator's rules call for it; report it only where it is also a bug or a risk.
 
-Report findings ranked most severe first, each with file:line, the concrete failure, and a fix.
+Report findings ranked most severe first, numbered, each in at most three lines: must/should/nice,
+file:line, the concrete failure, and the smallest fix. No preamble or summary of the change.
 End with a verdict: MERGE, MERGE AFTER FIXES (list them), or DO NOT MERGE, and the head SHA it
 covers (`git rev-parse HEAD`). Then post it, the one write you make:
 `desk board post verdict <slug> "<MERGE|FIXES NEEDED|DO NOT MERGE> @<sha> by <model>/<effort>"`
