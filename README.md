@@ -251,12 +251,12 @@ that holds `desk.config.json`. `desk init` ignores `DESK_HOME` and always uses t
 
 | Command | What |
 |---|---|
-| `desk status [--watch\|--json]` | One screen with these sections: owner decisions, active todos, claims, running sessions, roots, open branches (CI and verdict, and `behind <default> by N, rebase` when the branch lacks N commits of `origin/<default>`, from the refs as last fetched, or of the local default branch without an origin), pull requests, overlaps, today's tokens. `--watch` prints one line per change. Pull requests: for each open desk branch with an open PR in a repo with `gh`, the review decision, the comment count (conversation and review threads), unresolved threads, and comments or reviews newer than the branch's head commit. Read-only, one `gh api graphql` call per repo; with no `gh` or a failing call the section is left out. `--watch` prints `PR: <branch> #<n> review <decision>, +N comment(s)` when a decision changes or comments arrive. See [Status watch](#status-watch). |
+| `desk status [--watch\|--json] [--fetch]` | One screen with these sections: owner decisions, active todos, claims, running sessions, roots (each git root's default branch sha, the CI of that sha in a repo with `gh`, and `no check command` when `check` is empty), open branches (CI, verdict and the branch's state word in brackets, and `behind <default> by N, rebase` when the branch lacks N commits of `origin/<default>`, from the refs as last fetched, or of the local default branch without an origin), pull requests, overlaps, today's tokens. `--fetch` fetches each git repo with an origin first, so behind counts, the pushed state and the default branch are current; without it status reads local refs only. `--watch` prints one line per change. Pull requests: for each open desk branch with an open PR in a repo with `gh`, the review decision, the comment count (conversation and review threads), unresolved threads, and comments or reviews newer than the branch's head commit. Read-only, one `gh api graphql` call per repo; with no `gh` or a failing call the section is left out. `--watch` prints `PR: <branch> #<n> review <decision>, +N comment(s)` when a decision changes or comments arrive. See [Status watch](#status-watch). |
 | `desk todo add\|split\|start\|done\|drop\|block\|open\|set\|note\|done-slug\|list\|next\|show` | Todos. The area is a repo id, `desk`, `watch`, `owner` or `idea`. See [Todos](#todos). |
 | `desk board post\|claims\|check\|merge-ok\|tail` | The claim board. Its text is data, never approval. See [Board](#board). |
 | `desk decide [T-n <ruling> \| T-n --pick <n> \| --json \| --list [n]]` | Owner decisions, one at a time; `--pick` records the nth option's label; `--json` prints the first waiting one as JSON; `--list` prints the recorded rulings. See [Owner decisions](#owner-decisions). |
 | `desk tidy [--apply] [--json]` | Reports what finished work left behind; `--apply` clears dead owners, deletes orphans and asks the owner once. See [Tidy](#tidy). |
-| `desk wt new\|finish\|rebase\|merge\|remove\|discard <slug> [--repo <id>] [--base <ref>] [--no-build] [--no-wait] [--rebased] [--force] [--into <slug>] [--findings <file>]` | Worktrees. See [Worktree flow](#worktree-flow). |
+| `desk wt new\|finish\|rebase\|merge\|remove\|discard\|handoff <slug> [--repo <id>] [--base <ref>] [--no-build] [--no-wait] [--rebased] [--force] [--into <slug>] [--findings <file>] [--todo T-n] [--next "<step>"]` | Worktrees. See [Worktree flow](#worktree-flow). |
 | `desk stream <slug> <task-file> [--todo T-n] [--desk] [--repo <id>] [--max-turns <n>] [--budget <usd>] [--dry-run]` | Starts a detached headless Claude session that claims, implements, reviews and stops before merge. See [Streams](#streams). |
 | `desk tokens [hours] [--json] [--session <id8>\|self] [--by-worktree]`, `desk overlap` | Token use from Claude transcripts. Files changed by two open worktrees. See [Tokens and overlaps](#tokens-and-overlaps). |
 | `desk init [--repo <id>=<path> ...] [--worktrees <dir>] [--harness claude,copilot] [--no-install]` | Makes the current folder a desk. See [Quickstart](#quickstart). |
@@ -317,6 +317,10 @@ its value.
   current directory is inside the worktree. If git unregistered the worktree but the folder stayed, it
   finishes the same way as `merge`: branch deleted, `release` posted, a warning, exit 0.
 - **`wt discard`** drops the worktree and its branch, uncommitted work included, and posts `release`.
+- **`wt handoff <slug> --next "<step>" [--todo T-n]`** ends a session's turn on a worktree it keeps open: it writes the
+  slug's active todo's `state` from facts (`head <sha>, clean|uncommitted changes, pushed|not pushed, CI <result>, verdict
+  <verdict>`, the verdict without its `by` part, since `todo.jsonl` is committed) and `next`, then posts `release`.
+  It refuses a slug another session holds; `--todo` names the todo when none is active on the slug.
   It refuses a slug another session holds unless you pass `--force`, and, like `merge` and `remove`,
   runs only from outside the worktree. If only the folder stays (git no longer lists the worktree) it
   finishes with a warning naming the folder; if git still lists it, it fails and keeps branch and claim.
@@ -532,8 +536,9 @@ your file, then the desk's `floor`, which only raises. `desk settings` shows the
 
 The `orchestrate` skill applies resolved values when it spawns an agent, and falls back to its table if `desk settings`
 fails. An agent started outside `orchestrate` runs on its frontmatter or its caller's parameters, so none of this
-reaches it. `kickoff` and `handoff` record the `shared` value (no user layer) in `todo.jsonl`, because that file is
-committed.
+reaches it. `kickoff` and `handoff` write no model or effort into `todo.jsonl` (that file is committed, the user file is
+not): a todo carries its kind, and the task id it maps to is resolved at spawn. `desk wt handoff` drops the `by` part of a
+verdict for the same reason.
 
 **Floor limits.** A floor holds in the resolver's output and in what the skill passes. It is not a security boundary:
 

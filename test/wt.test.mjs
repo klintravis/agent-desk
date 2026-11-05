@@ -50,6 +50,39 @@ test('wt new -> finish -> merge gate -> merge, no gh (no CI)', () => {
   assert.deepEqual(['T-1', 'T-2', 'T-3', 'T-4'].map(status), ['done', 'done', 'done', 'open'], 'the active todo and its steps close; a tagged open todo stays');
 });
 
+test('status --fetch reads commits others pushed; plain status stays on local refs; a branch line carries its state', () => {
+  const { root, home } = multiDesk();
+  ok(desk(home, 'wt', 'new', 'demo', '--repo', 'a', '--no-build'));
+  const other = join(root, 'other');
+  git(root, 'clone', '-q', join(root, 'a.git'), other);
+  commit(other, 'src/theirs.txt', 'x\n');
+  git(other, 'push', '-q', 'origin', 'HEAD:main');
+  const behind = (...a) => JSON.parse(ok(desk(home, 'status', '--json', ...a))).branches.find((b) => b.slug === 'demo').behind;
+  assert.equal(behind(), null, 'no fetch: local refs only');
+  assert.deepEqual(behind('--fetch'), { base: 'main', n: 1 });
+  assert.match(ok(desk(home, 'status')), /- demo @[0-9a-f]{7}: .*verdict: none \[rebase\]/);
+  assert.match(ok(desk(home, 'status')), /- a: git, .*main @[0-9a-f]{7}; no check command, wt finish checks nothing/);
+});
+
+test('wt handoff writes the active todo\'s state from facts, drops the verdict\'s by part, and releases the claim', () => {
+  const { root, home } = multiDesk();
+  const wt = join(root, 'worktrees', 'a-demo');
+  ok(desk(home, 'wt', 'new', 'demo', '--repo', 'a', '--no-build'));
+  ok(desk(home, 'todo', 'add', 'demo work', '--area', 'a'));
+  ok(desk(home, 'todo', 'start', 'T-1', '--slug', 'demo'));
+  fails(desk(home, 'wt', 'handoff', 'demo'), /needs --next/);
+  const head = commit(wt, 'src/one.txt', 'one\n');
+  ok(desk(home, 'board', 'post', 'verdict', 'demo', `FIXES NEEDED @${head.slice(0, 7)} by opus/high`));
+  writeFileSync(join(wt, 'wip.txt'), 'x');
+  ok(desk(home, 'wt', 'handoff', 'demo', '--next', 'fix finding 2, then wt finish; sonnet/medium'));
+  const t = JSON.parse(ok(desk(home, 'todo', 'show', 'T-1')));
+  assert.equal(t.state, `head ${head.slice(0, 7)}, uncommitted changes, not pushed, CI no CI, verdict FIXES NEEDED @${head.slice(0, 7)}`);
+  assert.equal(t.next, 'fix finding 2, then wt finish; sonnet/medium');
+  assert.deepEqual([board(home).at(-1).kind, board(home).at(-1).text], ['release', 'handed off']);
+  appendFileSync(join(home, 'board.jsonl'), JSON.stringify({ v: 1, ts: new Date().toISOString(), from: 'otherses', kind: 'claim', slug: 'demo', repo: 'a' }) + '\n');
+  fails(desk(home, 'wt', 'handoff', 'demo', '--next', 'x'), /claimed by session otherses/);
+});
+
 test('wt merge refuses a branch that is not pushed', () => {
   const { root, home } = multiDesk();
   ok(desk(home, 'wt', 'new', 'np', '--repo', 'a'));

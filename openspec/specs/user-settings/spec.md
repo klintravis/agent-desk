@@ -99,11 +99,11 @@ Models SHALL be ordered `haiku < sonnet < opus < fable` and efforts `low < mediu
 - **THEN** the resolver has no effect on it, and README and `desk settings` say so
 
 ### Requirement: Skills keep user values out of todos
-`skills/kickoff/SKILL.md` and `skills/handoff/SKILL.md` SHALL tell the agent to record a task's `shared` values, never its resolved values, in `todo.jsonl`, and `skills/orchestrate/SKILL.md` SHALL tell it to pass the resolved values at spawn, not a todo's.
+`skills/kickoff/SKILL.md` and `skills/handoff/SKILL.md` SHALL NOT tell the agent to write a model or effort into `todo.jsonl`: a todo carries its kind, and `skills/orchestrate/SKILL.md` SHALL tell it to pass the resolved values of the kind's task id at spawn. `desk wt handoff` SHALL write a verdict into a todo's `state` without its `by <model>/<effort>` part.
 
 #### Scenario: Kickoff text
 - **WHEN** the kickoff skill text is read
-- **THEN** its `--model` step names the `shared` value
+- **THEN** it holds no `--model` step, and plans each todo by kind and task id
 
 ### Requirement: The verdict records the review model
 `agents/reviewer.md` and `agents/verifier.md` SHALL post a verdict as `<VERDICT> @<sha> by <model>/<effort>`, using the model and effort their brief states, and `by <model>` alone if the brief gives no effort. `skills/orchestrate/SKILL.md` SHALL make the brief state both, and the `desk stream` task text SHALL lead to the same result.

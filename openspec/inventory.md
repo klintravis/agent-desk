@@ -67,12 +67,14 @@ Section names are README headings.
 | `wt merge` | `lib/wt.mjs` `merge` | Worktree flow |
 | `wt remove` | `lib/wt.mjs` `remove` | Worktree flow |
 | `wt discard` | `lib/wt.mjs` `discard` | Worktree flow |
+| `wt handoff` | `lib/wt.mjs` `handoff` | Worktree flow |
 
 ## Flags
 
 | item | where in code | README section |
 |---|---|---|
 | `--watch` | `bin/desk.mjs` `status`, `watch` | Status watch |
+| `--fetch` | `bin/desk.mjs` `status` | Commands |
 | `--json` | `bin/desk.mjs` `status`, `statusData`; `lib/tidy.mjs` `tidy` | Status watch, Tidy |
 | `--apply` | `lib/tidy.mjs` `tidy` | Tidy |
 | `tidyIds` | `lib/tidy.mjs` `raiseQuestion` (with `source`) | Tidy |

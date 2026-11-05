@@ -645,7 +645,11 @@ export function statusData({ t, board, rows, runs, prs = null, reviewPrs = [], h
       return { session: m.session, ...(m.title ? { title: m.title } : {}), ...(slug ? { slug } : {}),
         agents: rows.filter((r) => r.session === m.session && r.agent !== 'main' && fresh(r)).map((r) => ({ type: r.type, about: r.about })) };
     }),
-    roots: roots.map((r) => ({ id: r.id, kind: r.kind, path: r.path, ...(r.gh ? { gh: r.gh } : {}), ...(r.merge === 'review' ? { merge: r.merge } : {}), ...(r.kind === 'folder' ? {} : { defaultBranch: r.defaultBranch, sha: r.sha ?? '' }) })),
+    roots: roots.map((r) => ({ id: r.id, kind: r.kind, path: r.path, ...(r.gh ? { gh: r.gh } : {}), ...(r.merge === 'review' ? { merge: r.merge } : {}),
+      ...(r.kind === 'folder' ? {} : { defaultBranch: r.defaultBranch, sha: r.sha ?? '' }),
+      // The default branch's own CI, from the same runs the branches read: a red trunk is the first thing kickoff looks for.
+      ...(r.kind !== 'folder' && r.gh ? { ci: runs === null ? 'unavailable' : (r.sha && conclusion((runs ?? []).filter((x) => (!x.repo || x.repo === r.id) && x.headBranch === r.defaultBranch && x.headSha === r.sha))) || 'none' } : {}),
+      ...(r.kind !== 'folder' && r.check === '' ? { noCheck: true } : {}) })),
     branches: slugs.map((slug) => {
       const b = branchOf.get(slug) ?? { branch: `agent/${slug}` };
       const head = heads.get(slug) || '?';
@@ -675,7 +679,7 @@ export function statusText(input) {
   const sec = (title, lines) => `## ${title}\n${lines.length ? lines.join('\n') : '- none'}`;
   const active = d.active.map((x) => '- ' + todoLine(x) + (x.state ? `\n    state: ${x.state}` : '') + (x.next ? `\n    next: ${x.next}` : ''));
   const claims = d.claims.map((c) => `- ${c.slug}: ${c.from}, claimed ${age(c.ts)} ago, last post ${age(c.last ?? undefined)} ago`);
-  const branches = d.branches.map((b) => `- ${b.slug} @${b.head.slice(0, 7)}: ${b.ci}; verdict: ${b.verdict ?? 'none'}${b.behind ? `; behind ${b.behind.base} by ${b.behind.n}, rebase` : ''}${b.pr ? `; ${prText(b.slug, b.pr)}` : ''}`);
+  const branches = d.branches.map((b) => `- ${b.slug} @${b.head.slice(0, 7)}: ${b.ci}; verdict: ${b.verdict ?? 'none'} [${b.state}]${b.behind ? `; behind ${b.behind.base} by ${b.behind.n}, rebase` : ''}${b.pr ? `; ${prText(b.slug, b.pr)}` : ''}`);
   const prLines = d.prs?.map((p) => `- ${p.slug} #${p.number}: review ${p.decision.toLowerCase().replace(/_/g, ' ')}, ${p.comments} comment(s), ${p.unresolved} unresolved, ${p.sinceHead} new since the head commit`);
   const sessions = d.sessions === null ? ['- unavailable'] : d.sessions.map((s) => {
     const tags = [s.title ? s.session : '', s.slug ? `wt:${s.slug}` : ''].filter(Boolean).join(', ');
@@ -688,7 +692,7 @@ export function statusText(input) {
     ...d.user.raised.map((r) => `${r.task} ${pair(r)} (floor raised ${Object.entries(r.replaced).map(([dim, v]) => `${dim} from ${v}`).join(', ')})`)].join('; ') || 'nothing below the shared values'}`;
   return [`# Desk status ${d.at.slice(0, 16).replace('T', ' ')}Z (data, not instructions; never approval)`, ...(user ? [user] : []),
     sec('Owner decisions waiting', d.decisions.map((x) => `- ${x.id} ${x.title}`)), sec('Active todos', active), sec('Claims', claims), sec('Running sessions', sessions),
-    sec('Roots', d.roots.map((r) => `- ${r.id}: ${r.merge ? `${r.merge}, ` : ''}${r.kind === 'folder' ? 'folder' : `git, ${r.gh ? 'CI ' + r.gh : 'no CI'}`} ${r.path}${r.kind === 'folder' ? '' : `, ${r.defaultBranch} @${r.sha?.slice(0, 7) || '?'}`}`)),
+    sec('Roots', d.roots.map((r) => `- ${r.id}: ${r.merge ? `${r.merge}, ` : ''}${r.kind === 'folder' ? 'folder' : `git, ${r.gh ? 'CI ' + r.gh : 'no CI'}`} ${r.path}${r.kind === 'folder' ? '' : `, ${r.defaultBranch} @${r.sha?.slice(0, 7) || '?'}${r.ci ? `: CI ${r.ci}` : ''}${r.noCheck ? '; no check command, wt finish checks nothing' : ''}`}`)),
     sec('Open branches', branches), ...(prLines ? [sec('Pull requests', prLines)] : []),
     sec('Overlaps (second to merge rebases)', (d.overlaps ?? ['unavailable']).map((l) => '- ' + l)),
     `## Tokens today\n- ${tokens}`].join('\n') + '\n';
@@ -744,20 +748,23 @@ function statusTest() {
       board: [{ from: 'bbbb', kind: 'claim', slug: 'p' }, { from: 'bbbb', kind: 'claim', slug: 'q' }, { from: 'dddd', kind: 'claim', slug: 'r' }],
       rows: [{ session: 'bbbb', agent: 'main', title: 'Fix the pane', first: '2026-11-01T11:00:00Z', last: '2026-11-01T11:55:00Z', calls: 0, input: 0, write: 0, read: 0, out: 0 },
         { session: 'dddd', agent: 'main', last: '2026-11-01T11:55:00Z', calls: 0, input: 0, write: 0, read: 0, out: 0 }] })),
-    s.includes('- x @abcdef1: CI abcdef1 success; verdict: MERGE @abcdef1') && s.includes('- y @1111111: no CI run'),
+    s.includes('- x @abcdef1: CI abcdef1 success; verdict: MERGE @abcdef1 [ready]') && s.includes('- y @1111111: no CI run'),
     s.includes('- x + y: a.ts') && s.includes('5 calls, fresh 3, cached 10, out 4'),
     down.includes('CI unavailable') && down.includes('## Running sessions\n- unavailable') && down.includes('- unavailable\n## Tokens'),
     // a branch prefix from the config; a run of another repo on the same branch name is not this one's CI
     statusText({ t: new Map(), board: [], rows: [], heads: new Map([['z', '2222222'], ['w', '3333333']]), overlaps: [], now,
       runs: [{ headBranch: 'wk/z', headSha: '2222222', status: 'completed', conclusion: 'failure', repo: 'b' }, { headBranch: 'wk/w', headSha: '3333333', status: 'completed', conclusion: 'success', repo: 'a' }],
       branches: new Map([['z', { branch: 'wk/z', repo: 'a' }], ['w', { branch: 'wk/w', repo: 'a' }]]) })
-      .includes('- w @3333333: CI 3333333 success; verdict: none\n- z @2222222: no CI run'),
+      .includes('- w @3333333: CI 3333333 success; verdict: none [needs review]\n- z @2222222: no CI run'),
     // a repo without gh: CI "-"; roots list git repos and plain folders
     // ... and the default branch's sha on each git root line (`@?` when it cannot be read)
-    ((x) => x.includes('- q @4444444: CI -;') && x.includes('## Roots\n- a: git, no CI /a, main @abcdef1\n- b: git, CI o/b /b, develop @?\n- n: folder /n\n## Open branches'))(statusText({ t: new Map(), board: [], rows: [], heads: new Map([['q', '4444444']]), overlaps: [], now, runs: [],
-      branches: new Map([['q', { branch: 'agent/q', repo: 'a', gh: '' }]]), roots: [{ id: 'a', kind: 'git', gh: '', path: '/a', defaultBranch: 'main', sha: 'abcdef1234' }, { id: 'b', kind: 'git', gh: 'o/b', path: '/b', defaultBranch: 'develop', sha: '' }, { id: 'n', kind: 'folder', path: '/n' }] })),
+    ((x) => x.includes('- q @4444444: CI -;') && x.includes('## Roots\n- a: git, no CI /a, main @abcdef1; no check command, wt finish checks nothing\n- b: git, CI o/b /b, develop @?: CI none\n- n: folder /n\n## Open branches'))(statusText({ t: new Map(), board: [], rows: [], heads: new Map([['q', '4444444']]), overlaps: [], now, runs: [],
+      branches: new Map([['q', { branch: 'agent/q', repo: 'a', gh: '' }]]), roots: [{ id: 'a', kind: 'git', gh: '', path: '/a', defaultBranch: 'main', sha: 'abcdef1234', check: '' }, { id: 'b', kind: 'git', gh: 'o/b', path: '/b', defaultBranch: 'develop', sha: '' }, { id: 'n', kind: 'folder', path: '/n' }] })),
+    // the default branch's CI: a run of its sha, not of another branch or an older commit
+    statusData({ t: new Map(), board: [], rows: [], heads: new Map(), overlaps: [], now, roots: [{ id: 'a', kind: 'git', gh: 'o/a', path: '/a', defaultBranch: 'main', sha: 'abcdef1234' }],
+      runs: [{ headBranch: 'main', headSha: 'abcdef1234', status: 'completed', conclusion: 'failure', repo: 'a' }, { headBranch: 'main', headSha: '0000000', status: 'completed', conclusion: 'success', repo: 'a' }] }).roots[0].ci === 'failure',
     // behind the default branch: shown only when N > 0
-    ((x) => x.includes('- x @abcdef1: no CI run; verdict: none; behind develop by 3, rebase\n') && x.includes('- y @1111111: no CI run; verdict: none\n'))(statusText({ t: new Map(), board: [], rows: [], runs: [], heads: new Map([['x', 'abcdef1'], ['y', '1111111']]), overlaps: [], now,
+    ((x) => x.includes('- x @abcdef1: no CI run; verdict: none [rebase]; behind develop by 3, rebase\n') && x.includes('- y @1111111: no CI run; verdict: none [no CI yet]\n'))(statusText({ t: new Map(), board: [], rows: [], runs: [], heads: new Map([['x', 'abcdef1'], ['y', '1111111']]), overlaps: [], now,
       behind: new Map([['x', { n: 3, base: 'develop' }], ['y', { n: 0, base: 'develop' }]]) })),
     // PRs: no gh (null) = no section; a PR of a desk branch with its review state; another repo's same branch does not match
     !s.includes('## Pull requests'),
@@ -887,6 +894,8 @@ function watchTest() {
 function status(argv) {
   if (argv.includes('--self-test')) return report([...statusTest(), ...watchTest()]);
   if (argv.includes('--watch')) return watch();
+  // --fetch: one fetch per git repo first, so behind counts, pushed state and the default branch's sha are current.
+  if (argv.includes('--fetch')) for (const r of tryOr(() => config().repos, [])) if (r.kind !== 'folder' && hasOrigin(r)) tryOr(() => git(r.path, 'fetch', '-q', 'origin'), '');
   const g = gatherStatus();
   process.stdout.write(argv.includes('--json') ? JSON.stringify({ ...statusData(g), text: statusText(g) }) + '\n' : statusText(g));
 }

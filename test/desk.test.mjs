@@ -691,7 +691,7 @@ test('the review verdict: agents, the brief and a stream record the review model
   for (const f of ['reviewer', 'verifier']) assert.match(read('agents', `${f}.md`), /@<sha> by <model>\/<effort>"[\s\S]*`by <model>`\s+alone/);
   assert.match(read('skills', 'orchestrate', 'SKILL.md'), /`reviewer` or\s+`verifier` brief also states the model and effort[\s\S]*`by <model>\/<effort>`/);
   assert.match(read('lib', 'wt.mjs'), /`reviewer` and `verifier` brief states the model and effort[\s\S]{0,80}`<VERDICT> @<sha> by <model>\/<effort>`/);
-  assert.match(read('skills', 'handoff', 'SKILL.md'), /Quote a verdict in `--state`\s+as `<VERDICT> @<sha>`, without its `by <model>\/<effort>` part/);
+  assert.match(read('skills', 'handoff', 'SKILL.md'), /`D wt handoff <slug>[\s\S]{0,200}the verdict without its `by` part/); // wt.test proves the command drops it
 });
 
 test('the walkthrough skill reads watch todos, names no id, records only on the answered todo', () => {
@@ -729,12 +729,17 @@ test('the decide skill reads --json, asks with AskUserQuestion, records only the
   assert.match(s, /never choose for them, never record on a question they\s+dismissed/);
 });
 
-test('the skills: orchestrate names the command and its fallback; kickoff and handoff record the shared value', () => {
+test('the skills: orchestrate names the command and its fallback; kickoff and handoff use status --fetch and store no model', () => {
   const read = (...p) => readFileSync(join(KIT, ...p), 'utf8');
   const skill = read('skills', 'orchestrate', 'SKILL.md');
   assert.match(skill, /`desk settings --json`/);
   assert.match(skill, /If the command fails, the table below is the fallback[\s\S]*`floor`/);
   assert.doesNotMatch(skill, /the strongest model/);
   assert.match(skill, /over about 150 lines gets one `implementer` run per code task group[\s\S]*Split a single group, or a todo with none, first[\s\S]*A smaller change keeps one run[\s\S]*after the last implementer's commit/);
-  for (const s of ['kickoff', 'handoff']) assert.match(read('skills', s, 'SKILL.md'), /`shared`/);
+  for (const s of ['kickoff', 'handoff']) {
+    const text = read('skills', s, 'SKILL.md');
+    assert.match(text, /`D status --fetch`/, s);
+    assert.doesNotMatch(text, /--model|git -C <repo path> fetch/, s);
+  }
+  assert.match(read('skills', 'handoff', 'SKILL.md'), /`D wt handoff <slug> --next/);
 });
