@@ -2,7 +2,7 @@
 name: fix
 description: >-
   Correction approach: reproduce a defect, find its root cause, land the smallest fix in the shared
-  code, prove it with a test that failed before and passes after. Ponytail at its tightest. Use when
+  code, prove it with a test that failed before and passes after. Ponytail at level full. Use when
   a brief names the `fix` approach, or for "fix this bug", "this is broken", "regression", a failing
   check with a known or unknown cause.
 ---
@@ -11,15 +11,17 @@ description: >-
 
 A correction changes behaviour that is wrong and nothing else. Ponytail's rules hold in full: the
 smallest complete change, the existing structure kept. Every shipped line traces to evidence; a change
-that "might help" is a guess and does not ship.
+that "might help" is a guess and does not ship. Steps 1-4 find the cause; a `debug` run does them when
+the cause is unknown, and an implementer briefed with its repro, test and cause starts at step 5.
 
 1. **Reproduce first.** Turn the report into a falsifiable claim: input or steps, what happens, what
    should happen. Reproduce it on the same surface the user hit (the test runner, the CLI, the running
    app). It won't reproduce: tighten the conditions or add logging until it does; still nothing, stop
    and report what you tried.
 2. **Pin it.** Where a cheap local test path exists, write the regression test now and run it: it must
-   fail, for the reason the bug gives. Commit it on its own (`test: <bug>`), before the fix. No cheap
-   path: keep the repro command and its output instead, and say why there is no test.
+   fail, for the reason the bug gives. Commit it on its own (`test: <bug>`), before the fix, unless a
+   commit hook runs the tests: then commit it with the fix and keep its failing output. No cheap path:
+   keep the repro command and its output instead, and say why there is no test.
 3. **Root cause.** Ask why until the answer is a wrong decision in the code, not a consequence of an
    earlier one. Read the actual state; don't guess. If the state that broke the code is legitimate, the
    code that broke on it is the cause. If the state should never exist, find what made it: a guard where

@@ -589,22 +589,25 @@ model applies instead.
 Domain roles come from lenses, not more agents. `stack-lens` holds one short file per stack (`typescript`, `testing`,
 `state`, `perf`, `security`, `ui`), each with a Build half the `implementer` follows and a Review half the `reviewer`
 checks; the orchestrator names the lenses in each brief and the agent reads only those. `structure-reviewer` (opus,
-medium effort, read-only) runs Cursor's thermo-nuclear maintainability rubric beside the `reviewer` on changes over
-about 300 lines, refactors, and changes that push a file past 1000 lines. It posts no verdict: the orchestrator merges
-its blockers into the reviewer's findings for one fix round, so the merge gate is unchanged. The `orchestrate` table
-gains `implement-perf`, `refactor` and `review-structure`.
+medium effort, read-only) runs Cursor's thermo-nuclear maintainability rubric beside the `reviewer` when the change's
+kind calls for it (see below), and plans a refactor's target shape. The `orchestrate` table gains `implement-perf`,
+`refactor`, `review-structure` and `validate`.
 
 Each change is one kind, and the kind picks its approach (the `orchestrate` skill's Approach by kind table). A **fix**
-follows the `fix` skill: Ponytail at its tightest, a repro or test that fails before and passes after, the root cause
+follows the `fix` skill: Ponytail at level full, a repro or test that fails before and passes after, the root cause
 fixed once in shared code. A **refactor** follows the `refactor` skill, which is deliberately aggressive and replaces
 Ponytail's smallest-diff and keep-the-structure rules for that run: pin today's behaviour with tests first, plan the
-target shape (a `structure-reviewer` run on the paths), delete before adding, migrate every caller and drop the old
+target shape (a `structure-reviewer` run on the paths, for a refactor across several files), delete before adding, migrate every caller and drop the old
 path in the same branch, and prove the pinned tests pass unedited with a net reduction in lines and concepts. A
 **feature** keeps Ponytail and the lenses. Every non-docs todo carries acceptance claims as notes
 (`accept: <claim> | <command> | <expected>`, see the `validate` skill), written at kickoff before any code. After
-`desk wt finish`, a `validator` (sonnet, medium) runs beside the `reviewer`: it reruns each claim on the base and the
-head and reports VERIFIED, NOT VERIFIED or INCONCLUSIVE per claim. It posts no verdict; a NOT VERIFIED claim is a
-must-fix finding and the orchestrator merges only when every claim is VERIFIED.
+`desk wt finish`, a `validator` (sonnet, medium) runs beside the `reviewer`, in its own detached copies: it reruns each
+claim on the head, and on the base for fix, refactor and perf, and reports VERIFIED, NOT VERIFIED or INCONCLUSIVE per
+claim (a feature whose claims CI already runs skips it). The validator and the structure reviewer post no verdict: the
+orchestrator puts every reviewer finding, NOT VERIFIED or unsettled INCONCLUSIVE claim and structure blocker on one
+must-fix list and, if it is not empty, posts `FIXES NEEDED` on the board after the reviewer's verdict, so `desk wt
+merge` refuses the head until the `verifier` posts `MERGE`. The kind table in the `orchestrate` skill is the one place
+these triggers are set.
 
 ## Specs
 

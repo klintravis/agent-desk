@@ -2,9 +2,6 @@
 
 ## Build
 
-- Bug fix with a cheap test path: write the test first, run it, and see it fail for the reason the bug
-  gives. Then fix, and see it pass. Report both runs. No cheap path (needs broad setup, production-only
-  state, a flaky timer): use the closest repro script or command instead, and say why.
 - Test what a user of the code can observe: return values, errors, state they can read back, a request
   sent, a row written. Not private helpers, internal call order or which collaborator did the work.
 - Take the expected value from the requirement, never from a run of the code under test.
@@ -17,5 +14,5 @@
 Judge each new or changed test with two imagined edits. **Break the behaviour** (wrong value, skipped
 effect, effect done twice): if the test still passes, it proves nothing — a finding. **Change only the
 internals**: if the test would fail, it is pinned to the implementation — a finding when a simpler
-behavioural test would do. Also a finding: an assertion on data the test built itself, a restated
-constant that never runs the code that reads it, a bug fix with no test that failed before it.
+behavioural test would do. Also a finding: an assertion on data the test built itself, or a restated
+constant that never runs the code that reads it.

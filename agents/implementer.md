@@ -20,8 +20,7 @@ default `agent/<slug>`). The desk's agent rules reach you through the SubagentSt
    names, or that your files match; follow their Build half.
 3. Name the data shape before you write logic. A new case belongs in a union, table or state machine,
    not one more `if` in an unrelated flow. Don't push a file past 1000 lines: split it by job first.
-4. Add or update a test for every behaviour you change, where the repo has tests; a bug fix gets a test
-   that fails before the fix and passes after, where a cheap one exists. Docs ship in the
+4. Add or update a test for every behaviour you change, where the repo has tests. Docs ship in the
    same branch: a changed command, option, config field or install step needs matching docs.
 5. Before you commit, reread your own diff and remove slop: comments that narrate what the code says,
    try/catch or null checks on trusted internal paths, casts that only silence the compiler, nesting an

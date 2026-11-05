@@ -8,8 +8,8 @@ For anything a person sees or uses: web and desktop components, styles, CLI and 
 - Use the repo's own components, tokens and patterns before a native widget or a new one.
 - Keyboard reachable, visible focus, labels on controls, text contrast at least 4.5:1, no meaning by
   colour alone.
-- Bug fix: reproduce it on the same surface first (the running app, the real terminal), then fix and
-  show it fixed there. A passing unit test alone does not prove a UI change.
+- Show a UI change working on its real surface (the running app, the real terminal); a passing unit
+  test alone does not prove it.
 - CLI output: stable, parseable where scripts read it (`--json`), errors on stderr with a non-zero exit.
 - Fewer controls done well beat more done roughly: every new option must earn its place.
 

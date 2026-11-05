@@ -96,6 +96,9 @@ test('orchestrateTable: every row parses, ids are unique, in the table the kit s
   assert.deepEqual(rows.map((r) => r.task), ['find', 'ci-summary', 'check-summary', 'close-out', 'scribe', 'docs', 'implement', 'fix-known', 'implement-hard', 'implement-perf', 'refactor', 'propose', 'debug', 'review', 'review-sensitive', 'validate', 'review-structure', 'fix-verify', 'memo']);
   assert.equal(new Set(rows.map((r) => r.task)).size, rows.length);
   assert.deepEqual(rows.find((r) => r.task === 'memo'), { task: 'memo', agent: 'Plan', model: 'opus', effort: 'high' });
+  const pick = (t) => { const r = rows.find((x) => x.task === t); return `${r.model}/${r.effort}`; };
+  assert.deepEqual(['fix-verify', 'debug', 'review-sensitive', 'review', 'validate'].map(pick), ['sonnet/medium', 'opus/medium', 'opus/high', 'opus/high', 'sonnet/medium']);
+  assert.deepEqual(rows.filter((r) => ['xhigh', 'max'].includes(r.effort)), [], 'the table stops at high');
 });
 
 test('orchestrateTable: throws on a row that does not parse, and on no table', () => {

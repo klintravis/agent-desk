@@ -25,7 +25,5 @@ or the path that triggers it:
   developer must now run (a new optional way to run things is not one);
 - a change that breaks a caller in another module or package.
 
-Report what the evidence supports at the severity it deserves: overstated findings make people stop
-listening. Don't report a risk you could settle by reading the other side (the server, the caller):
-read it first. A break the change clearly intends, with a narrow scope, is not a finding unless its
-reach looks wider than the author knows.
+A break the change clearly intends, with a narrow scope, is not a finding unless its reach looks wider
+than the author knows.

@@ -6,8 +6,8 @@ Every change ran under the same rules: Ponytail's smallest diff, which is right 
 
 - Approach skills `fix` and `refactor` (from pstack's bug-fix and refactoring playbooks) and an Approach by kind table in `orchestrate`.
 - `structure-reviewer` plan mode, which gives a refactor its target shape.
-- Acceptance claims as `accept:` todo notes written at kickoff; skill `validate` and agent `validator` (from cursor-team-kit's `verify-this`) that prove them on base and head beside the reviewer; merge only when every claim is VERIFIED.
-- `implementer` follows the approach and runs the claims; `reviewer` checks the approach's Done when list; `agent-rules.md` template names the refactor override.
+- Acceptance claims as `accept:` todo notes written at kickoff; skill `validate` and agent `validator` (from cursor-team-kit's `verify-this`) that prove them on base and head beside the reviewer; a NOT VERIFIED claim blocks the merge.
+- `implementer` follows the approach and runs the claims; `reviewer` judges the diff's scope against the approach; one must-fix list per branch, enforced by a `FIXES NEEDED` board verdict; the `desk stream` prompt runs the validator.
 
 ## Capabilities
 

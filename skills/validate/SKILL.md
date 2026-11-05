@@ -22,9 +22,15 @@ Every todo that changes behaviour gets at least one acceptance claim before impl
 - **command**: one command that shows it (a test, a CLI call, a curl, a script path the implementer will add).
 - **expected**: what the output must show: an exit code, a line, a number with its limit.
 
-By approach: a **fix** claims the repro fails on the base and passes on the head; a **refactor** claims
-the pinned tests and the equivalence output are the same on base and head; **perf** claims a number
-against a baseline (the `perf` lens); a **feature** claims each behaviour its spec or todo promises.
+What each kind must prove (this is the one list; the orchestrator and the validator both use it):
+
+- **fix**: the repro or new test fails on the base and passes on the head;
+- **refactor**: the pinned tests and the equivalence output are the same on the base and the head, and
+  no pinned test was edited after the commit that pinned it (`git diff <pin commit>..HEAD -- <test paths>`
+  lists any; each needs the implementer's reason);
+- **perf**: the number against its baseline, run per the `perf` lens of the `stack-lens` skill;
+- **feature**: each behaviour its spec or todo promises, on the head.
+
 In a repo with a spec workflow, each new scenario is a claim.
 
 ## Proving claims
@@ -32,12 +38,14 @@ In a repo with a spec workflow, each new scenario is a claim.
 1. Collect the claims: `accept:` notes on the todo (`desk todo show T-n`), new spec scenarios in the
    branch, and any the brief adds. None and the change alters behaviour: say so, and write the claims
    you can infer from the todo, marked *inferred*.
-2. **Treatment**: run each command in the worktree at HEAD.
-3. **Baseline**, for claims that compare (fix, refactor, perf): a detached copy of the base in your
-   scratch folder, `git -C <worktree> worktree add --detach <scratch>/<slug>-base <base ref>`, with the
-   repo's install step if the command needs it. Run the same command, same data, same environment. A
-   fix's new test runs on the base too: copy the test file in, run it, expect the failure. Always remove
-   it at the end: `git -C <worktree> worktree remove --force <scratch>/<slug>-base`.
+2. **Treatment**: a detached copy of the head in your scratch folder, never the worktree itself (other
+   agents read it meanwhile): `git -C <worktree> worktree add --detach <scratch>/<slug>-head HEAD`, the
+   repo's install step if the command needs it, then each command there.
+3. **Baseline**, for kinds that compare (fix, refactor, perf): the same with `<scratch>/<slug>-base` at
+   the base ref. Same command, same data, same environment. Tests and scripts the branch added (a fix's
+   new test, a refactor's pins and equivalence script) don't exist on the base: copy them in from the
+   head first. Always remove both copies at the end, even after a failure:
+   `git -C <worktree> worktree remove --force <scratch>/<slug>-<head|base>`.
 4. Compare the raw outputs, not your memory of them. Run anything timing-sensitive at least 3 times.
 5. Judge each claim:
    - **VERIFIED**: the outputs differ (or match, for a refactor) exactly as claimed, with no confound;

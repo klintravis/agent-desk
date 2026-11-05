@@ -70,14 +70,28 @@ test('validator: proves claims through the validate skill, edits no code, posts 
   for (const v of ['VERIFIED', 'NOT VERIFIED', 'INCONCLUSIVE', 'accept: <claim> | <command> | <expected>', 'worktree remove --force']) assert.ok(skill.includes(v), v);
 });
 
-test('approaches: fix and refactor each end in a Done when list; only refactor overrides Ponytail; orchestrate maps every kind', () => {
+test('approaches: fix and refactor end in Done when; only the refactor skill overrides Ponytail; the kind table is the one source', () => {
   const read = (n) => readFileSync(join(KIT, 'skills', n, 'SKILL.md'), 'utf8');
   for (const n of ['fix', 'refactor']) assert.match(read(n), /^## Done when$/m, n);
   assert.match(read('refactor'), /replaces two Ponytail rules/);
   assert.doesNotMatch(read('fix'), /replaces .*Ponytail/);
+  assert.doesNotMatch(readFileSync(join(KIT, 'templates', 'agent-rules.md'), 'utf8'), /refactor/, 'every subagent loads agent-rules: the override stays in the refactor skill');
   const o = read('orchestrate');
-  for (const k of ['fix', 'feature', 'refactor', 'perf', 'docs']) assert.match(o, new RegExp(`^\\| ${k}[: ]`, 'm'), k);
-  for (const a of ['implementer', 'reviewer']) assert.match(readFileSync(join(KIT, 'agents', `${a}.md`), 'utf8'), /approach \(`fix`, `refactor`\)/, a);
+  const kinds = o.slice(o.indexOf('## Approach by kind'), o.indexOf('## Parallel or sequential'));
+  for (const k of ['fix:', 'feature:', 'refactor:', 'perf:', 'docs and bookkeeping |']) assert.ok(kinds.includes(`\n| ${k}`), k);
+  assert.match(kinds, /\*\*Big\*\* means over about 300 changed lines/);
+  for (const row of o.split('\n').filter((l) => /^\| (review-structure|validate) \|/.test(l))) assert.match(row, /Approach by kind/, 'triggers are not restated in the task table');
+  assert.match(readFileSync(join(KIT, 'agents', 'implementer.md'), 'utf8'), /approach \(`fix`, `refactor`\)/);
+  assert.match(readFileSync(join(KIT, 'agents', 'reviewer.md'), 'utf8'), /brief's approach sets the scope/);
+});
+
+test('the must-fix list reaches the board: orchestrate posts FIXES NEEDED, and the stream prompt runs the validator', () => {
+  const o = readFileSync(join(KIT, 'skills', 'orchestrate', 'SKILL.md'), 'utf8');
+  assert.match(o, /must-fix list[\s\S]{0,700}desk board post verdict <slug> "FIXES NEEDED @<sha>[\s\S]{0,80}after the reviewer's verdict/);
+  assert.match(o, /the must-fix list empty/);
+  const wt = readFileSync(join(KIT, 'lib', 'wt.mjs'), 'utf8');
+  assert.match(wt, /fresh \\`reviewer\\` \+ \\`validator\\`/);
+  assert.match(wt, /`Validation:` line/);
 });
 
 test('claudeSettings: DESK_HOME plus the desk and worktrees readable, user permissions kept', () => {
