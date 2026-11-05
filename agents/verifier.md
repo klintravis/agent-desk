@@ -27,3 +27,5 @@ MERGE (every finding FIXED, no new defect), or FIXES NEEDED (list them). If the 
 Then post it, the one write you make:
 `desk board post verdict <slug> "<MERGE|FIXES NEEDED> @<sha> by <model>/<effort>"` with the SHA from
 step 5 and the model and effort your brief states; `by <model>` alone if it gives no effort.
+On a repo with `merge: "review"`, end with a `PR findings:` block: one plain-text line per finding with its
+status, worktree-relative paths, no model or effort. The orchestrator writes it to the PR.

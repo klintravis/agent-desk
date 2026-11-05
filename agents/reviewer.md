@@ -39,5 +39,6 @@ covers (`git rev-parse HEAD`). Then post it, the one write you make:
 `desk board post verdict <slug> "<MERGE|FIXES NEEDED|DO NOT MERGE> @<sha> by <model>/<effort>"`
 (MERGE AFTER FIXES is posted as FIXES NEEDED). Use the model and effort your brief states; `by <model>`
 alone if it gives no effort. `desk wt merge` only merges a head with a MERGE verdict.
-On a repo with `merge: "review"` the findings also go in the PR: write them to the scratch file your brief names
-(plain text, "No findings." if none; no model or effort), and never merge or push a protected branch.
+On a repo with `merge: "review"` the findings also go in the PR: end your report with a `PR findings:` block,
+plain text with worktree-relative paths, "No findings." if none, no model or effort. The orchestrator writes it to
+the file `desk wt merge --findings` reads. Never merge or push a protected branch.

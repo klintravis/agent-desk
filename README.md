@@ -704,7 +704,7 @@ folder. Open the desk folder, or the generated `.code-workspace`, in VS Code.
 | Desk instructions | `CLAUDE.md` (imports `AGENTS.md`) | `AGENTS.md` |
 | Skills (kickoff, handoff, orchestrate, ponytail, ...) | plugin | `.github/skills/<name>/` (copied by `desk sync`) |
 | Agents (implementer, reviewer, structure-reviewer, validator, verifier, archiver, scribe, ci-triage) | plugin | `.github/agents/<name>.agent.md`. `model` is dropped (use the picker); `effort` becomes `reasoning-effort`; tools map to Copilot's `read`, `search`, `edit`, `execute`, `web`, `agent`. |
-| Ponytail and `agent-rules.md` at session and subagent start, plus the board at session start | `SessionStart`/`SubagentStart` hooks in `.claude/settings.local.json` | the same hooks: Copilot reads `.claude/settings.json` and `settings.local.json` |
+| Ponytail and `agent-rules.md` at session and subagent start (read-only agents such as `validator`, `verifier`, `ci-triage`, `scribe`, `structure-reviewer` and `Explore` get the rules only), plus the board at session start | `SessionStart`/`SubagentStart` hooks in `.claude/settings.local.json` | the same hooks: Copilot reads `.claude/settings.json` and `settings.local.json` |
 | `desk` CLI: todos, board, status, worktrees, merge gate, decide | yes | yes |
 | Desk pane, owner-decisions band, `/desk`, `/decide` | yes (mod) | no (the `decide` skill walks the decisions) |
 | Auto-compaction prune, cache warm-hold | yes (mod) | no |
