@@ -43,7 +43,7 @@ test('structure-reviewer cannot edit and loads the vendored rubric, which the mo
   const src = readFileSync(join(KIT, 'agents', 'structure-reviewer.md'), 'utf8');
   const { meta, body } = parseFrontmatter(src);
   assert.equal(meta.tools, 'Read, Grep, Glob, Bash, Skill');
-  assert.deepEqual([meta.model, meta.effort], ['opus', 'high']);
+  assert.deepEqual([meta.model, meta.effort], ['opus', 'medium']);
   assert.ok(!JSON.parse(parseFrontmatter(copilotAgent(src)).meta.tools).includes('edit'));
   assert.match(body, /`thermo-nuclear-code-quality-review` skill/);
   assert.doesNotMatch(body, /desk board post/);

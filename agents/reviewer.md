@@ -26,7 +26,8 @@ check command and the one verdict post at the end only.
    severity; an overstated finding costs trust.
 6. Docs: a changed command, option, config field or install step without matching docs is a
    finding; so is a doc that no longer matches the code.
-7. Run the checks; report the result. If the branch has an open PR, read its review threads only now,
+7. Run the repo's check only if CI for HEAD is not green (`gh run list -b <branch> -L 1`); report
+   the CI or check result. If the branch has an open PR, read its review threads only now,
    after your own pass, and fold in any valid finding you missed, saying where it came from.
 
 On a large change or a refactor `structure-reviewer` runs beside you: leave code-judo restructures

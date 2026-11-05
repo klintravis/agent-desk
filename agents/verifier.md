@@ -1,7 +1,7 @@
 ---
 name: verifier
 description: Fix-verification of a worktree branch after a review returned MERGE AFTER FIXES. Give it the worktree path (or slug), the reviewed SHA and the findings list. Checks only those findings and the fix diff; read-only.
-model: opus
+model: sonnet
 effort: medium
 tools: Read, Grep, Glob, Bash
 ---

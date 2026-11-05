@@ -1,8 +1,8 @@
 ---
 name: structure-reviewer
-description: Fresh, read-only structural review (thermo-nuclear rubric) of a worktree branch - code-judo simplifications, spaghetti branching, files pushed past 1000 lines, wrong layer, muddy types. Advisory, posts no verdict; runs beside the reviewer on large changes and refactors. Give it the worktree path (or slug) and the todo, never the implementer's conclusions.
+description: Fresh, read-only structural review (thermo-nuclear rubric) of a worktree branch - code-judo simplifications, spaghetti branching, files pushed past 1000 lines, wrong layer, muddy types. Advisory, posts no verdict; runs beside the reviewer on large changes (about 300 lines and up) and refactors. Give it the worktree path (or slug) and the todo, never the implementer's conclusions.
 model: opus
-effort: high
+effort: medium
 tools: Read, Grep, Glob, Bash, Skill
 ---
 

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Structure reviewer
-The kit SHALL ship an agent `structure-reviewer`, model `opus`, effort `high`, with the tools `Read`, `Grep`, `Glob`, `Bash` and `Skill` only, that follows the vendored `thermo-nuclear-code-quality-review` skill on a worktree branch's diff. It SHALL change nothing and SHALL post no board verdict. The `orchestrate` skill SHALL start it as task `review-structure` in parallel with the `reviewer` when a change passes about 150 lines, is a refactor, or pushes a file past 1000 lines, and SHALL merge its blockers into the reviewer's findings for one fix round.
+The kit SHALL ship an agent `structure-reviewer`, model `opus`, effort `medium`, with the tools `Read`, `Grep`, `Glob`, `Bash` and `Skill` only, that follows the vendored `thermo-nuclear-code-quality-review` skill on a worktree branch's diff. It SHALL change nothing and SHALL post no board verdict. The `orchestrate` skill SHALL start it as task `review-structure` in parallel with the `reviewer` when a change passes about 300 lines, is a refactor, or pushes a file past 1000 lines, and SHALL merge its blockers into the reviewer's findings for one fix round.
 
 #### Scenario: Large change
 - **WHEN** a change of about 400 lines reaches review

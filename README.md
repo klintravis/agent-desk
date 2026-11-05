@@ -589,8 +589,8 @@ model applies instead.
 Domain roles come from lenses, not more agents. `stack-lens` holds one short file per stack (`typescript`, `testing`,
 `state`, `perf`, `security`, `ui`), each with a Build half the `implementer` follows and a Review half the `reviewer`
 checks; the orchestrator names the lenses in each brief and the agent reads only those. `structure-reviewer` (opus,
-high effort, read-only) runs Cursor's thermo-nuclear maintainability rubric beside the `reviewer` on changes over
-about 150 lines, refactors, and changes that push a file past 1000 lines. It posts no verdict: the orchestrator merges
+medium effort, read-only) runs Cursor's thermo-nuclear maintainability rubric beside the `reviewer` on changes over
+about 300 lines, refactors, and changes that push a file past 1000 lines. It posts no verdict: the orchestrator merges
 its blockers into the reviewer's findings for one fix round, so the merge gate is unchanged. The `orchestrate` table
 gains `implement-perf`, `refactor` and `review-structure`.
 
