@@ -7,6 +7,8 @@ what an existing desk must do on upgrade; `desk check` warns while `kitVersion` 
 
 ## Unreleased
 
+## 0.7.0 - 2026-11-05
+
 - Changed (developer only): CI runs once per commit instead of twice (a pull request from a branch of this repo reuses its push run; only a fork's pull request runs on `pull_request`), and Node 20 runs on Linux only while Node 22 runs on Linux, Windows and macOS: 4 jobs per push on the public repo instead of 12. Nothing to do.
 - Added: skill `structure-rubric`, a 3.5 KB condensed form of the vendored 12.4 KB `thermo-nuclear-code-quality-review` with the same standards, presumptive blockers and output order; `structure-reviewer` now loads it, about 9 KB less per structure pass. An A/B run of both on the same commit found the same blocker and five of eight findings in common, each run with findings the other lacked. The vendored skill stays, for asking by name. Nothing to do.
 - Added: `desk status --fetch` fetches every git repo with an origin before reading, so behind counts, the pushed state and the default branch are current. The Roots section (and `roots[]` in `--json`, `v` stays 2) gains each default branch's own CI (`ci`) in a repo with `gh`, and flags a repo whose `check` is empty (`noCheck`: `wt finish` checks nothing there); each Open branches line shows the branch's state word in brackets. **BREAKING:** a script that validates the JSON against the schema must accept `ci` and `noCheck`. The `kickoff` and `handoff` skills use `--fetch` in place of a fetch, `git worktree list` and `gh run list` per repo.
