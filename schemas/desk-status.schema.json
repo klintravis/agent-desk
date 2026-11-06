@@ -28,7 +28,7 @@
     "prs": { "type": ["array", "null"], "items": { "type": "object", "required": ["slug", "number", "decision", "comments", "unresolved", "sinceHead"], "additionalProperties": false, "properties": { "slug": { "type": "string" }, "number": { "type": "integer" }, "decision": { "type": "string" }, "comments": { "type": "integer" }, "unresolved": { "type": "integer" }, "sinceHead": { "type": "integer" } } } },
     "overlaps": { "type": ["array", "null"], "items": { "type": "string" } },
     "tokens": { "type": ["object", "null"], "required": ["calls", "fresh", "cached", "out"], "additionalProperties": false, "properties": { "calls": { "type": "integer" }, "fresh": { "type": "integer" }, "cached": { "type": "integer" }, "out": { "type": "integer" } } },
-    "warnings": { "description": "Why the screen is partial: the refusal when desk.config.json is refused. Absent when there is none.", "type": "array", "items": { "type": "string" } },
+    "warnings": { "description": "Why the screen is partial: the refusal when desk.config.json is refused, or a GitHub budget under 20% that made the run reuse the kept answers. Absent when there is none.", "type": "array", "items": { "type": "string" } },
     "text": { "type": "string" }
   }
 }

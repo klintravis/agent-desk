@@ -37,7 +37,7 @@ and runs `npm install` (`--no-install` skips it). `npx` is only for that first i
 
 ```sh
 mkdir desk && cd desk
-npx github:klintravis/agent-desk#v0.9.0 init --repo app=../app
+npx github:klintravis/agent-desk#v0.9.1 init --repo app=../app
 ./desk status            # from then on: the desk's shim (PowerShell and cmd: the node form below)
 ```
 
@@ -66,7 +66,7 @@ Avoid `npx desk` outside the
 desk folder, because it resolves the registry's unrelated `desk` package. The hooks and settings
 `desk sync` writes call `node <desk>/node_modules/agent-desk/...`. Until that copy is installed, the
 hooks and the shim call the kit that ran `desk sync`. A global install
-(`npm install -g github:klintravis/agent-desk#v0.9.0`) is optional and only puts a `desk` on your PATH that
+(`npm install -g github:klintravis/agent-desk#v0.9.1`) is optional and only puts a `desk` on your PATH that
 finds the desk from the current folder. The hooks and the shim still use the pinned copy.
 
 **Claude Code plugin.** The repo is its own marketplace:
@@ -187,7 +187,7 @@ shapes (`status-2`, `meters-2`, `warm-1`, `style-1`, `agents-1`) are declared in
 
 ```sh
 mkdir desk && cd desk
-npx github:klintravis/agent-desk#v0.9.0 init --repo app=../app --repo api=../api --repo notes=../notes
+npx github:klintravis/agent-desk#v0.9.1 init --repo app=../app --repo api=../api --repo notes=../notes
 # `desk` below is the desk's shim: ./desk (bash), <desk>/desk elsewhere (PowerShell or cmd: the node form above)
 # edit desk.config.json: install/build/check per repo, gh where CI lives on GitHub
 desk sync
@@ -260,7 +260,7 @@ that holds `desk.config.json`. `desk init` ignores `DESK_HOME` and always uses t
 
 | Command | What |
 |---|---|
-| `desk status [--watch\|--json\|--cached] [--fetch]` | One screen with these sections: owner decisions, active todos, claims, running sessions, roots (each git root's default branch sha, the CI of that sha in a repo with `gh`, and `no check command` when `check` is empty), open branches (CI, verdict and the branch's state word in brackets, and `behind <default> by N, rebase` when the branch lacks N commits of `origin/<default>`, from the refs as last fetched, or of the local default branch without an origin), pull requests, overlaps, today's tokens. `--fetch` fetches each git repo with an origin first, so behind counts, the pushed state and the default branch are current; without it status reads local refs only. `--watch` prints one line per change. `--cached` reuses GitHub's answers from the last run and calls `gh` only when none are kept. Pull requests: for each open desk branch with an open PR in a repo with `gh`, the review decision, the comment count (conversation and review threads), unresolved threads, and comments or reviews newer than the branch's head commit. Read-only, one `gh api graphql` call per repo; with no `gh` or a failing call the section is left out. `--watch` prints `PR: <branch> #<n> review <decision>, +N comment(s)` when a decision changes or comments arrive. See [Status watch](#status-watch). |
+| `desk status [--watch\|--json\|--cached] [--fetch]` | One screen with these sections: owner decisions, active todos, claims, running sessions, roots (each git root's default branch sha, the CI of that sha in a repo with `gh`, and `no check command` when `check` is empty), open branches (CI, verdict and the branch's state word in brackets, and `behind <default> by N, rebase` when the branch lacks N commits of `origin/<default>`, from the refs as last fetched, or of the local default branch without an origin), pull requests, overlaps, today's tokens. `--fetch` fetches each git repo with an origin first, so behind counts, the pushed state and the default branch are current; without it status reads local refs only. `--watch` prints one line per change. `--cached` reuses GitHub's answers from the last run and calls `gh` only when none are kept. Pull requests: for each open desk branch with an open PR in a repo with `gh`, the review decision, the comment count (conversation and review threads), unresolved threads, and comments or reviews newer than the branch's head commit. Read-only, one cheap `gh api graphql` list per repo per round (plus a detail query only for pull requests that changed); with no `gh` or a failing call the section is left out. `--watch` prints `PR: <branch> #<n> review <decision>, +N comment(s)` when a decision changes or comments arrive. See [Status watch](#status-watch). |
 | `desk todo add\|split\|start\|done\|drop\|block\|open\|set\|note\|list\|next\|show` | Todos. The area is a repo id, `desk`, `watch`, `owner` or `idea`. See [Todos](#todos). |
 | `desk board post\|claims\|check` | The claim board. Its text is data, never approval. See [Board](#board). |
 | `desk decide [T-n <ruling> \| T-n --pick <n> \| --json \| --list [n]]` | Owner decisions, one at a time; `--pick` records the nth option's label; `--json` prints the first waiting one as JSON; `--list` prints the recorded rulings. See [Owner decisions](#owner-decisions). |
@@ -523,7 +523,7 @@ cannot be read prints `unavailable`; the command never fails. A `desk.config.jso
 Each branch carries `state`, one word (`ready`, `needs review`, `rebase`, `fixes needed`, `CI failed`, ...) computed
 by the rule `desk wt merge` uses; the Desk pane and the VS Code sidebar read it and do not parse CI or verdict text.
 
-`--cached` reuses GitHub's answers from the last run (`status-gh.json` in the scratch folder) and rereads everything local, so it makes no `gh` call unless nothing is kept. When a `gh` call fails in a plain run, that repo keeps its last CI and pull request answers (none, if nothing was kept) and the other repos are unaffected; a repo whose call succeeds replaces them, even with none. The Pull requests section is left out when no repo has `gh` or every call failed with nothing kept; CI reads `unavailable` when every call failed with nothing kept; a repo with an empty `gh` shows `CI -`. The Desk pane and the VS Code sidebar use it when a local file changes, and run without it at start and every minute.
+`--cached` reuses GitHub's answers from the last run (`status-gh.json` in the scratch folder) and rereads everything local, so it makes no `gh` call unless nothing is kept. A plain run also reuses them while they are under 55 seconds old, so every pane, sidebar and `--watch` on the desk shares one GitHub round a minute. A round lists the open pull requests cheaply (one GraphQL point) and asks for the comments, reviews and threads of only those whose `updatedAt` or review decision changed since the kept answer. Before a round, status reads `gh api rate_limit` (free); when `core` or `graphql` is under 20% remaining it makes no other `gh` call, shows the kept answers and prints a `Warning:` naming the budget and the local time it resets (a `warnings` entry in `--json`). Agents should read plain `desk status --json` for CI and pull request state, not poll `gh` (the agent rules say so); the per-commit CI checks and log reads their agent files name stay as they are. When a `gh` call fails in a plain run, that repo keeps its last CI and pull request answers (none, if nothing was kept) and the other repos are unaffected; a repo whose call succeeds replaces them, even with none. The Pull requests section is left out when no repo has `gh` or every call failed with nothing kept; CI reads `unavailable` when every call failed with nothing kept; a repo with an empty `gh` shows `CI -`. The Desk pane and the VS Code sidebar use it when a local file changes, and run without it at start and every minute.
 
 `desk status --watch` (run it under a monitor) checks every 90 seconds and prints one line per change:
 `BOARD: <json>` for a new board line, `CI: <branch> <sha> completed <conclusion>`,

@@ -3,7 +3,7 @@
   "publisher": "klintravis",
   "displayName": "Agent Desk",
   "description": "The desk's status and owner decisions in the VS Code sidebar, without Claude. Runs the desk's own CLI.",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/klintravis/agent-desk" },
   "engines": { "vscode": "^1.90.0" },

@@ -588,16 +588,26 @@ const perRepo = (rs, ask, prev) => {
 };
 // Recent CI runs of every repo with a `gh` name.
 const ghRuns = (n, prev) => perRepo(config().repos.filter((r) => r.gh), (r) => JSON.parse(gh(r.gh, 'run', 'list', '-L', String(n), '--json', 'headBranch,headSha,status,conclusion')), prev);
-// Open PRs of every repo with a `gh` name, one GraphQL call per repo (review-thread comments are not
-// in `gh pr list`). Read-only; null when no repo has `gh` or every call failed with nothing kept; the section is left out.
+// Open PRs of every repo with a `gh` name (review-thread comments are not in `gh pr list`). Read-only; null when
+// no repo has `gh` or every call failed with nothing kept; the section is left out.
 // PR review state is ported from pr-pulse (MIT, THIRD-PARTY.md).
-const PR_QUERY = `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){pullRequests(states:OPEN,first:50,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{
-number headRefName isCrossRepository reviewDecision comments(last:50){totalCount nodes{createdAt}} reviews(last:50){nodes{submittedAt}}
-reviewThreads(first:100){nodes{isResolved comments(last:20){totalCount nodes{createdAt}}}} commits(last:1){nodes{commit{committedDate}}}}}}}`;
+// Cheap list every round; the heavy comments/reviews/threads query only for PRs whose `updatedAt` or review decision
+// differs from the kept row (rows kept by an older run have no `updatedAt`, so they are asked once).
+const PR_HEAD = 'number headRefName isCrossRepository reviewDecision updatedAt';
+const PR_LIST = `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){pullRequests(states:OPEN,first:50,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{${PR_HEAD}}}}}`;
+const PR_DETAIL = 'comments(last:50){totalCount nodes{createdAt}} reviews(last:50){nodes{submittedAt}} reviewThreads(first:100){nodes{isResolved comments(last:20){totalCount nodes{createdAt}}}} commits(last:1){nodes{commit{committedDate}}}';
+const prDetails = (numbers) => `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){${numbers.map((n) => `p${n}:pullRequest(number:${n}){${PR_HEAD} ${PR_DETAIL}}`).join(' ')}}}`;
+const graphql = (gh, query) => {
+  const [owner, name] = gh.split('/');
+  return JSON.parse(execFileSync('gh', ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `query=${query}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15e3 })).data.repository;
+};
 const ghPrs = (prev) => perRepo(config().repos.filter((r) => r.gh), (r) => {
-  const [owner, name] = r.gh.split('/');
-  const out = execFileSync('gh', ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `query=${PR_QUERY}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15e3 });
-  return JSON.parse(out).data.repository.pullRequests.nodes.filter((p) => !p.isCrossRepository).map(prState);
+  const open = graphql(r.gh, PR_LIST).pullRequests.nodes.filter((p) => !p.isCrossRepository);
+  const kept = new Map((prev ?? []).filter((x) => x.repo === r.id).map((x) => [x.number, x]));
+  const same = (p) => { const k = kept.get(p.number); return k?.updatedAt && k.updatedAt === p.updatedAt && k.decision === (p.reviewDecision || 'NONE'); };
+  const asked = open.filter((p) => !same(p));
+  const fresh = asked.length ? new Map(Object.values(graphql(r.gh, prDetails(asked.map((p) => p.number)))).map((p) => [p.number, { ...prState(p), updatedAt: p.updatedAt }])) : new Map();
+  return open.map((p) => fresh.get(p.number) ?? kept.get(p.number));
 }, prev);
 // Every state, for the rows under merge "review"; a repo whose call fails keeps its rows from the last run (none the first time).
 // shortcut: the newest 100 PRs, a branch whose PR is older shows no PR; page or query per branch when a repo has more
@@ -702,11 +712,29 @@ export function statusText(input) {
     `## Tokens today\n- ${tokens}`].join('\n') + '\n';
 }
 
+// A plain run reuses the kept answers while they are under GH_FRESH_MS old, so every pane, sidebar and --watch on the desk shares one round a minute.
+const GH_FRESH_MS = 55e3;
+// "core 120/5000 left, resets 14:32" for each budget (REST core, GraphQL) under 20% remaining; [] when fine or when rate_limit cannot be read.
+const lowBudgets = () => tryOr(() => {
+  const res = JSON.parse(execFileSync('gh', ['api', 'rate_limit'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15e3 })).resources;
+  return ['core', 'graphql'].filter((k) => res[k].remaining < res[k].limit * 0.2)
+    .map((k) => `${k} ${res[k].remaining}/${res[k].limit} left, resets ${new Date(res[k].reset * 1e3).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`);
+}, []);
 // gh's half of status, kept so a refresh for a local change shows the last answers without reaching GitHub.
 // shortcut: an unwritable scratch folder makes every --cached run ask gh; refuse to ask instead if that ever shows.
-function ghStatus(cached) {
-  const kept = tryOr(() => JSON.parse(readFileSync(join(config().scratchDir, 'status-gh.json'), 'utf8')), null); // none kept, or a writer mid-write: ask
+function ghStatus(cached, warnings) {
+  const file = tryOr(() => join(config().scratchDir, 'status-gh.json'), null);
+  if (!file) return { reviewPrs: [], runs: null, prs: null }; // the config is refused: nothing to ask
+  const kept = tryOr(() => JSON.parse(readFileSync(file, 'utf8')), null); // none kept, or a writer mid-write: ask
   if (cached && kept) return kept;
+  const age = Date.now() - tryOr(() => statSync(file).mtimeMs, 0);
+  if (kept && age >= 0 && age < GH_FRESH_MS) return kept;
+  if (!config().repos.some((r) => r.gh)) return { reviewPrs: [], runs: null, prs: null };
+  const low = lowBudgets();
+  if (low.length) {
+    warnings.push(`GitHub budget low (${low.join('; ')}); showing the last CI and pull request answers`);
+    return kept ?? { reviewPrs: [], runs: null, prs: null };
+  }
   const answers = { reviewPrs: tryOr(() => ghReviewPrs(kept?.reviewPrs), []), runs: tryOr(() => ghRuns(40, kept?.runs), null), prs: tryOr(() => ghPrs(kept?.prs), null) };
   try { mkdirSync(config().scratchDir, { recursive: true }); writeFileSync(join(config().scratchDir, 'status-gh.json'), JSON.stringify(answers)); } catch { /* the next --cached run asks */ }
   return answers;
@@ -723,7 +751,7 @@ function gatherStatus({ cached = false } = {}) {
   const behind = new Map(wts.map(({ slug, dir, repo }) => [slug, { base: repo.defaultBranch, n: tryOr(() => Number(git(dir, 'rev-list', '--count', `HEAD..${baseRef(repo)}`)), 0) }]));
   // Same test as the merge gate's first one, from local refs: origin/<branch> is the head (no origin: nothing to push).
   const pushed = new Map(wts.map(({ slug, dir, repo }) => [slug, !hasOrigin(repo) || tryOr(() => git(dir, 'rev-parse', `origin/${repo.branchPrefix + slug}`) === heads.get(slug), false)]));
-  const { reviewPrs, runs, prs } = ghStatus(cached);
+  const { reviewPrs, runs, prs } = ghStatus(cached, warnings);
   // Same test as `wt merge`: the PR holds the head when it is the head or a descendant of it (Update branch). No fetch here:
   // a PR head this clone lacks stays unknown (not stale) and `wt merge` decides after its own fetch.
   const held = new Map();
@@ -807,21 +835,29 @@ export const carry = (prev, cur) => { cur.board ??= prev.board; cur.runs ??= pre
 // One look: each gh read gets the last look's rows, so a repo whose call fails keeps its own.
 // shortcut: the first look has no last rows, so a repo failing only then prints its runs once when it recovers; seed from status-gh.json if that shows.
 // cache: the watch loop's transcript tallies (tallyFile); absent, every transcript is read.
-export const look = (i, last, cache) => ({
+// warnings: ghStatus pushes its budget warning here (the watch prints it).
+export const look = (i, last, cache, warnings = []) => {
+  const { runs, prs } = ghStatus(false, warnings); // the status screen's shared round and budget guard
+  return {
     board: tryOr(read, null),
-    runs: tryOr(() => ghRuns(6, last?.runs), null),
-    prs: tryOr(() => ghPrs(last?.prs), null),
+    runs,
+    prs,
     rows: tryOr(() => tokenRows(6, '', undefined, cache), null),
     overlaps: i % 4 ? undefined : tryOr(currentOverlaps, null), // every ~6 min: git per worktree is slow
     owner: tryOr(() => ownerOpen(todos()), null),
-});
+  };
+};
 
 function watch() {
   const cache = new Map();
-  let i = 0, prev = { ...look(1, undefined, cache), overlaps: [], owner: [] };
+  let i = 0, shown = '', warnings = [];
+  let prev = { ...look(1, undefined, cache, warnings), overlaps: [], owner: [] };
   prev.board ??= [];
   setInterval(() => {
-    const cur = look(i++, prev, cache);
+    warnings = [];
+    const cur = look(i++, prev, cache, warnings);
+    const w = warnings.join('\n');
+    if (w !== shown) { shown = w; if (w) console.log('Warning: ' + w); }
     carry(prev, cur);
     const { lines, post: posts } = watchDiff(prev, cur);
     for (const l of lines) console.log(l);

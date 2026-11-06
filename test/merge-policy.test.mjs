@@ -2,7 +2,7 @@
 // Temp dirs only; `gh` is the preload in gh-stub.mjs, and the bare origin holds refs/pull/<n>/head for real.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync, appendFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, rmSync, utimesSync } from 'node:fs';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -19,9 +19,12 @@ const fails = (r, re) => { assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`)
 // Fixture key built at run time, so no real-looking key sits in this source.
 const KEY = `gh${'p_'}${'x'.repeat(30)}`;
 
-// The CLI with `gh` stubbed and this answer file.
+// The CLI with `gh` stubbed and this answer file. A status run finds the kept answers a minute old, so it asks
+// (answers.fresh: leave them as they are, to see the shared-round reuse).
 function stubbed(home, stubFile, answers, ...args) {
   writeFileSync(stubFile, JSON.stringify(answers));
+  const kept = join(home, 'scratch', 'status-gh.json');
+  if (args[0] === 'status' && !answers.fresh && existsSync(kept)) utimesSync(kept, new Date(Date.now() - 6e4), new Date(Date.now() - 6e4));
   return spawnSync(process.execPath, [BIN, ...args], { cwd: home, env: { ...env(home), GH_STUB: stubFile, NODE_OPTIONS: `--import=${STUB}` }, encoding: 'utf8' });
 }
 
@@ -638,10 +641,11 @@ test('status --cached: no gh call when answers are kept, local files fresh, asks
 
   // A plain run asks as it did, and what it heard is what --cached then shows.
   const plain = status({ prs: [] });
-  assert.equal(f.calls().length, asked * 2);
+  const round = f.calls().length;
+  assert.ok(round > asked);
   assert.equal(plain.branches.find((b) => b.slug === 'demo').pr, undefined);
   assert.equal(status(open, '--cached').branches.find((b) => b.slug === 'demo').pr, undefined);
-  assert.equal(f.calls().length, asked * 2);
+  assert.equal(f.calls().length, round);
 
   // A torn or missing keeper falls back to asking, and is whole again after.
   for (const lose of [() => writeFileSync(kept, '{"reviewPrs":['), () => rmSync(kept)]) {
@@ -651,6 +655,77 @@ test('status --cached: no gh call when answers are kept, local files fresh, asks
     assert.equal(f.calls().length, before + asked);
     assert.equal(JSON.parse(readFileSync(kept, 'utf8')).reviewPrs[0].number, 7);
     status({ prs: [] }); // back to none, for the next round
+  }
+});
+
+// ---- the GitHub budget: shared rounds, cheap PR list, rate-limit guard ----
+const BUDGET_PR = (extra = {}) => ({ number: 7, headRefName: 'agent/demo', reviewDecision: 'APPROVED', updatedAt: '2026-11-06T10:00:00Z', comments: { totalCount: 1, nodes: [] }, ...extra });
+const budget = () => {
+  const f = fixture(REVIEW);
+  const answers = { prs: [{ number: 7, state: 'OPEN', headRefName: 'agent/demo', url: 'u' }], runs: [], graphql: [BUDGET_PR()] };
+  const status = (extra = {}) => JSON.parse(ok(f.run({ ...answers, ...extra }, 'status', '--json')));
+  const queries = () => f.calls().filter((c) => c.args[0] === 'api' && c.args[1] === 'graphql').map((c) => (c.args.find((a) => a.startsWith('query=')).includes('pullRequest(number:') ? 'detail' : 'list'));
+  return { f, status, queries };
+};
+
+test('status: two runs within 55 s share one gh round; an older keeper asks again', () => {
+  const { f, status } = budget();
+  status();
+  const asked = f.calls().length;
+  assert.ok(asked > 0);
+  const again = status({ fresh: true, graphql: [BUDGET_PR({ comments: { totalCount: 9, nodes: [] } })] });
+  assert.equal(f.calls().length, asked, 'the second run made no gh call');
+  assert.equal(again.prs[0].comments, 1, 'it shows the first round\'s answer');
+  status();
+  assert.ok(f.calls().length > asked, 'a minute later it asks');
+});
+
+test('status: a PR whose updatedAt and decision are kept skips the detail query; a changed one asks again', () => {
+  const { f, status, queries } = budget();
+  const first = status();
+  assert.deepEqual(queries(), ['list', 'detail']);
+  const same = status();
+  assert.deepEqual(queries(), ['list', 'detail', 'list'], 'unchanged: the list only');
+  assert.deepEqual(same.prs, first.prs);
+  const moved = status({ graphql: [BUDGET_PR({ updatedAt: '2026-11-06T11:00:00Z', comments: { totalCount: 3, nodes: [] } })] });
+  assert.deepEqual(queries().slice(3), ['list', 'detail']);
+  assert.equal(moved.prs[0].comments, 3);
+  assert.equal(JSON.parse(readFileSync(join(f.home, 'scratch', 'status-gh.json'), 'utf8')).prs[0].updatedAt, '2026-11-06T11:00:00Z');
+  // same updatedAt, review decision changed: asked again
+  status({ graphql: [BUDGET_PR({ updatedAt: '2026-11-06T11:00:00Z', reviewDecision: 'CHANGES_REQUESTED' })] });
+  assert.deepEqual(queries().slice(5), ['list', 'detail']);
+  // rows kept before updatedAt was stored are asked once
+  const kept = join(f.home, 'scratch', 'status-gh.json'), k = JSON.parse(readFileSync(kept, 'utf8'));
+  delete k.prs[0].updatedAt;
+  writeFileSync(kept, JSON.stringify(k));
+  status();
+  assert.deepEqual(queries().slice(7), ['list', 'detail']);
+});
+
+test('status: no repo with gh makes no gh call', () => {
+  const f = fixture({});
+  ok(f.run({}, 'status', '--json'));
+  assert.deepEqual(f.calls(), []);
+});
+
+test('status: under 20% of the core or graphql budget it reads rate_limit only, shows the kept answers and warns', () => {
+  const { f, status } = budget();
+  const first = status();
+  const full = { limit: 5000, remaining: 5000, reset: 0 };
+  const reset = Math.floor(Date.now() / 1e3) + 600;
+  for (const [name, rateLimit] of [['graphql', { core: full, graphql: { limit: 5000, remaining: 400, reset } }], ['core', { core: { limit: 5000, remaining: 900, reset }, graphql: full }]]) {
+    const before = f.calls().length, low = status({ rateLimit });
+    assert.deepEqual(f.calls().slice(before).map((c) => c.args.join(' ')), ['api rate_limit']);
+    assert.match(low.text, new RegExp(`^# Desk status.*\\nWarning: GitHub budget low \\(${name} \\d+/5000 left, resets \\d\\d:\\d\\d\\)`));
+    assert.equal(low.warnings.length, 1);
+    assert.deepEqual(validate(schema('desk-status'), low), []);
+    assert.deepEqual(low.prs, first.prs, 'the kept answers show');
+  }
+  // rate_limit down or a full budget: the round runs as before, with no warning
+  for (const rateLimit of ['fail', undefined]) {
+    const n = f.calls().length, ran = status({ rateLimit });
+    assert.ok(f.calls().length > n + 1);
+    assert.equal('warnings' in ran, false);
   }
 });
 
@@ -738,9 +813,10 @@ test('status: an open fork PR with the branch name does not fill the slug\'s PR 
   assert.deepEqual(prs(node).map((p) => p.number), [5]);
   assert.deepEqual(prs(fork, node).map((p) => p.number), [5], 'the fork comes first and still loses');
   assert.deepEqual(prs(fork), []);
-  assert.match(f.calls().find((c) => c.args[0] === 'api').args.join(' '), /isCrossRepository/);
+  const graphql = f.calls().find((c) => c.args[1] === 'graphql');
+  assert.match(graphql.args.join(' '), /isCrossRepository/);
   // -f, not -F: -F turns a repo name like `2048` into a number and the query fails.
-  assert.deepEqual(f.calls().find((c) => c.args[0] === 'api').args.slice(0, 7), ['api', 'graphql', '-f', 'owner=o', '-f', 'name=r', '-f']);
+  assert.deepEqual(graphql.args.slice(0, 7), ['api', 'graphql', '-f', 'owner=o', '-f', 'name=r', '-f']);
 });
 
 test('direct: status --json has no pr and no merge, and no extra gh call', () => {
@@ -796,10 +872,12 @@ test('status --watch: a repo whose gh call fails for one look keeps its rows, so
   const stubFile = join(tmp(), 'gh.json');
   const runs = [{ headBranch: 'agent/demo', headSha: f.sha, status: 'completed', conclusion: 'success' }];
   const script = `import { look, carry, watchDiff } from ${JSON.stringify(pathToFileURL(BIN).href)};
-    import { writeFileSync } from 'node:fs';
+    import { writeFileSync, utimesSync, existsSync } from 'node:fs';
+    const kept = ${JSON.stringify(join(f.home, 'scratch', 'status-gh.json'))};
     const runs = ${JSON.stringify(runs)};
     const good = (d) => ({ runs, graphql: [{ number: 7, headRefName: 'agent/demo', reviewDecision: d, comments: { totalCount: 0, nodes: [] } }] });
-    const next = (prev, i, o) => { writeFileSync(process.env.GH_STUB, JSON.stringify(o)); return carry(prev, look(i, prev)); };
+    // a look reuses a round under 55 s old: age the kept answers so each look asks, as a real 90 s apart would
+    const next = (prev, i, o) => { writeFileSync(process.env.GH_STUB, JSON.stringify(o)); if (existsSync(kept)) utimesSync(kept, new Date(Date.now() - 6e4), new Date(Date.now() - 6e4)); return carry(prev, look(i, prev)); };
     const out = {};
     for (const fail of ['run list', 'api']) {
       const first = next({}, 1, good('REVIEW_REQUIRED'));

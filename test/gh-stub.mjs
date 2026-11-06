@@ -22,7 +22,15 @@ function gh(args, opts) {
   // failFirst: n -> the first n `run list` calls fail (a network blip), the later ones answer.
   // failAfter: k -> the n failing calls start after k good ones.
   if (s.failFirst && call.startsWith('run list') && (n => n >= (s.failAfter ?? 0) && n < (s.failAfter ?? 0) + s.failFirst)(runLists++)) throw Object.assign(new Error('Command failed: gh'), { status: 1, stderr: 'gh blip\n' });
-  if (args[0] === 'api') return JSON.stringify({ data: { repository: { pullRequests: { nodes: s.graphql ?? [] } } } });
+  // rateLimit: {core, graphql} -> `gh api rate_limit` answers these buckets; default is a full budget; "fail" makes the call fail.
+  if (args[1] === 'rate_limit' && s.rateLimit === 'fail') throw Object.assign(new Error('Command failed: gh'), { status: 1, stderr: 'gh says boom\n' });
+  if (args[1] === 'rate_limit') return JSON.stringify({ resources: s.rateLimit ?? { core: { limit: 5000, remaining: 5000, reset: 0 }, graphql: { limit: 5000, remaining: 5000, reset: 0 } } });
+  // graphql: the open PRs; the detail query (`pN:pullRequest(number:N)` aliases) answers the listed ones by number.
+  if (args[0] === 'api') {
+    const query = args.find((a) => a.startsWith('query=')) ?? '', nodes = s.graphql ?? [];
+    if (!query.includes('pullRequest(number:')) return JSON.stringify({ data: { repository: { pullRequests: { nodes } } } });
+    return JSON.stringify({ data: { repository: Object.fromEntries([...query.matchAll(/p(\d+):pullRequest/g)].map(([, n]) => [`p${n}`, nodes.find((p) => p.number === Number(n))])) } });
+  }
   if (call.startsWith('run list')) return JSON.stringify(s.runs ?? [{ status: 'completed', conclusion: 'success', databaseId: 1 }]);
   if (call.startsWith('pr list')) return JSON.stringify(s.prs ?? []);
   if (call.startsWith('pr create')) return 'https://github.example/o/r/pull/7\n';

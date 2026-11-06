@@ -7,6 +7,11 @@ what an existing desk must do on upgrade; `desk check` warns while `kitVersion` 
 
 ## Unreleased
 
+## 0.9.1 - 2026-11-06
+
+- Changed: `desk wt finish` checks CI every 60 s instead of every 15 s, which cuts its GitHub API use by four (T-289). Nothing to do.
+- Changed: `desk status` spends far less of GitHub's hourly budget: a plain run reuses `status-gh.json` while it is under 55 seconds old, so every pane, sidebar and `--watch` on a desk shares one round a minute (T-287); the open-PR read is a one-point list, and the comments, reviews and threads query runs only for PRs whose `updatedAt` or review decision changed (T-288); under 20% of the `core` or `graphql` budget (`gh api rate_limit`) it makes no round, shows the kept answers and prints a `Warning:` with the reset time; the agent rules tell agents to read plain `desk status --json` instead of polling `gh pr`/`gh run` (T-290, OpenSpec change `gh-budget`). Nothing to do.
+
 ## 0.9.0 - 2026-11-06
 
 - Changed: `bump` and `npm test` also refuse two entries of one section that name the same todo id inside a parenthesis, right after `(` or `,`, which a rebase leaves when it rewords an entry (OpenSpec change `changelog-tid`, T-283). Nothing to do.
