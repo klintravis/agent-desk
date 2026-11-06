@@ -5,11 +5,20 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmp, desk, multiDesk, env, BIN, KIT } from './helpers.mjs';
 import { validate, schema, deskFileWarnings } from '../lib/schema.mjs';
-import { statusData } from '../bin/desk.mjs';
+import { statusData, carry, watchDiff } from '../bin/desk.mjs';
 
-test('desk --self-test (board, todo, tokens, status, watch, decide, schema)', () => {
+test('a byte-order mark on line 1 of todo.jsonl does not hide that record', () => {
+  const home = tmp();
+  writeFileSync(join(home, 'desk.config.json'), '{"repos":[]}');
+  const rec = { ts: '2026-01-01T00:00:00Z', from: 'aaaa1111', id: 'T-1', set: { title: 'first line todo', status: 'open', area: 'desk', prio: 1 } };
+  writeFileSync(join(home, 'todo.jsonl'), `\u{FEFF}${JSON.stringify(rec)}\n`);
+  assert.match(desk(home, 'todo', 'list').stdout, /T-1 \[open\] first line todo/);
+});
+
+test('desk --self-test is gone: usage error, no checks run', () => {
   const r = desk(tmp(), '--self-test');
-  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /^usage: desk /);
 });
 
 test('desk tokens --json: every row carries its transcript file name', () => {
@@ -200,6 +209,116 @@ test('validate flags prototype-named keys under additionalProperties: false', ()
   assert.equal(errs.length, 3);
 });
 
+test('todo add|set|start refuse a --status outside the schema and a --parent that makes a cycle or does not exist; nothing is written', () => {
+  const home = tmp(), file = join(home, 'todo.jsonl'), A = ['--area', 'desk'];
+  for (const t of ['a', 'b']) assert.equal(desk(home, 'todo', 'add', t, ...A).status, 0);
+  assert.equal(desk(home, 'todo', 'set', 'T-2', '--parent', 'T-1').status, 0);
+  const before = readFileSync(file, 'utf8');
+  for (const args of [
+    ['set', 'T-1', '--status', 'finished'], ['start', 'T-1', '--status', 'finished'], ['add', 'c', ...A, '--status', 'finished'],
+    ['set', 'T-1', '--parent', 'T-1'], ['set', 'T-1', '--parent', 'T-2'], ['set', 'T-1', '--parent', 'T-9'],
+    ['split', 'T-1', 'x', '--status', 'finished'], ['add', 'c', ...A, '--parent', 'T-9'], ['start', 'T-1', '--parent', 'T-9'],
+  ]) {
+    const r = desk(home, 'todo', ...args);
+    assert.equal(r.status, 1, args.join(' '));
+    assert.equal(readFileSync(file, 'utf8'), before, `${args.join(' ')} wrote`);
+    if (args.includes('T-9')) assert.match(r.stderr, /no todo T-9/);
+  }
+  assert.equal(desk(home, 'todo', 'set', 'T-1', '--status', 'blocked').status, 0);
+});
+
+test('a dangling parent already in todo.jsonl does not block a write; split children always hang under the split todo', () => {
+  const home = tmp(), file = join(home, 'todo.jsonl'), A = ['--area', 'desk'];
+  for (const t of ['a', 'b']) assert.equal(desk(home, 'todo', 'add', t, ...A).status, 0);
+  appendFileSync(file, JSON.stringify({ ts: '2026-01-01T00:00:00.000Z', from: 'x', id: 'T-3', set: { title: 'c', status: 'open', area: 'desk', parent: 'T-99' } }) + '\n');
+  const r = desk(home, 'todo', 'set', 'T-2', '--parent', 'T-3');
+  assert.equal(r.status, 0, r.stderr);
+  for (const p of ['T-99', 'T-4']) assert.equal(desk(home, 'todo', 'split', 'T-1', 'x', '--parent', p).status, 0);
+  assert.equal(JSON.parse(desk(home, 'todo', 'show', 'T-4').stdout).parent, 'T-1');
+  assert.equal(JSON.parse(desk(home, 'todo', 'show', 'T-5').stdout).parent, 'T-1');
+});
+
+test('todo words: add and note join them; done --note; empty note, bare set refused; caps warn; start names the old owner', () => {
+  const home = tmp(), file = join(home, 'todo.jsonl'), run = (...a) => desk(home, 'todo', ...a);
+  assert.equal(run('add', 'one', 'two', 'three', '--area', 'desk').status, 0);
+  assert.equal(run('note', 'T-1', 'a', 'b', 'c').status, 0);
+  assert.equal(run('done', 'T-1', '--note', 'fin').status, 0);
+  const x = JSON.parse(run('show', 'T-1').stdout);
+  assert.equal(x.title, 'one two three');
+  assert.deepEqual(x.notes.map((n) => n.replace(/^\S+ \S+: /, '')), ['a b c', 'fin']);
+  const before = readFileSync(file, 'utf8');
+  for (const args of [['note', 'T-1', ''], ['set', 'T-1', 'words'], ['set', 'T-1', '--note', ''], ['add', '   ', '--area', 'desk'], ['split', 'T-1', 'ok', ' ']]) {
+    assert.equal(run(...args).status, 1, args.join(' '));
+    assert.equal(readFileSync(file, 'utf8'), before, `${args.join(' ')} wrote`);
+  }
+  assert.match(run('add', 'x'.repeat(200), '--area', 'desk').stderr, /title cut to its 160-character cap/);
+  appendFileSync(file, JSON.stringify({ ts: '2026-01-01T00:00:00.000Z', from: 'x', id: 'T-1', set: { status: 'active', owner: 'someone' } }) + '\n');
+  const r = run('start', 'T-1');
+  assert.equal(r.status, 0);
+  assert.match(r.stderr, /taking over T-1 from someone/);
+  // a blocked todo with an owner is also a takeover
+  appendFileSync(file, JSON.stringify({ ts: '2026-01-01T00:00:00.000Z', from: 'x', id: 'T-1', set: { status: 'blocked', owner: 'other' } }) + '\n');
+  assert.match(run('start', 'T-1').stderr, /taking over T-1 from other/);
+  // set --title takes the 160 cap and its warning; --slug "" still clears
+  assert.match(run('set', 'T-1', '--title', 'y'.repeat(200)).stderr, /title cut to its 160-character cap/);
+  assert.equal(JSON.parse(run('show', 'T-1').stdout).title.length, 160);
+  assert.equal(run('set', 'T-1', '--slug', '').status, 0);
+  // done keeps --why and --note both
+  assert.equal(run('done', 'T-1', '--why', 'a', '--note', 'b').status, 0);
+  const notes = JSON.parse(run('show', 'T-1').stdout).notes;
+  assert.match(notes[notes.length - 1], /a; b$/);
+  // an over-long option why warns
+  assert.match(run('add', 'q', '--area', 'owner', '--option', `A: ${'z'.repeat(1100)}`, '--option', 'B: no').stderr, /option why cut to its 1000-character cap/);
+});
+
+test('todo commands refuse unknown flags and extra words, naming them and writing nothing', () => {
+  const home = tmp(), file = join(home, 'todo.jsonl');
+  for (const t of ['a', 'b']) assert.equal(desk(home, 'todo', 'add', t, '--area', 'desk').status, 0);
+  const before = readFileSync(file, 'utf8');
+  const bad = [
+    ...['done', 'drop', 'block', 'open'].flatMap((c) => [[c, 'T-1', '--reason', 'x', '/--reason/'], [c, 'T-1', 'T-2', '/"T-2"/'], [c, 'T-1', '--why', 'ok', '--all', '/--all/']]),
+    ['note', 'T-1', '--why', 'x', '/--why/'], ['note', 'T-1', '--reason', 'x', '/--reason/'],
+    ['note', 'T-1', 'fixed', 'the', '--force', 'path', '/goes after --/'],
+    ['done', 'T-1', '--option', 'a: b', '--option', 'c: d', '/--option(?!s)/'],
+    ['done', 'T-1', '--__proto__', 'x', '/--__proto__/'],
+    ['set', 'T-1', '--sumary', 'x', '/--sumary/'], ['set', 'T-1', 'junk', '--title', 'x', '/"junk"/'], ['set', 'T-1', '--all', 'x', '/--all/'],
+    ['add', 't', '--area', 'desk', '--reason', 'x', '/--reason/'],
+    ['start', 'T-1', '--foo', 'x', '/--foo/'], ['start', 'T-1', 'T-2', '/"T-2"/'],
+    ['split', 'T-1', 'c', '--foo', 'x', '/--foo/'],
+  ];
+  for (const a of bad) {
+    const re = a.pop(), r = desk(home, 'todo', ...a);
+    assert.equal(r.status, 1, a.join(' '));
+    assert.equal(r.stdout, '', a.join(' '));
+    assert.match(r.stderr, new RegExp(re.slice(1, -1)), a.join(' '));
+    assert.equal(readFileSync(file, 'utf8'), before, `${a.join(' ')} wrote`);
+  }
+  // the forms the skills use still work
+  assert.equal(desk(home, 'todo', 'note', 'T-1', 'a', 'b', 'c').status, 0);
+  assert.equal(desk(home, 'todo', 'note', 'T-1', '--', '--odd text').status, 0);
+  assert.equal(desk(home, 'todo', 'done', 'T-1', '--why', 'w', '--note', 'n').status, 0);
+  assert.equal(JSON.parse(desk(home, 'todo', 'show', 'T-1').stdout).status, 'done');
+  assert.equal(desk(home, 'todo', 'drop', 'T-2').status, 0);
+});
+
+test('todo refuses --id, --created and --notes; a jsonl already holding a string notes line still lists and takes notes', () => {
+  const home = tmp(), file = join(home, 'todo.jsonl');
+  assert.equal(desk(home, 'todo', 'add', 'a', '--area', 'desk').status, 0);
+  const before = readFileSync(file, 'utf8');
+  for (const k of ['id', 'created', 'notes']) for (const args of [['set', 'T-1'], ['add', 'c', '--area', 'desk'], ['start', 'T-1']]) {
+    assert.equal(desk(home, 'todo', ...args, `--${k}`, 'x').status, 1, `${args[0]} --${k}`);
+    assert.equal(readFileSync(file, 'utf8'), before, `${args[0]} --${k} wrote`);
+  }
+  assert.equal(desk(home, 'todo', 'note', 'T-1', 'first').status, 0);
+  appendFileSync(file, JSON.stringify({ ts: '2026-01-01T00:00:00.000Z', from: 'x', id: 'T-1', set: { notes: 'old', id: 'Z' } }) + '\n');
+  assert.equal(desk(home, 'todo', 'list').status, 0);
+  assert.equal(desk(home, 'todo', 'note', 'T-1', 'new').status, 0);
+  const x = JSON.parse(desk(home, 'todo', 'show', 'T-1').stdout);
+  assert.equal(x.id, 'T-1');
+  assert.deepEqual(x.notes.map((n) => n.replace(/^\S+ \S+: /, '')), ['first', 'old', 'new']);
+  assert.equal(desk(home, 'todo', 'show', 'Z').status, 1);
+});
+
 test('written lines carry v: 1 and validate; decide records the ruling in decisions.jsonl; decide --list', () => {
   const home = tmp(), s = (n) => schema(n), last = (f) => JSON.parse(readFileSync(join(home, f), 'utf8').trim().split('\n').pop());
   assert.equal(desk(home, 'todo', 'add', 'pick one', '--area', 'owner', '--why', 'keep; drop').status, 0);
@@ -284,14 +403,15 @@ test('todo add: the only repo by default, --area required with several repos', (
   assert.notEqual(r.status, 0);
 });
 
-test('todo note: kept whole up to 1000 characters, refused over it or unquoted; a stray --notes breaks nothing', () => {
+test('todo note: kept whole up to 1000 characters, refused over it; unquoted words are joined; --notes is refused', () => {
   const home = tmp();
-  assert.equal(desk(home, 'todo', 'add', 'x', '--area', 'desk', '--notes', 'see PR').status, 0);
+  assert.notEqual(desk(home, 'todo', 'add', 'x', '--area', 'desk', '--notes', 'see PR').status, 0, 'a reserved key is refused, nothing written');
+  assert.equal(desk(home, 'todo', 'add', 'x', '--area', 'desk').status, 0);
   const claim = `accept: ${'c'.repeat(330)} | npm test -- x | exit 0`;
   assert.equal(desk(home, 'todo', 'note', 'T-1', claim).status, 0);
-  assert.deepEqual(JSON.parse(desk(home, 'todo', 'show', 'T-1').stdout).notes.map((n) => n.split(': ').slice(1).join(': ')), [claim]);
-  const unquoted = desk(home, 'todo', 'note', 'T-1', 'accept:', 'x', 'y');
-  assert.notEqual(unquoted.status, 0); assert.match(unquoted.stderr, /one quoted text/);
+  assert.equal(desk(home, 'todo', 'note', 'T-1', 'accept:', 'x', 'y').status, 0);
+  assert.deepEqual(JSON.parse(desk(home, 'todo', 'show', 'T-1').stdout).notes.map((n) => n.split(': ').slice(1).join(': ')), [claim, 'accept: x y']);
+  assert.notEqual(desk(home, 'todo', 'set', 'T-1', '--note', 'n'.repeat(1001)).status, 0, 'set --note shares the cap');
   const long = desk(home, 'todo', 'note', 'T-1', 'n'.repeat(1001));
   assert.notEqual(long.status, 0); assert.match(long.stderr, /over 1000; nothing was written/);
   assert.equal(desk(home, 'todo', 'list').status, 0);
@@ -459,6 +579,19 @@ test('decide: --pick is a flag only as its own argument; one argument reading li
   assert.equal(JSON.parse(desk(home, 'decide', '--json').stdout).id, 'T-3', 'the todo stays open');
 });
 
+test('decide: --pick=2 as one argument is refused, nothing recorded, the todo stays open', () => {
+  const home = tmp();
+  desk(home, 'todo', 'add', 'q', '--area', 'owner', '--option', 'a: x', '--option', 'b: y');
+  for (const v of ['--pick=2', ' --pick=2', '--pick=2 please']) {
+    const r = desk(home, 'decide', 'T-1', v);
+    assert.equal(r.status, 1, v);
+    assert.match(r.stderr, /with a space.*Nothing was recorded/, v);
+  }
+  assert.doesNotMatch(desk(home, 'decide', 'T-1', '--pick=zzq7').stderr, /zzq7/, 'the refusal echoes nothing');
+  assert.equal(rulingsIn(home).length, 0);
+  assert.equal(JSON.parse(desk(home, 'decide', '--json').stdout).id, 'T-1');
+});
+
 test('--option refuses a value that reads as a flag once cleaned, as a label is stored', () => {
   const home = tmp();
   for (const v of [' --pick 3: x', '\t--pick 3: x', '‮--pick 3: x']) {
@@ -608,6 +741,22 @@ test('desk settings: cache sources, env shadow, not applied until sync, Copilot 
   assert.ok(settingsJson(home, f).warnings.some((w) => /advisory on Copilot/.test(w)));
 });
 
+test('desk settings: the not-ignored warning is in warnings, once, not on stderr with --json', () => {
+  const { home } = multiDesk(), f = settingsFile({ cache: { subagentPromptCacheTtl: '5m' } });
+  mkdirSync(join(home, '.claude'), { recursive: true });
+  const local = join(home, '.claude', 'settings.local.json'); // tracked: check-ignore then says not ignored
+  writeFileSync(local, '{}\n');
+  spawnSync('git', ['-C', home, 'init', '-q']);
+  spawnSync('git', ['-C', home, 'add', '-f', '.claude/settings.local.json']);
+  const j = withUser(home, f, {}, 'settings', '--json');
+  assert.equal(j.status, 0, j.stderr);
+  const hits = JSON.parse(j.stdout).warnings.filter((w) => /not ignored by git/.test(w));
+  assert.equal(hits.length, 1, j.stdout);
+  assert.doesNotMatch(j.stderr, /not ignored/);
+  const p = withUser(home, f, {}, 'settings');
+  assert.equal(p.stderr.split('\n').filter((l) => /^warn .*not ignored by git/.test(l)).length, 1, p.stderr);
+});
+
 test('desk status: the user line and field name what runs below the shared values', () => {
   const { home } = multiDesk(), f = settingsFile({ tasks: { review: { model: 'sonnet', effort: 'medium' } } });
   const j = statusJson(home, f);
@@ -742,4 +891,132 @@ test('the skills: orchestrate names the command and its fallback; kickoff and ha
     assert.doesNotMatch(text, /--model|git -C <repo path> fetch/, s);
   }
   assert.match(read('skills', 'handoff', 'SKILL.md'), /`D wt handoff <slug> --next/);
+});
+
+test('removed arms: todo done-slug, board tail and board merge-ok exit 1 with the usage error', () => {
+  const home = tmp();
+  writeFileSync(join(home, 'desk.config.json'), '{"repos":[]}');
+  for (const args of [['todo', 'done-slug', 'x'], ['board', 'tail'], ['board', 'merge-ok', 'x', 'abcdef1']]) {
+    const r = desk(home, ...args);
+    assert.equal(r.status, 1, args.join(' '));
+    assert.match(r.stderr, /^usage: desk (todo|board) /);
+    assert.doesNotMatch(r.stderr, /done-slug|merge-ok|tail/);
+  }
+});
+
+test('board post takes --repo before the kind; readers survive null, note-without-ts and numeric-id lines', () => {
+  const { home } = multiDesk();
+  assert.equal(desk(home, 'board', 'post', '--repo', 'a', 'claim', 'foo').status, 0);
+  const l = JSON.parse(readFileSync(join(home, 'board.jsonl'), 'utf8').trim().split('\n').pop());
+  assert.deepEqual([l.kind, l.slug, l.repo], ['claim', 'foo', 'a']);
+  appendFileSync(join(home, 'board.jsonl'), 'null\n');
+  assert.equal(desk(home, 'board', 'claims').status, 0, 'a null line');
+  writeFileSync(join(home, 'todo.jsonl'), '{"from":"x","id":"T-1","set":{"title":"t","area":"a","status":"open","note":"n"}}\n{"id":5,"set":{"title":"n"}}\n');
+  assert.equal(desk(home, 'todo', 'list').status, 0, 'a note with no ts');
+  assert.equal(desk(home, 'todo', 'add', 'more', '--area', 'a').status, 0, 'a numeric id');
+});
+
+test('init: a repeated repo id, --harness without a value and a package.json with a BOM; an old .gitignore warns', () => {
+  const home = tmp();
+  let r = desk(home, 'init', '--no-install', '--repo', 'a=.', '--repo', 'a=.');
+  assert.equal(r.status, 1);
+  assert.equal(existsSync(join(home, 'desk.config.json')), false, 'nothing written');
+  assert.match(desk(home, 'init', '--no-install', '--harness').stderr, /--harness needs a value/);
+  writeFileSync(join(home, 'package.json'), String.fromCharCode(0xFEFF) + '{"name":"x"}');
+  writeFileSync(join(home, '.gitignore'), 'node_modules/\n');
+  r = desk(home, 'init', '--no-install');
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /warn .*\.gitignore lacks board\.jsonl, .*\.claude\/settings\.local\.json/);
+  assert.equal(readFileSync(join(home, '.gitignore'), 'utf8'), 'node_modules/\n', 'kept as it was');
+});
+
+test('board post with a bad kind or slug exits 1 and appends nothing; board check needs a slug', () => {
+  const { home } = multiDesk();
+  const lines = () => (existsSync(join(home, 'board.jsonl')) ? readFileSync(join(home, 'board.jsonl'), 'utf8') : '');
+  const before = lines();
+  const bad = desk(home, 'board', 'post', 'wibble', 'x');
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /bad post/);
+  assert.equal(desk(home, 'board', 'post', 'note', 'Bad_Slug').status, 1);
+  assert.equal(lines(), before);
+  const none = desk(home, 'board', 'check');
+  assert.equal(none.status, 1);
+  assert.match(none.stderr, /usage: desk board check <slug>/);
+  assert.equal(desk(home, 'board', 'check', '').status, 1, 'an unset variable');
+});
+
+test('an internal post with bad input returns false and leaves the exit code alone', async () => {
+  const { post } = await import('../bin/desk.mjs');
+  const before = process.exitCode;
+  assert.equal(post('wibble', 'x'), false);
+  assert.equal(process.exitCode, before);
+});
+
+test('a refused config: board check on a foreign claim exits 1 and names the file and key, not unclaimed', () => {
+  const home = legacyDesk();
+  editConfig(home, (c) => ({ ...c, harnesses: ['cluade'] }));
+  const r = desk(home, 'board', 'check', 'live');
+  assert.equal(r.status, 1);
+  assert.doesNotMatch(r.stdout, /unclaimed/);
+  assert.match(r.stderr, /desk\.config\.json: harnesses must be/);
+});
+
+test('init: a misspelled or empty --harness is refused before anything is written', () => {
+  for (const h of ['cluade', 'claude,']) {
+    const home = tmp();
+    const r = desk(home, 'init', '--no-install', '--harness', h);
+    assert.equal(r.status, 1, h);
+    assert.match(r.stderr, /--harness/);
+    assert.equal(existsSync(join(home, 'desk.config.json')), false, 'nothing written');
+  }
+});
+
+test('desk check fails on a config the desk refuses', () => {
+  const { home } = multiDesk();
+  editConfig(home, (c) => ({ ...c, harnesses: ['cluade'] }));
+  const r = desk(home, 'check');
+  assert.equal(r.status, 1);
+  assert.match(r.stdout + r.stderr, /harnesses must be/);
+});
+
+test('a refused config with a claim on the board: desk status still exits 0', () => {
+  const home = legacyDesk();
+  editConfig(home, (c) => ({ ...c, harnesses: ['cluade'] }));
+  const r = desk(home, 'status');
+  assert.equal(r.status, 0, r.stderr);
+});
+
+test('desk check on a malformed desk.config.json says "does not parse" and does not echo the file', () => {
+  const { home } = multiDesk();
+  writeFileSync(join(home, 'desk.config.json'), '{"repos": SECRETWORD');
+  const r = desk(home, 'check');
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /does not parse/);
+  assert.doesNotMatch(r.stdout + r.stderr, /SECRETWORD/);
+});
+
+test('status --watch: a failed board read keeps the last board, so the next good read does not replay it', () => {
+  const lines = [{ kind: 'note', slug: 'a', text: 'one' }, { kind: 'note', slug: 'a', text: 'two' }];
+  const prev = { board: lines.slice(0, 1) };
+  const home = tmp();
+  writeFileSync(join(home, 'desk.config.json'), '{"repos":[]}');
+  mkdirSync(join(home, 'board.jsonl')); // a read that fails
+  const code = `import { look, carry } from ${JSON.stringify(new URL('../bin/desk.mjs', import.meta.url).href)}; process.stdout.write(JSON.stringify(carry(${JSON.stringify(prev)}, look(1))))`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: home, env: env(home), encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const down = JSON.parse(r.stdout);
+  assert.deepEqual(down.board, prev.board);
+  assert.deepEqual(watchDiff(prev, down).lines, []);
+  assert.deepEqual(watchDiff(down, { board: lines }).lines, ['BOARD: ' + JSON.stringify(lines[1])]);
+});
+
+test('board summary: a line without from, ts, kind or slug prints no undefined or NaN', () => {
+  const home = tmp();
+  writeFileSync(join(home, 'desk.config.json'), '{"repos":[]}');
+  writeFileSync(join(home, 'board.jsonl'), '{"text":"bare"}\n{"kind":"claim","slug":"x"}\n');
+  const code = `import { summary } from ${JSON.stringify(new URL('../bin/desk.mjs', import.meta.url).href)}; process.stdout.write(summary())`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: home, env: env(home), encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /bare/);
+  assert.doesNotMatch(r.stdout, /undefined|NaN/);
 });

@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmp, env, BIN, git, repo } from './helpers.mjs';
 import { fold } from '../bin/desk.mjs';
-import { deleteOrphans } from '../lib/tidy.mjs';
+import { clearDead, deleteOrphans, raiseQuestion } from '../lib/tidy.mjs';
 
 const HOUR = 3600e3, DAY = 24 * HOUR;
 
@@ -159,6 +159,15 @@ test('no projects folder: nothing is dead, and orphans and candidates still work
   assert.deepEqual(ids(j.unknownOwners), ['T-1']);
   assert.equal(j.orphans.length, 1);
   assert.deepEqual(ids(j.candidates), ['T-2']);
+});
+
+test('clearDead: an owner set after the snapshot survives, an unchanged dead owner is cleared', () => {
+  const dead = [{ id: 'T-1', owner: 'deadbeef', hours: 30 }, { id: 'T-2', owner: 'deadbeef', hours: 30 }, { id: 'T-3', owner: 'deadbeef', hours: 30 }];
+  const now = new Map([['T-1', { owner: 'newowner', status: 'active' }], ['T-2', { owner: 'deadbeef', status: 'active' }], ['T-3', { owner: 'deadbeef', status: 'done' }]]);
+  const written = [];
+  const out = clearDead(dead, () => now, (id, set) => written.push([id, set.owner]));
+  assert.deepEqual(out, [{ action: 'cleared', id: 'T-2', owner: 'deadbeef' }]);
+  assert.deepEqual(written, [['T-2', '']]);
 });
 
 // ---- orphans ----
@@ -375,16 +384,26 @@ test('owner question: a long list keeps both options and every id in tidyIds', (
   assert.deepEqual(q.options.map((o) => o.label), ['Close them one by one', 'Keep them all open']);
 });
 
+test('owner question: a todo added after the snapshot keeps its id, the question takes the next one', () => {
+  const now = new Map([['T-1', { status: 'open' }], ['T-2', { status: 'open' }]]); // T-2 was added after the snapshot
+  const written = [];
+  const out = raiseQuestion([{ id: 'T-1', kind: 'stale' }], () => now, (id) => written.push(id));
+  assert.deepEqual(out, [{ action: 'raised', id: 'T-3', tidyIds: 'T-1' }]);
+  assert.deepEqual(written, ['T-3']);
+});
+
 test('--apply on everything at once leaves board.jsonl byte-identical', () => {
   const fx = fixture();
   transcript(fx, 'deadbeef', 25 * HOUR);
   todo(fx, 'T-1', { owner: 'deadbeef' }, 15 * DAY);
   board(fx, 'note', 'old');
   const f = stream(fx, 'old');
+  const ctx = aged(join(fx.home, 'context', 'T-1.md'), 30 * DAY);
   const before = readFileSync(join(fx.home, 'board.jsonl'), 'utf8');
   const j = report(fx, '--apply');
   assert.deepEqual(j.applied.map((a) => a.action), ['cleared', 'deleted', 'raised']);
   assert.equal(existsSync(f), false);
+  assert.equal(existsSync(ctx), true);
   assert.equal(readFileSync(join(fx.home, 'board.jsonl'), 'utf8'), before);
   // The snapshot before the writes: clearing T-1 resets `updated`, yet this run still asks about it.
   assert.equal(folded(fx).get('T-2').tidyIds, 'T-1');
@@ -429,5 +448,23 @@ test('strays: a worktrees folder under a linked parent flags only the stray', ()
   mkdirSync(wts, { recursive: true }); symlinkSync(real, join(fx.root, 'lnk'), 'junction');
   git(dir, 'worktree', 'add', '-q', '-b', 'agent/live', join(wts, 'a-live'));
   mkdirSync(join(wts, 'a-gone'));
+  symlinkSync(real, join(wts, 'a-linked'), 'junction'); // a link inside the folder is not followed or listed
   assert.deepEqual(report(fx).strayFolders.map((s) => s.dir.replace(/\\/g, '/').split('/').pop()), ['a-gone']);
 });
+
+test('strays: a worktrees folder that is itself a link is scanned, and --apply changes nothing', () => {
+  const fx = fixture({ wts: false, cfg: { worktreesDir: 'lnk' } }), dir = repo(fx.root, 'a', { remote: false });
+  const real = join(fx.root, 'real');
+  mkdirSync(real); symlinkSync(real, join(fx.home, 'lnk'), 'junction');
+  git(dir, 'worktree', 'add', '-q', '-b', 'agent/live', join(real, 'a-live'));
+  aged(join(real, 'a-gone', 'mine.txt'), 30 * DAY);
+  aged(join(fx.root, 'outside', 'keep.txt'), 30 * DAY);
+  const before = snapshot(fx.root);
+  for (const args of [[], ['--apply']]) {
+    const j = report(fx, ...args);
+    assert.deepEqual(j.strayFolders.map((s) => s.dir.replace(/\\/g, '/').split('/').pop()), ['a-gone']);
+    assert.deepEqual(j.applied, []);
+  }
+  assert.deepEqual(snapshot(fx.root), before);
+});
+

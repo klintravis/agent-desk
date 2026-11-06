@@ -9,7 +9,7 @@ import { redactPrompt, registerRedact } from './redact'
 import { AUTO_WARM, coldSend, mainRequest, mainTurn, newHold, tick, TICK } from './warmhold'
 
 // Below this the cut is not worth it; the engine's summary runs instead.
-export const MIN_SAVING = 0.3
+const MIN_SAVING = 0.3
 const ACTIVE = new Set(['pending', 'running'])
 
 // The script's own folder is the session root: a subagent's worktree sits outside the desk, so findDesk cannot walk up from it.
@@ -131,11 +131,21 @@ export const register: Register = (on) => {
   })
 
   // Edit guard: refuse shell-scripted file edits (rule shared with scripts/edit-guard.mjs, the
-  // settings hook it will replace). Fails open: a guard bug must never block Bash.
+  // settings hook it will replace), on both shell tools: PowerShell is the main shell on Windows.
+  // Fails open: a guard bug must never block a shell call.
+  const editDenial = (command: string): string | null => {
+    try {
+      const why = desk ? verdict(command) : null
+      return why ? reason(why) : null
+    } catch { return null }
+  }
   on('tool.call', { tool: 'Bash' }, ($, e, next) => {
-    let why: string | null = null
-    try { why = desk ? verdict(e.command) : null } catch {}
-    return why ? { deny: reason(why) } : next(e)
+    const deny = editDenial(e.command)
+    return deny ? { deny } : next(e)
+  })
+  on('tool.call', { tool: 'PowerShell' }, ($, e, next) => {
+    const deny = editDenial(e.command)
+    return deny ? { deny } : next(e)
   })
 
   // Merge guard: under merge "review", no push or merge into a protected branch (scripts/merge-guard.mjs,

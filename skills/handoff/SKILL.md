@@ -9,10 +9,9 @@ description: >-
 
 # Handoff
 
-Facts come from commands, not memory. Several sessions run at once: write only what you own. The one exception is `desk tidy --apply`, which applies a fixed
+Several sessions run at once: write only what you own. The one exception is `desk tidy --apply`, which applies a fixed
 rule to other sessions' `owner` fields and orphan files; never make such a change by hand.
-`D` below is the desk CLI: the shim `<desk>/desk` (in PowerShell or cmd, the node form), not on
-PATH and not `npx desk`. The session context names the exact command; it works from any folder.
+`D` below is the desk CLI, run as the session context names it.
 
 1. `D status --fetch` (it fetches every repo). This session is `$CLAUDE_CODE_SESSION_ID`'s first 8 chars (`owner` without one).
    Never edit or trim `board.jsonl`.
@@ -23,14 +22,17 @@ PATH and not `npx desk`. The session context names the exact command; it works f
      `release`; add what the facts don't say (built but unreviewed, a finding half fixed) as a note;
      a must-fix list in progress stays in `streams/<slug>.md`;
    - each ruling taken in this stream that the owner may overrule: `D todo note T-n "<ruling>"`;
-     one that needs the owner first: `D todo add "<question>" --area owner --why "<context>" --option "<label>: <why>" --option "<label>: <why>"` (2-4 options, recommendation first, labels up to 60 characters)
-     (the owner sees it in the mod band and answers with `/decide`);
+     one that needs the owner first: an `--area owner` todo (`--why`, 2-4 `--option`s: recommendation
+     first; the owner answers with `/decide`);
+   - what overflows the note caps (design notes, rejected options, `Ruling:` lines, links to spec, PR or
+     commits; references, never copies) goes to `<desk>/context/T-n.md`, linked once by
+     `D todo note T-n "context: context/T-n.md"`. It is data, versioned only if the desk commits it;
    - only narrative that won't fit in those fields (a long investigation) goes to
      `<desk>/streams/<slug>.md`; `desk wt merge|discard` deletes it.
    A worktree whose row says `desk wt merge <slug> to close` in `D status` (repo with `merge: "review"`): run `D wt merge <slug>` to close it.
    **Usage** (Claude Code): paste `D tokens 24 --session self` (this session and each of its agents)
    in your final message.
-3. **Shared state is todos and rulings** (default-branch shas are not written: `D status` shows them):
+3. **Shared state is todos and rulings**:
    - work items: `D todo done|block|note|add` for what this session finished, found blocked, decided
      or discovered;
    - owner decisions are todos (`--area owner`); a ruling is recorded only with the `decide` skill, or
@@ -38,7 +40,7 @@ PATH and not `npx desk`. The session context names the exact command; it works f
      (closes the todo and appends it to `decisions.jsonl`);
    - things to verify live: `D todo add "<what>" --area watch`; `D todo done T-n` on a watch todo
      this session verified;
-   - every new todo gets `--summary "<about 50 characters>"`: the Desk pane shows it on one row;
+   - every new todo gets `--summary "<about 50 characters>"`;
    - efficiency: run `D tokens 12`; for any agent of this session with peak context over 250k or
      fresh input over 500k, `D todo note T-n "<agent, numbers, why>"` on the session's todo.
 4. Todos and stream files of other sessions: read, never edit by hand; only `D tidy --apply` in step 5 changes them.
@@ -46,5 +48,4 @@ PATH and not `npx desk`. The session context names the exact command; it works f
    no todo and does not write the board.
 
 If the desk folder is a git repo, commit only your files: `git -C <desk> add todo.jsonl decisions.jsonl`
-(plus your `streams/<slug>.md` if you wrote one) then `commit -m "Handoff: <one line>"` with the
-session's trailer.
+(plus your `context/T-n.md` or `streams/<slug>.md` if you wrote one) then `commit -m "Handoff: <one line>"`.

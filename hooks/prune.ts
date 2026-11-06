@@ -1,17 +1,16 @@
 import type { SessionMessage, ToolResultSummary, ToolUseSummary } from 'claude-code'
 
 // Messages at both ends stay word for word: the task statement and the work in hand.
-export const KEEP_RECENT = 8
+const KEEP_RECENT = 8
 // A tool output longer than this is cut to its head.
-export const CUT_OVER = 1500
-export const HEAD = 400
+const CUT_OVER = 1500
+const HEAD = 400
 
 // Output that costs more to get back than to keep: a subagent's report, or a
 // snapshot of state that has moved on since.
 const KEEP_TOOLS = new Set(['Agent', 'Task'])
-const SNAPSHOT = /\b(git (status|stash list)|gh run view|gh pr checks)\b/
+const SNAPSHOT = /\b(git (-C ("[^"]*"|'[^']*'|\S+) )?(status|stash list)|gh run view|gh pr checks)\b/
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
-const WRITE_FIELDS = new Set(['content', 'new_string', 'old_string', 'new_source', 'edits'])
 
 const cut = (text: string, note: string) =>
   text.length > CUT_OVER ? `${text.slice(0, HEAD)}\n[pruned ${text.length - HEAD} chars; ${note}]` : text
@@ -25,10 +24,18 @@ function shrink(value: unknown): unknown {
 
 function keeps(use: ToolUseSummary | undefined, isError: boolean): boolean {
   if (!use || isError || KEEP_TOOLS.has(use.tool)) return true
-  return use.tool === 'Bash' && typeof use.input.command === 'string' && SNAPSHOT.test(use.input.command)
+  return (use.tool === 'Bash' || use.tool === 'PowerShell') && typeof use.input.command === 'string' && SNAPSHOT.test(use.input.command)
 }
 
-export function charsOf(messages: readonly SessionMessage[]): number {
+// Another row with tool calls in the same unbroken run of assistant rows.
+function parallel(messages: readonly SessionMessage[], i: number): boolean {
+  for (const step of [-1, 1]) {
+    for (let k = i + step; messages[k]?.role === 'assistant'; k += step) if (messages[k]!.toolUses.length > 0) return true
+  }
+  return false
+}
+
+function charsOf(messages: readonly SessionMessage[]): number {
   // A transcript with result rows carries each output there; `use.text` repeats it.
   const rows = messages.some((m) => (m.toolResults ?? []).length > 0)
   let n = 0
@@ -44,7 +51,10 @@ export function charsOf(messages: readonly SessionMessage[]): number {
  * Cuts re-readable tool output (file reads, searches, command output, edit bodies) to its head,
  * outside the first and the newest KEEP_RECENT messages. Text is never touched; errors, subagent
  * reports and state snapshots stay. Untouched messages are returned as the same objects, so they
- * keep the engine's handle.
+ * keep the engine's handle. A copy loses it: the engine ignores any cut on a message with a handle,
+ * and gives one without a new message id. Parallel calls of one response are separate rows sharing
+ * an id, so a new id on one of them splits the response, and the engine stubs the split-off calls
+ * with `Tool result missing`. So a call row is rebuilt only when it is alone in its assistant run.
  */
 export function prune(messages: readonly SessionMessage[]): { messages: SessionMessage[]; before: number; after: number } {
   const uses = new Map<string, ToolUseSummary>()
@@ -53,12 +63,12 @@ export function prune(messages: readonly SessionMessage[]): { messages: SessionM
 
   const out = messages.map((m, i) => {
     if (pinned(i)) return m
-    const toolUses = m.toolUses.map((u) => {
+    // `use.text` is left alone: it repeats the result row and never reaches the model.
+    const toolUses = parallel(messages, i) ? m.toolUses : m.toolUses.map((u) => {
       const input = WRITE_TOOLS.has(u.tool) ? (shrink(u.input) as Record<string, unknown>) : u.input
-      const text = u.text !== undefined && !keeps(u, u.isError === true) ? cut(u.text, `run ${u.tool} again if needed`) : u.text
-      if (text === u.text && JSON.stringify(input) === JSON.stringify(u.input)) return u
+      if (JSON.stringify(input) === JSON.stringify(u.input)) return u
       const copy: ToolUseSummary = { tool_use_id: u.tool_use_id, tool: u.tool, input }
-      if (text !== undefined) copy.text = text
+      if (u.text !== undefined) copy.text = u.text
       if (u.isError) copy.isError = true
       return copy
     })

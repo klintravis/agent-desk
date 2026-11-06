@@ -1,4 +1,4 @@
-// PreToolUse(Bash) settings hook: refuses shell-scripted file edits and points the agent at the Edit tool.
+// PreToolUse settings hook (matcher `Bash|PowerShell`): refuses shell-scripted file edits and points the agent at the Edit tool.
 // The rule lives in hooks/editguard.mjs, shared with the mod's tool.call hook. Use this one where the
 // mod is not loaded (a session without the plugin); with the plugin, the mod hook already guards.
 // Reads the hook JSON on stdin. Exit 0 with no output = allow.   Usage: node edit-guard.mjs [--self-test]

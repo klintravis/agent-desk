@@ -4,7 +4,7 @@ The orchestration folder for the repos in `desk.config.json`, run with agent-des
 here, plan and delegate, and make every code change in a worktree of a repo's main checkout. This
 file is read by Claude Code (through `CLAUDE.md`) and by GitHub Copilot (as `AGENTS.md`).
 
-One command: `desk status|board|todo|tokens|overlap|decide|tidy|settings|check|wt|stream|sync|workspace ...`.
+One command: `desk status|board|todo|tokens|overlap|lenses|decide|tidy|settings|check|wt|stream|sync|workspace ...`.
 `desk` is the shim in this folder, not on PATH: `./desk ...` here, `<desk>/desk ...` from a worktree.
 In PowerShell or cmd run the kit with node (`$env:DESK_HOME = '<desk>'; node '<desk>\node_modules\agent-desk\bin\desk.mjs' ...`
 in PowerShell; `set "DESK_HOME=<desk>" && node "<desk>\node_modules\agent-desk\bin\desk.mjs" ...` in cmd).

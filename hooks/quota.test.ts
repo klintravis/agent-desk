@@ -50,3 +50,24 @@ test('the status line carries the quota after a turn, outside a desk too', async
   expect(shown.at(-1)).toBe('ctx ▱▱▱▱▱▱▱▱ 1% · 5h ▰▰▱▱ 42%')
   expect(Object.keys(stored)).toEqual(['quota-samples'])
 })
+
+test('samples are thinned: minute readings reach a 7d burn after 8.4h, and the 5h burn keeps its slope', () => {
+  const MIN = 60e3
+  const run = (kind: string, minutes: number, pct: (m: number) => number) => {
+    const w = windowMsOf(kind)
+    let s: ReturnType<typeof addSample> = []
+    for (let m = 0; m <= minutes; m++) s = addSample(s, { atMs: m * MIN, percentUsed: pct(m) }, w)
+    return { s, burn: burnOf(s, w) }
+  }
+  expect(run('seven_day', 8 * 60, (m) => m / 60).burn).toBe(null)
+  const week = run('seven_day', 9 * 60, (m) => m / 60)
+  expect(Math.round(week.burn! * 100)).toBe(100)
+  expect(week.s.at(-1)!.atMs).toBe(9 * 60 * MIN) // the newest reading is kept
+  const long = run('seven_day', 8 * 24 * 60, () => 1)
+  expect(long.s.length).toBeLessThanOrEqual(240)
+  expect(long.s[0]!.atMs).toBeLessThan(8 * 24 * 60 * MIN - 6.5 * 24 * 3600e3) // still spans about the window
+  const five = run('five_hour', 300, (m) => m / 6)
+  expect(five.s.length).toBe(151) // 2-minute rows
+  expect(five.s[0]!.atMs).toBe(0) // 2-minute rows span the whole 5h; the old pair test kept every minute and dropped the start
+  expect(Math.round(five.burn!)).toBe(10)
+})

@@ -26,7 +26,7 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm test
         env:
-          TMPDIR: ${{ runner.temp }} # the tests leave their temp folders; this machine is not thrown away after a job
+          TMPDIR: ${{ runner.temp }} # a cancelled job skips the cleanup in scripts/test.mjs; this machine is not thrown away after a job
       # The plugin's hook tests (hooks/*.test.ts) need the CLI; no API key or secret is used. Pinned to one version and installed under the job's temp folder, so no global npm install is made; npm's cache still lands in the runner's home.
       - name: Install Claude Code CLI
         if: matrix.node == 22

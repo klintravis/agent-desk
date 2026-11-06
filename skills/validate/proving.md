@@ -14,6 +14,14 @@ The validator's steps; the claim format and what each kind proves are in `SKILL.
    new test, a refactor's pins and equivalence script) don't exist on the base: copy them in from the
    head first. Always remove both copies at the end, even after a failure:
    `git -C <worktree> worktree remove --force <scratch>/<slug>-<head|base>`.
+   **Feature**: the base is the test commit, found by its receipt (`git log --grep '^red:' origin/<default>..HEAD`;
+   no match is NOT VERIFIED). `git log --name-only --reverse origin/<default>..HEAD` must show the test
+   commit, touching only tests, before the first non-test commit. The command must exit non-zero on the
+   test commit on the behaviour's assertion, not "module not found", and exit 0 on the head. When the
+   receipt is `red: n/a <why>` (`new module` is valid when no assertion can fail before the module
+   exists), skip the test-commit run and the order check, judge the why, and still run the head.
+   Run each command as `{ <cmd>; } > <scratch>/run.log 2>&1; echo "exit $?"; tail -5 <scratch>/run.log`;
+   report `verified: <cmd> | exit 0` only on a pass.
 4. Compare the raw outputs, not your memory of them. Run anything timing-sensitive at least 3 times.
 5. Judge each claim:
    - **VERIFIED**: the outputs differ (or match, for a refactor) exactly as claimed, with no confound;

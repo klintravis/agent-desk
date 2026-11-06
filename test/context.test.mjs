@@ -73,6 +73,23 @@ test('subagent-context: SessionStart adds the board and the next todo per repo',
   assert.match(c, /- a: nothing open\n- b: T-1 \[open\] first b job/);
 });
 
+test('subagent-context: an unknown config key keeps the board and the repo lines', () => {
+  const { home } = multiDesk();
+  const f = join(home, 'desk.config.json');
+  writeFileSync(f, JSON.stringify({ ...JSON.parse(readFileSync(f, 'utf8')), fromANewerKit: 1 }));
+  assert.match(ctx(home, 'SessionStart').hookSpecificOutput.additionalContext, /- a: nothing open\n- b: nothing open/);
+});
+
+test('subagent-context: a board line with no ts or an array keeps the board in the context', () => {
+  const { home } = multiDesk();
+  writeFileSync(join(home, 'board.jsonl'), '{"kind":"note","slug":"x"}\n[]\n');
+  writeFileSync(join(home, 'decisions.jsonl'), '[]\n');
+  const c = ctx(home, 'SessionStart').hookSpecificOutput.additionalContext;
+  assert.match(c, /# Desk board/);
+  assert.match(c, /note x/);
+  assert.doesNotMatch(desk(home, 'decide', '--list').stdout, /undefined/);
+});
+
 test('subagent-context: the desk comes from the payload cwd (Claude or Copilot payload); Claude form out', () => {
   const { root, home } = multiDesk();
   const inRepo = join(root, 'a'), payloads = [

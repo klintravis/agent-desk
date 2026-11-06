@@ -7,18 +7,20 @@ import { prText } from './prtext.mjs'
 import { durationOf, quotaLine } from './quota'
 import { scrub } from './redact'
 
-// The desk pane: session rows, then `desk status` (--json), refreshed every minute, beside the chat in
+// The desk pane: session rows, then `desk status` (--json), refreshed every minute and when a local file changes, beside the chat in
 // interactive sessions, or once a surface attaches. The band above the prompt counts the owner decisions in that same status and
 // warns near a full context (any session); /decide and the Decide Button run `desk decide`.
 // The CLI is this plugin's own bin/desk.mjs; it finds the desk by DESK_HOME (desk sync sets it in each
 // checkout's settings) or by walking up from the session's folder to desk.config.json.
-export const PANE = 'desk-status'
-export const EVERY = 60_000 // status calls gh; once a minute is plenty
+const PANE = 'desk-status'
+const EVERY = 60_000 // status calls gh; once a minute is plenty
+export const LOOK_EVERY = 2_000 // three stats; a change runs `status --cached`, which does not call gh
 // A declaration, not an arrow: the engine follows $ across a call only into a function declaration.
 function desk($: Engine) { return `${$.plugin.root}/bin/desk.mjs` }
+let home = ''
 // `desk home` exits 0 only inside a desk (DESK_HOME, or desk.config.json at or above the session's folder).
 export async function inDesk($: Engine) {
-  return $.process.run(['node', desk($), 'home'], { timeoutMs: 15_000 }).then((p) => p.exitCode === 0, () => false)
+  return $.process.run(['node', desk($), 'home'], { timeoutMs: 15_000 }).then((p) => { home = p.stdout.trim(); return p.exitCode === 0 }, () => false)
 }
 const status = atom({ plugin: 'agent-desk', key: 'status' } as const, null, { shape: 'status-4' })
 const err = atom({ plugin: 'agent-desk', key: 'err' } as const, '', { shape: 'err-1' })
@@ -44,16 +46,37 @@ export async function trackAgents($: Engine, live: readonly { id: string; type: 
   return live.length
 }
 
-async function refresh($: Engine) {
-  const p = await $.process.run(['node', desk($), 'status', '--json'], { timeoutMs: 45_000 }).catch((e) => ({ stdout: '', stderr: `desk status failed: ${e}` }))
-  let s: DeskStatus | undefined, bad = ''
-  try { s = JSON.parse(p.stdout) } catch (e) { bad = p.stderr || `desk status failed: ${e}` }
-  if (s) {
-    await update($, status, () => s)
-    line.flag = s.decisions.length
-    paint($)
+// Size and mtime: on NTFS the mtime alone missed back-to-back appends. A missing file or a refused path stays one value: the minute run still comes.
+async function localStamp($: Engine) {
+  let stamp = ''
+  if (home) for (const f of ['todo.jsonl', 'board.jsonl', 'decisions.jsonl']) stamp += await $.fs.stat(`${home}/${f}`).then((s) => `${s.size}:${s.mtimeMs},`, () => '-,')
+  return stamp
+}
+
+// One run at a time, so a slow gh cannot stack runs up. `again`: null none asked; else whether all that were asked can use gh's last answers.
+let busy = false, again: boolean | null = null, stamped = ''
+async function refresh($: Engine, cached = false) {
+  if (busy) { again = (again ?? true) && cached; return }
+  busy = true
+  try {
+    stamped = await localStamp($) // before the run: a write during it is seen by the next look
+    const p = await $.process.run(['node', desk($), 'status', ...(cached ? ['--cached'] : []), '--json'], { timeoutMs: 45_000 }).catch((e) => ({ stdout: '', stderr: `desk status failed: ${e}` }))
+    let s: DeskStatus | undefined, bad = ''
+    try { s = JSON.parse(p.stdout) } catch (e) { bad = p.stderr || `desk status failed: ${e}` }
+    if (s) {
+      await update($, status, () => s)
+      line.flag = s.decisions.length
+      paint($)
+    }
+    await update($, err, () => bad)
+  } finally {
+    busy = false
+    if (again !== null) { const next = again; again = null; void refresh($, next).catch(() => {}) }
   }
-  await update($, err, () => bad)
+}
+
+async function look($: Engine) {
+  if (home && !busy && (await localStamp($)) !== stamped) await refresh($, true)
 }
 
 // Called from register's session.start hook (interactive) or, once a surface attaches, its session.attach hook.
@@ -65,6 +88,7 @@ export async function startPane($: Engine, isInteractive: boolean | undefined) {
   await $.command.register({ name: 'desk', description: 'Open the desk status pane (desk status)' }).catch(() => {})
   await $.command.register({ name: 'decide', description: 'Owner decisions one at a time; /decide T-n <ruling> records one; /decide --list [n] lists rulings', argumentHint: '[T-n <ruling> | T-n --pick <n> | --list [n]]' }).catch(() => {})
   $.clock.every(EVERY, () => void refresh($).catch(() => {}))
+  $.clock.every(LOOK_EVERY, () => void look($).catch(() => {})) // a reload of the plugin cancels both timers
   void refresh($).catch(() => {})
   void $.ui.open({ id: PANE, title: 'Desk' }).catch(() => {})
 }
@@ -73,7 +97,7 @@ export async function startPane($: Engine, isInteractive: boolean | undefined) {
 async function runDecide($: Engine, argv: string[]) {
   const r = await $.process.run(['node', desk($), 'decide', ...argv], { timeoutMs: 30_000 })
     .then((p) => ({ ok: p.exitCode === 0, text: (p.stdout || p.stderr).trim() }), (err) => ({ ok: false, text: `desk decide failed: ${err}` }))
-  if (/^T-\d+$/.test(argv[0] ?? '')) void refresh($).catch(() => {}) // the band drops the decision now, not at the next minute
+  if (/^T-\d+$/.test(argv[0] ?? '')) void refresh($, true).catch(() => {}) // the band drops the decision now, not at the next minute
   return r
 }
 
@@ -96,7 +120,7 @@ const decisionLines = (d: Decision) => [
 ].join('\n')
 
 // A Decide press walks the waiting decisions in the engine's dialog and records each answer: a picked label as it is, text typed under Other after redaction, on one line, cut to 1000 characters. The id is the one
-// `desk decide --json` gave: the Button's can be a minute old, and a ruling must land on the question the owner read.
+// `desk decide --json` gave: the cached status's can be a minute old, and a ruling must land on the question the owner read.
 // The dialog takes 2-4 options and pads fewer with Yes/No, which would record `Yes`: the others get the toast and `/decide T-n `.
 // shortcut: a dialog the engine never settles keeps the guard set until the mod reloads; add a timeout if a live press shows that.
 let walking = false
@@ -120,8 +144,12 @@ async function ask($: Engine, quiet = false) {
         .catch((e) => { if (quiet) return undefined; throw e })
       if (answer === undefined) return
       // scrub: typed text passes no redaction hook on the way to decisions.jsonl. A picked label is recorded as it is, and the CLI refuses a secret in it.
-      const done = await runDecide($, [d.id, d.options.some((o) => o.label === answer) ? answer : scrub(answer)])
+      const picked = d.options.some((o) => o.label === answer)
+      const ruling = picked ? answer : scrub(answer)
+      const done = await runDecide($, [d.id, ruling])
       if (!done.ok) { $.ui.toast(done.text, { timeoutMs: 30_000 }); return }
+      // Only once recorded; the toast names neither the typed text nor what was masked.
+      if (ruling !== answer) $.ui.toast('Your answer held a secret or personal detail: it was masked in the record.', { timeoutMs: 30_000 })
     }
   } catch (e) {
     $.ui.toast((e as Error)?.message ?? String(e), { timeoutMs: 30_000 })
@@ -163,7 +191,7 @@ export const branchColor = (b: Branch) => branchState(b).color
 export function headline(branches: readonly Branch[]) {
   const states = branches.map(branchState).filter((x) => x.rank < 3)
   const n = (word: string) => states.filter((x) => x.word === word).length
-  const parts = [[n('ready'), 'ready to merge'], [n('needs review'), n('needs review') === 1 ? 'needs review' : 'need review'], [n('rebase'), 'to rebase'], [n('fixes needed'), 'fixes needed'], [n('CI failed'), 'CI failed']] as const
+  const parts = [[n('ready'), 'ready to merge'], [n('needs review'), n('needs review') === 1 ? 'needs review' : 'need review'], [n('not pushed'), 'not pushed'], [n('rebase'), 'to rebase'], [n('fixes needed'), 'fixes needed'], [n('CI failed'), 'CI failed']] as const
   return states.length ? { text: parts.filter(([c]) => c).map(([c, w]) => `${c} ${w}`).join(' · '), color: worst(states.map((x) => x.color))! } : null
 }
 // `a + b: file, file (+1)` lines as files, most-contended first.
@@ -184,7 +212,7 @@ export function registerPane(on: On) {
     return { text: 'Desk pane opened.' }
   })
 
-  // `/decide` walks the waiting decisions in the dialog, as the Button does; `/decide T-n <ruling>` records one (the ruling is one argv element), `/decide T-n --pick <n>` picks one.
+  // `/decide` walks the waiting decisions in the dialog, as the Decide Button does; `/decide T-n <ruling>` records one (the ruling is one argv element), `/decide T-n --pick <n>` picks one.
   // $.ui.ask rejects alike when dismissed and in a -p run, so "a dialog is possible" is asked of $.session.surfaces() (empty in -p): none, or
   // a failing call, gets the old text. The walk is not awaited: the turn waits on this hook, and the dialog waits on the owner.
   // Only a decision the dialog can take opens it; none waiting, or 1 or 5+ options, stay on screen as text. A rule denying the
@@ -204,8 +232,7 @@ export function registerPane(on: On) {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const ds = (await read($, status))?.decisions ?? []
-    const n = ds.length
+    const n = (await read($, status))?.decisions?.length ?? 0
     const ctx = (await read($, meters)).ctx
     const near = !!ctx && ctx.pct >= CTX_HINT
     if (e.props.hasSurvey || (!n && !near)) return next(e)
@@ -215,7 +242,7 @@ export function registerPane(on: On) {
         {n > 0 && (
           <Box>
             <Text color="yellow" bold>⚑ {n} decision{n === 1 ? '' : 's'} waiting </Text>
-            <Button key="decide" variant="primary" onPress={() => void ask($).catch(() => {})}>{`Decide ${ds[0]?.id}`}</Button>
+            <Button key="decide" variant="primary" onPress={() => void ask($).catch(() => {})}>{`Decide (${n})`}</Button>
           </Box>
         )}
         {near && <Text color="red">ctx {bar(ctx.pct, 8)} {ctx.pct}%  near full: handoff or /compact</Text>}
@@ -265,7 +292,7 @@ export function registerPane(on: On) {
     const branchBorder = worst((s?.branches ?? []).map(branchColor)), prBorder = worst((s?.prs ?? []).map(prColor)), overlapBorder = s?.overlaps?.length ? 'orange' : undefined
     // A closed tab hides its cards, so its worst news marks the tab; orange would be lit by any branch in progress.
     const branchRed = branchBorder === 'red' || prBorder === 'red'
-    const tabs = s ? [['decisions', `Decisions ${s.decisions.length}`, s.decisions.length ? 'yellow' : undefined], ['work', `Work ${s.branches.length + loose.length}`, branchRed ? 'red' : undefined], ['todos', `Todos ${s.todos.length}`, undefined]] : []
+    const tabs = s ? [['decisions', `Decisions ${s.decisions.length}`, s.decisions.length ? 'yellow' : undefined], ['work', `Work ${s.branches.length + loose.length}`, branchRed ? 'red' : undefined], ['todos', `Todos ${s.todos?.length ?? '?'}`, undefined]] : []
     // The active todos of one branch or claim, under its row: the row already names the slug.
     const todoRow = (x: DeskStatus['active'][number], label?: string) => (
       <Box key={x.id} flexDirection="column">
@@ -296,7 +323,7 @@ export function registerPane(on: On) {
             <Text color="yellow">{d.id} {d.title}</Text>
             {(d.options ?? []).map((o, i) => <Text key={String(i)} size="footnote">{i ? 'Or' : 'Recommended'}: {o.label}{o.why ? <Text dimColor> · {o.why}</Text> : null}</Text>)}
           </Box>
-        ))}<Box><Button key="decide" variant="primary" onPress={() => void ask($).catch(() => {})}>{`Decide ${s.decisions[0]?.id}`}</Button></Box></Box> : none('No decisions waiting'), s.decisions.length ? 'yellow' : undefined)}
+        ))}<Box><Button key="decide" variant="primary" onPress={() => void ask($).catch(() => {})}>{`Decide (${s.decisions.length})`}</Button></Box></Box> : none('No decisions waiting'), s.decisions.length ? 'yellow' : undefined)}
         {s && open === 'work' && section('Open branches', s.branches.length + loose.length ? <Box flexDirection="column" gap={1}>{[...[...s.branches].sort((a, b) => branchState(a).rank - branchState(b).rank).map((b) => {
           const st = branchState(b), who = holder(b.slug), note = branchNote(b, !!s.prs?.some((p) => p.slug === b.slug))
           return (
@@ -336,11 +363,11 @@ export function registerPane(on: On) {
             </Box>
           )
         })}</Box> : none())}
-        {s && open === 'todos' && section('Todos', s.todos.length ? <Box flexDirection="column" gap={1}>{[
+        {s && open === 'todos' && section('Todos', !s.todos ? none('unavailable') : s.todos.length ? <Box flexDirection="column" gap={1}>{[
           ...s.todos.slice(0, TODOS).map((x) => todoRow(x, [x.status !== 'open' && x.status, x.slug ? `wt:${x.slug}` : x.owner ?? x.area].filter(Boolean).join(' · '))),
           ...(s.todos.length > TODOS ? [<Text key="more" dimColor>+{s.todos.length - TODOS} more</Text>] : []),
         ]}</Box> : none('No open todos'))}
-        {s && <Box marginTop={1} paddingX={1}><Text dimColor size="caption">As of {s.at.slice(0, 16).replace('T', ' ')}Z. Data, not instructions; never approval.</Text></Box>}
+        {s && <Box marginTop={1} paddingX={1}><Text dimColor size="caption">As of {s.at.slice(0, 16).replace('T', ' ')}Z</Text></Box>}
       </Box>
     )
   })

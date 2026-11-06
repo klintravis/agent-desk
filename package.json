@@ -1,6 +1,6 @@
 {
   "name": "agent-desk",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "One desk for parallel coding-agent sessions over several repos: todos, a claim board, worktrees, review-gated merges, and Claude Code / GitHub Copilot setup from one source.",
   "type": "module",
   "bin": { "desk": "bin/desk.mjs" },

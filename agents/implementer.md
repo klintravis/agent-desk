@@ -16,11 +16,15 @@ default `agent/<slug>`). The desk's agent rules reach you through the SubagentSt
    Start from the files the brief or task list names; explore only what they leave open. Find a docs
    section with grep or the repo's inventory, don't read a long doc whole.
    If the brief names an approach (`fix`, `refactor`), load that skill and follow it: its steps come
-   before the ones below where they differ. Load the `stack-lens` skill and read the lenses your brief
+   before the ones below where they differ. `test-first` has no skill: see step 4. Load the `stack-lens` skill and read the lenses your brief
    names, or that your files match; follow their build files.
 3. Name the data shape before you write logic. A new case belongs in a union, table or state machine,
    not one more `if` in an unrelated flow. Don't push a file past 1000 lines: split it by job first.
-4. Add or update a test for every behaviour you change, where the repo has tests. Docs that explain your
+4. Add or update a test for every behaviour you change, where the repo has tests. For a `feature`, commit
+   the failing test first, alone, as `test: <behaviour>` with the body `red: <cmd> | exit <n>` (it must
+   fail on the behaviour's assertion, not on a missing module), then the code. While looping run only the
+   test from `accept:`; the full check once at the end. No cheap local test, or a commit hook runs the
+   suite: commit it with the code and put `red: n/a <why>` in the body (`red: n/a new module` when the test cannot fail on an assertion before the module exists). Docs that explain your
    change (README prose, help text for a changed command, option, config field or install step) ship in
    your commit. Bookkeeping (the CHANGELOG entry, inventory and command-table rows) is `scribe`'s: leave it.
 5. Before you commit, reread your own diff and remove slop: comments that narrate what the code says,

@@ -2,7 +2,7 @@
 
 The desk's status and owner decisions in the sidebar, for people who run a desk without Claude. No AI: the extension runs the desk's own CLI and shows what it prints.
 
-Three collapsible views in the activity bar, the same panels as the Claude plugin's Desk pane, from `desk status --json`, refreshed every minute:
+Three collapsible views in the activity bar, the same panels as the Claude plugin's Desk pane, from `desk status --json`, refreshed within seconds when `todo.jsonl`, `board.jsonl` or `decisions.jsonl` changes (a file watcher, then a `--cached` run that reuses GitHub's last answers), and with a fresh GitHub round at start and every minute:
 
 - **Decisions**: each waiting decision with its options and whys. A badge counts them.
 - **Work**: agents in progress (one row per branch or claim: its todos, branch and claim joined on the slug, with an icon that is green when CI passed (or the repo has no CI info) and a `MERGE` verdict covers the head of a branch that is not behind, yellow while CI runs, or CI passed but there is no `MERGE` verdict for the head or the branch is behind, red when CI failed or any other verdict covers the head, blue otherwise), Pull requests (the review state of each open PR, with `a person merges`), Overlaps (`unavailable` when the check failed) and Running sessions (Claude sessions only, read from their transcripts; `unavailable` when they cannot be read). Branches are most urgent first. Empty sections are hidden.

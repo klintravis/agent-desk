@@ -47,7 +47,7 @@ const RANK = { 'CI failed': 0, 'fixes needed': 0, rebase: 1, 'needs review': 1, 
 const prColour = (p) => (p.decision === 'CHANGES_REQUESTED' ? 'red' : p.decision === 'APPROVED' && !p.unresolved && !p.sinceHead ? 'green' : 'orange');
 const PR = { red: icon('error', 'charts.red'), green: icon('pass', 'charts.green'), orange: icon('circle-large-filled', 'charts.orange') };
 
-const todoTip =(t) => [`${t.id} ${t.title}`, t.state && `state: ${t.state}`, t.next && `next: ${t.next}`];
+const todoTip = (t) => [`${t.id} ${t.title}`, t.state && `state: ${t.state}`, t.next && `next: ${t.next}`];
 
 // One row per branch or claim, with the active todos on that slug. Any other active todo is in `s.todos`.
 function workRows(s) {

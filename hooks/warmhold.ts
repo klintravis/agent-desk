@@ -14,11 +14,11 @@ export const BIG = 50_000
 const PING_PROMPT = 'Cache keep-alive while agents run. Reply with the single word: ok'
 
 // The cold-cache guard and auto-arm are ported from cache-tax (MIT, see THIRD-PARTY.md).
-export type Hold = {
+type Hold = {
   lastMainAt: number; since: number | null; stopped: string | null
-  armedUntil: number; ackedAt: number | null; coldPending: boolean; ctx: number
+  armedUntil: number; ackedAt: number | null; coldPending: boolean; ctx: number; pinging: boolean
 }
-export type Deps = {
+type Deps = {
   now: () => Promise<number>
   active: () => Promise<number> // this session's agents still pending or running
   fork: (prompt: string) => Promise<ModelForkResult>
@@ -29,7 +29,7 @@ export type Deps = {
 // A session that starts with a context already in it was resumed (or continued): its cache age is not
 // known, so it counts as cold until its first main request, and that context is what a rewrite costs.
 export const newHold = (now: number, startCtx = 0): Hold =>
-  ({ lastMainAt: startCtx >= BIG ? now - COLD_AFTER : now, since: null, stopped: null, armedUntil: 0, ackedAt: null, coldPending: false, ctx: startCtx })
+  ({ lastMainAt: startCtx >= BIG ? now - COLD_AFTER : now, since: null, stopped: null, armedUntil: 0, ackedAt: null, coldPending: false, ctx: startCtx, pinging: false })
 
 // Before the user's own send: null on a warm or small cache, else what the send rewrites. Refuse
 // drops the first send per cold spell; the resend goes through (the price is then known and accepted).
@@ -60,6 +60,7 @@ export function mainTurn(h: Hold, now: number, write: number, read: number, ctx:
 export function mainRequest(h: Hold, now: number) {
   h.lastMainAt = now
   h.stopped = null
+  h.since = null // an active session keeps its hold: the 4h cap counts from the last main request (pings are forks with an agentId, not main requests)
 }
 
 const mins = (ms: number) => `${Math.max(0, Math.round(ms / 60e3))}m`
@@ -86,7 +87,15 @@ export async function tick(h: Hold, d: Deps): Promise<'idle' | 'wait' | 'ping' |
     d.status(`warm-hold: ${why}, ping in ${mins(h.lastMainAt + PING_AFTER - now)}`)
     return 'wait'
   }
-  const r = await d.fork(PING_PROMPT).catch((err: unknown) => ({ isAnswered: false as const, reason: String(err) }))
+  if (h.pinging) { // a ping slower than the tick: lastMainAt moves only after it, so a second would re-read the context
+    d.status('warm-hold: pinging')
+    return 'wait'
+  }
+  h.pinging = true
+  let r: ModelForkResult | { isAnswered: false; reason: string } // a rejected fork carries the error text, not a ModelForkResult reason
+  try {
+    r = await d.fork(PING_PROMPT).catch((err: unknown) => ({ isAnswered: false as const, reason: String(err) }))
+  } finally { h.pinging = false }
   if (!r.isAnswered) h.stopped = `ping failed (${'reason' in r ? r.reason : 'no reply'})`
   // A warm ping reads the prefix and writes only its own tail; a big write means the prefix was gone.
   else if (r.usage.cache_creation_input_tokens >= 0.1 * Math.max(1, r.usage.cache_read_input_tokens)) h.stopped = 'the ping found the cache gone'

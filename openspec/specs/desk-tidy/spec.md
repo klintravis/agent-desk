@@ -76,9 +76,14 @@ SHALL NOT mean dead. Tidy SHALL read only names and modification times of transc
 - **THEN** it completes, nothing counts as dead, and orphan handling and review candidates still work
 
 ### Requirement: Clearing ownership
-`desk tidy --apply` SHALL clear `owner` on each open, active or blocked todo whose owner is dead, by appending one line
-to `todo.jsonl` that sets `owner` to an empty string and adds a note naming the old owner and the transcript's age. It
-SHALL change no other field, and SHALL write nothing for a todo with no owner or for a done or dropped todo.
+`desk tidy --apply` SHALL clear `owner` on each open, active or blocked todo whose owner is dead, by appending one line to `todo.jsonl` that sets `owner` to an empty string and adds a note naming the old owner and the transcript's age. It SHALL change no other field, and SHALL write nothing for a todo with no owner or for a done or dropped todo.
+
+#### Scenario: Further rules
+It SHALL re-read each todo immediately before clearing and SHALL write nothing for one whose owner is no longer the dead owner the snapshot named or that is no longer open.
+
+#### Scenario: Owner set meanwhile
+- **WHEN** a session runs `desk todo start T-1` after tidy took its snapshot and before it clears T-1
+- **THEN** T-1 keeps the new owner and no line is written for it
 
 #### Scenario: Owner cleared
 - **WHEN** `desk tidy --apply` runs and active T-1 has a dead owner
@@ -250,11 +255,14 @@ orphan files, and an agent SHALL NOT make such a change by hand.
 - **THEN** it runs `desk tidy` without `--apply` and carries candidates into its plan as proposals for the owner
 
 ### Requirement: Stray worktree folders
-Tidy SHALL list a directory directly in the worktrees folder as stray when its name is a configured git repo's
-`worktreePrefix` followed by a valid slug and no configured git repo's `git worktree list` names that path. A directory
-matching no prefix, or a file, SHALL NOT be listed. When `git worktree list` fails for a repo, that repo's folders SHALL be
-listed as kept with the reason, not as stray. Tidy SHALL NOT delete, move or write into a stray folder, with or without
-`--apply`. The JSON report SHALL carry them under `strayFolders`.
+Tidy SHALL list a directory directly in the worktrees folder as stray when its name is a configured git repo's `worktreePrefix` followed by a valid slug and no configured git repo's `git worktree list` names that path. A directory matching no prefix, or a file, SHALL NOT be listed. When `git worktree list` fails for a repo, that repo's folders SHALL be listed as kept with the reason, not as stray.
+
+#### Scenario: Further rules
+Tidy SHALL NOT delete, move or write into a stray folder, with or without `--apply`. The JSON report SHALL carry them under `strayFolders`. The worktrees folder itself MAY be a symlink or junction: tidy SHALL scan the folder it points to, and that is the only link it follows.
+
+#### Scenario: Linked worktrees folder
+- **WHEN** the worktrees folder is a link to a folder holding `a-gone`, which no repo's `git worktree list` names
+- **THEN** it is listed as stray, and `--apply` changes nothing under the link or anywhere else
 
 #### Scenario: Leftover folder
 - **WHEN** the worktrees folder holds `a-gone`, which `git worktree list` of repo `a` does not name

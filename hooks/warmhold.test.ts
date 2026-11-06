@@ -88,9 +88,28 @@ test('never pings a cache that is already cold, nor past the 4h cap', async () =
   at.t = 1
   await tick(h, d) // hold starts
   at.t = MAX_HOLD + 2
-  h.lastMainAt = at.t - 1 // recent main traffic, but the cap is reached
+  h.lastMainAt = at.t - 1 // a ping just refreshed the cache (not a main request), but the cap is reached
   expect(await tick(h, d)).toBe('stop')
   expect(seen.pings).toBe(0)
+})
+
+test('pings alone hit the 4h cap; a main request restarts it', async () => {
+  const at = { t: 1 }
+  const { d, seen } = deps(at, 1, warm)
+  const h = newHold(0)
+  await tick(h, d) // hold starts at t=1
+  // Pings keep the cache warm but never reset the cap.
+  while (at.t <= MAX_HOLD) { at.t += PING_AFTER; await tick(h, d) }
+  expect(h.stopped).toBe('held 240m, the cap')
+  const pings = seen.pings
+  expect(pings).toBeGreaterThan(3)
+  // Main traffic restarts the hold and the cap clock; a full cap later it stops again.
+  mainRequest(h, at.t)
+  at.t += PING_AFTER
+  expect(await tick(h, d)).toBe('ping') // without the restart this would still be 'stop'
+  while (!h.stopped) { at.t += PING_AFTER; await tick(h, d) }
+  expect(seen.pings).toBeGreaterThan(pings + 3)
+  expect(h.stopped).toBe('held 240m, the cap')
 })
 
 test('a failed ping stops quietly', async () => {
@@ -176,4 +195,24 @@ test('a cold write arms the hold with no agents running; it disarms when the tim
   h.lastMainAt = at.t - 60e3
   expect(await tick(h, d)).toBe('idle')
   expect(h.armedUntil).toBe(0)
+})
+
+test('a ping still running at the next tick is not sent twice; a rejected one frees the flag', async () => {
+  const at = { t: PING_AFTER }
+  let release!: (r: ModelForkResult) => void
+  let pings = 0
+  const { d: base, seen } = deps(at, 1, warm)
+  const d = { ...base, fork: () => { pings++; return new Promise<ModelForkResult>((res) => { release = res }) } }
+  const h = newHold(0)
+  const first = tick(h, d)
+  at.t += 60e3
+  expect(await tick(h, d)).toBe('wait')
+  expect(pings).toBe(1)
+  expect(seen.status.at(-1)).toBe('warm-hold: pinging')
+  release(warm)
+  expect(await first).toBe('ping')
+  expect(h.pinging).toBe(false)
+  at.t += PING_AFTER
+  expect(await tick(h, { ...d, fork: () => Promise.reject(new Error('boom')) })).toBe('ping')
+  expect([h.pinging, h.stopped]).toEqual([false, 'ping failed (Error: boom)'])
 })

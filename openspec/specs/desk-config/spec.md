@@ -10,7 +10,7 @@ in `lib/config.mjs`.
 ### Requirement: Desk folder lookup
 The system SHALL resolve the desk folder from `DESK_HOME` when it is set, and otherwise from the
 nearest folder at or above the current directory that holds `desk.config.json`. Resolution SHALL be
-lazy: importing the CLI, running `desk init` or a `--self-test` SHALL NOT need a desk.
+lazy: importing the CLI or running `desk init` SHALL NOT need a desk.
 
 #### Scenario: DESK_HOME wins
 - **WHEN** `DESK_HOME` is set and the current directory is inside another desk
@@ -61,7 +61,7 @@ identifies exactly one repo.
 - **THEN** loading fails naming both repos
 
 ### Requirement: Top-level keys and defaults
-The system SHALL default `harnesses` to `["claude"]`, `permissions` to `{}` and `outputStyle` to `"Concise"`, SHALL refuse an `outputStyle` that is not a string (an empty string means "do not set one"), SHALL resolve
+The system SHALL default `harnesses` to `["claude"]`, `permissions` to `{}` and `outputStyle` to `"Concise"`, SHALL refuse a `harnesses` that is not a non-empty array of `claude` and `copilot`, SHALL refuse an `outputStyle` that is not a string (an empty string means "do not set one"), SHALL resolve
 `worktreesDir` (default `../worktrees`) and `scratchDir` (default `scratch`) against the desk folder,
 and SHALL keep every other top-level key of the file (such as `kitVersion`).
 
@@ -72,6 +72,14 @@ and SHALL keep every other top-level key of the file (such as `kitVersion`).
 #### Scenario: Bad output style
 - **WHEN** `outputStyle` is a number
 - **THEN** loading fails naming `outputStyle`
+
+#### Scenario: Unknown harness
+- **WHEN** `harnesses` is `["claud"]`
+- **THEN** loading fails naming `harnesses`
+
+#### Scenario: Empty harnesses
+- **WHEN** `harnesses` is `[]`
+- **THEN** loading fails naming `harnesses`
 
 ### Requirement: Repo selection
 `--repo <id>` SHALL select a repo by id and fail naming the known ids when there is none such. Without
@@ -116,7 +124,7 @@ exists, otherwise the running kit.
 - **THEN** skills, agents and the version come from that folder
 
 ### Requirement: Tasks and floor keys
-`desk.config.json` MAY hold `tasks` and `floor`, each mapping a task id to optional `model` and `effort`. `loadConfig` SHALL throw `${file}: ...` for a value outside the accepted model names and efforts, and for `fable` in `floor`. It SHALL NOT check task ids, which the resolver warns about.
+`desk.config.json` MAY hold `tasks` and `floor`, each mapping a task id to optional `model` and `effort`. `loadConfig` SHALL throw `${file}: ...` for a value outside the accepted model names and efforts, for `fable` in `floor`, for a `floor` that is not an object, and for a `floor` entry that is not an object or has a key other than `model` and `effort`. It SHALL NOT check task ids, which the resolver warns about.
 
 #### Scenario: Valid keys
 - **WHEN** the config sets `floor.review` to `opus` and `high`
@@ -134,9 +142,36 @@ exists, otherwise the running kit.
 - **WHEN** `tasks.memo.model` is `fable`
 - **THEN** the config loads
 
+#### Scenario: Malformed floor entry
+- **WHEN** `floor.review` is a string, or has a key such as `modle`
+- **THEN** loading fails naming `floor.review`
+
+#### Scenario: Floor of the wrong type
+- **WHEN** `floor` is `true` or a number
+- **THEN** loading fails naming `floor`
+
 #### Scenario: Schema
 - **WHEN** `desk check` validates a config with these keys
 - **THEN** valid values pass `schemas/desk-config.schema.json` and a floor of `fable` prints a warning line
+
+### Requirement: Unknown keys refused
+`loadConfig` SHALL throw `${file}: ...` naming the key and where it sits for a key that `schemas/desk-config.schema.json` does not list at the top level (`$schema` is listed) or in a `repos` entry, and for a key other than `model` and `effort` in a `tasks` entry. It SHALL also throw for a `tasks` that is not an object, a `tasks` or `repos` entry that is not an object, and a file whose top level is not an object. The allowed keys SHALL be read from that schema, not listed a second time. The CLI SHALL refuse; the hooks (`scripts/merge-guard.mjs`, `scripts/subagent-context.mjs`) SHALL load with `{ strict: false }`, which ignores unknown keys and still throws for every type or value error, so an older plugin copy cannot fail open on a key only a newer kit knows.
+
+#### Scenario: Typo in a repo
+- **WHEN** a repo entry has `chek`
+- **THEN** loading fails with `unknown key "chek" in repos[0]`
+
+#### Scenario: Typo in a tasks entry
+- **WHEN** `tasks.review.modle` is set
+- **THEN** loading fails naming `modle` and `tasks.review`
+
+#### Scenario: Hook ignores an unknown key
+- **WHEN** a hook loads a config holding an unknown key
+- **THEN** it loads and the merge guard still refuses a protected-branch push
+
+#### Scenario: Tasks entry of the wrong type
+- **WHEN** `tasks.review` is `"opus"`
+- **THEN** loading fails naming `tasks.review`
 
 ### Requirement: Merge policy key
 A `git` repo entry MAY set `merge` to `direct` or `review`. It SHALL default to `direct`. The value SHALL be read only from the committed `desk.config.json`: no user-layer file or environment variable SHALL set or override it.

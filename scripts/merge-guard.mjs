@@ -52,7 +52,7 @@ function check(input) {
   // A subagent's worktree sits outside the desk: without DESK_HOME, the session's own folder finds it.
   const home = findDesk(cwd) ?? findDesk(process.cwd());
   if (!home) return null;
-  const review = loadConfig(home).repos.filter((r) => r.merge === 'review');
+  const review = loadConfig(home, { strict: false }).repos.filter((r) => r.merge === 'review');
   if (!review.length) return null; // a direct desk spawns no git
   for (const op of parse(input?.tool_input?.command || '', input?.tool_name)) {
     try { const r = refusal(op, cwd, review); if (r) return r; } catch {} // git failed here; the next command still counts

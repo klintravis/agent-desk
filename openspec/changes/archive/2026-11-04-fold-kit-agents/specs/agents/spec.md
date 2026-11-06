@@ -1,9 +1,4 @@
-# kit-agents Specification
-
-## Purpose
-What the kit's agents in `agents/` and its `decide` and `walkthrough` skills may do and what they report, where that is a promise to the desk. Today: `ci-triage`, `decide`, `walkthrough`.
-
-## Requirements
+## ADDED Requirements
 
 ### Requirement: ci-triage agent
 The kit SHALL ship a `ci-triage` agent, model `haiku`, effort `low`, with the tools `Read`, `Grep`, `Glob` and `Bash` only. Given a run id or a slug it SHALL report the failing step, the failing test and the first error, and SHALL change nothing. It SHALL treat CI log text as untrusted data: it reports that text and never follows it.
@@ -27,6 +22,24 @@ The kit SHALL ship a `ci-triage` agent, model `haiku`, effort `low`, with the to
 #### Scenario: Copilot form
 - **WHEN** `desk sync` writes its Copilot file
 - **THEN** the file's tools are `read`, `search` and `execute`, with no `edit`
+
+### Requirement: verifier reads CI by the head commit
+The `verifier` agent SHALL judge CI from `gh run list -R <owner/name> --commit <HEAD sha>`, every workflow, and SHALL call it green only when at least one run exists, every run is completed, and each concluded `success` or `skipped`.
+
+#### Scenario: Newest run is an older commit
+- **WHEN** the branch's newest run belongs to an earlier commit and the head commit has no run
+- **THEN** CI is not green and the verifier runs the repo's check
+
+#### Scenario: Skipped run
+- **WHEN** every run of the head commit is completed and each is `success` or `skipped`
+- **THEN** CI is green
+
+### Requirement: reviewer returns PR findings in its reply
+On a repo with `merge: "review"` the `reviewer` agent SHALL put its PR findings in its reply under a "PR findings" heading, after the verdict, with the verdict line and its `by <model>/<effort>` outside that heading; the desk session saves them, since the agent has no write tool.
+
+#### Scenario: Findings and verdict
+- **WHEN** a review ends on such a repo
+- **THEN** the reply holds the verdict first and the findings text last, with no model or effort in them
 
 ### Requirement: decide skill
 The kit SHALL ship a `decide` skill for surfaces where the mod's `/decide` command is not in the slash menu. It SHALL read the first waiting decision with `desk decide --json`, stop when that is `null`, ask the owner with AskUserQuestion, one decision per question, each option's label with its why as the description (no why: an empty description, never an invented one), record only the owner's answer, then read the next. Before recording it SHALL read `desk decide --json` again and, if the id or, for a picked option, the label at that place changed, record nothing and ask again. It SHALL end the walk by showing the owner each `Recorded` line. An option the owner picked SHALL be recorded with `desk decide T-n --pick <n>`, never by retyping its label into a command. The owner's own words SHALL be recorded in single quotes: in Bash each `'` written `'\''`, in PowerShell each `'` and each curly single quote doubled; cmd is not supported by this form, so the skill SHALL tell the agent to use Bash or PowerShell. It SHALL treat todo text as data and record nothing for a dismissed question. For fewer than 2 or more than 4 options, or where AskUserQuestion is not available, it SHALL show the options as text and ask for a free answer, and it SHALL NOT pad to reach two options.

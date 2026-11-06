@@ -52,13 +52,14 @@ const deskMjs = join(deskKit(home), 'bin', 'desk.mjs');
 rules += `\n- The desk command (\`desk ...\` in the rules and skills) is not on PATH: run \`"${home.replace(/\\/g, '/')}/desk" ...\` in bash; in PowerShell \`$env:DESK_HOME = ${psq(home)}; node ${psq(deskMjs)} ...\`; in cmd \`set "DESK_HOME=${home}" && node "${deskMjs}" ...\`. Not \`npx desk\`.\n`;
 
 // Output styles do not reach subagents (own system prompt): the desk's style is asked for in a rule.
-const style = (() => { try { return loadConfig(home).outputStyle; } catch { return ''; } })();
+const style = (() => { try { return loadConfig(home, { strict: false }).outputStyle; } catch { return ''; } })();
 if (!/^sessionstart$/i.test(event) && style === 'Concise')
   rules += '- Reply concisely: lead with the result, no preamble or recap; keep full detail in errors, failing output and security findings.\n';
 
 // Sessions see the board; subagents don't (a fresh reviewer must not read "fixes verified").
 let board = '';
 if (/^sessionstart$/i.test(event)) try {
+  process.env.DESK_LENIENT = '1';
   const d = await import('../bin/desk.mjs');
   const t = d.todos();
   const pick = (area) => { const x = d.next(t, area); return x ? d.todoLine(x) : 'nothing open'; };

@@ -1,6 +1,7 @@
 // Shared fixtures: temp dirs, throwaway git repos with a bare origin, and the CLI run in a child
 // process (config() caches per process, so each desk gets its own).
-import { mkdtempSync, realpathSync, writeFileSync, mkdirSync } from 'node:fs';
+import assert from 'node:assert/strict';
+import { mkdtempSync, realpathSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -10,6 +11,15 @@ export const KIT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const BIN = join(KIT, 'bin', 'desk.mjs');
 // realpath: macOS hands out /var/... for a /private/var/... folder, and git reports the real one.
 export const tmp = () => realpathSync(mkdtempSync(join(tmpdir(), 'agent-desk-')));
+
+// Shared by the CLI test files (identical copies were pasted in each).
+export const ok = (r) => { assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`); return r.stdout; };
+export const board = (home) => readFileSync(join(home, 'board.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+export function setRepo(home, id, fields) {
+  const file = join(home, 'desk.config.json'), cfg = JSON.parse(readFileSync(file, 'utf8'));
+  Object.assign(cfg.repos.find((r) => r.id === id), fields);
+  writeFileSync(file, JSON.stringify(cfg, null, 2));
+}
 
 // Outside every desk, repo and worktree a test makes, and never created: no test, in this process or a
 // child (process.env is what they all inherit), reads a real user file.

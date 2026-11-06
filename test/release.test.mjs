@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmp, KIT, git, commit } from './helpers.mjs';
 import { bump, notes, versions, section, publish } from '../scripts/release.mjs';
@@ -102,6 +102,15 @@ test('publish pushes each tag as one commit on the public main; private history 
   commit(d, 'b.txt', 'b\n');
   git(d, 'tag', '-f', 'v0.2.0');
   assert.throws(() => publish('v0.2.0', d), /not on main/);
+});
+
+test('release.mjs runs through a linked folder: the usage error shows instead of a silent exit 0', () => {
+  const link = join(tmp(), 'lnk');
+  symlinkSync(join(KIT, 'scripts'), link, 'junction');
+  // `publish` without a tag is a usage error: nothing touches git or a remote.
+  const r = spawnSync(process.execPath, [join(link, 'release.mjs'), 'publish'], { encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /usage: release\.mjs/);
 });
 
 test('CI picks runners by visibility; releases run only on a public repo', () => {

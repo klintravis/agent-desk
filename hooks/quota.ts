@@ -6,7 +6,7 @@ import { bar } from './meters'
 // burn rate over kept samples. Ported from quota-meter (MIT, see THIRD-PARTY.md), trimmed to the
 // one line the status line and the Desk pane draw. Pure: nothing here touches `$`.
 
-export type Sample = { atMs: number; percentUsed: number; resetsAt?: string }
+type Sample = { atMs: number; percentUsed: number; resetsAt?: string }
 export type Samples = Record<string, Sample[]>
 
 const HOUR = 3600e3
@@ -37,8 +37,10 @@ export function addSample(kept: readonly Sample[], next: Sample, windowMs: numbe
   const last = kept.at(-1)
   const reset = last !== undefined && ((last.resetsAt !== undefined && next.resetsAt !== undefined && last.resetsAt !== next.resetsAt) ||
     next.percentUsed < last.percentUsed - RESET_DROP)
-  const rows = [...(reset ? [] : kept.filter((s) => s.atMs >= next.atMs - windowMs && s.atMs < next.atMs)), next]
-  return rows.slice(-MAX_SAMPLES)
+  const rows = reset ? [] : kept.filter((s) => s.atMs >= next.atMs - windowMs && s.atMs < next.atMs)
+  // While the newest row is closer than window/240 to the one before it, a reading replaces it, so 240 rows span the window.
+  if (rows.length >= 2 && rows[rows.length - 1]!.atMs - rows[rows.length - 2]!.atMs < windowMs / MAX_SAMPLES) rows.pop()
+  return [...rows, next].slice(-MAX_SAMPLES)
 }
 
 // Percent per hour, first sample to last; null until the span means something.
@@ -56,7 +58,7 @@ export function durationOf(ms: number): string {
   return h > 0 ? `${h}h${String(m % 60).padStart(2, '0')}m` : `${m}m`
 }
 
-export type Quota = { rows: { name: string; pct: number; until: number | null }[]; tail: string }
+type Quota = { rows: { name: string; pct: number; until: number | null }[]; tail: string }
 
 // The windows (5h first) with their reset countdown, and the tail: the window that fills before it resets, if any.
 export function quotaOf(limits: readonly SessionRateLimit[], samples: Samples, now: number): Quota | undefined {

@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, realpathSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { findDesk, loadConfig, repoFor, wtDir, worktreeList, projectDirName, projectPrefixes, isDeskProject, MODELS, EFFORTS, userSettingsPath, readUserSettings, orchestrateTable, resolveSettings } from '../lib/config.mjs';
+import { pathToFileURL } from 'node:url';
+import { isMain, findDesk, loadConfig, repoFor, wtDir, worktreeList, projectDirName, projectPrefixes, isDeskProject, MODELS, EFFORTS, userSettingsPath, readUserSettings, orchestrateTable, resolveSettings } from '../lib/config.mjs';
 import { schema } from '../lib/schema.mjs';
 import { tmp, env, NO_USER_SETTINGS } from './helpers.mjs';
 
@@ -48,7 +49,7 @@ test('readUserSettings: a folder in place of the file warns and does not throw',
 });
 
 test('readUserSettings: a byte-order mark from a Windows editor still parses', () => {
-  assert.equal(resolved({}, '﻿{"tasks":{"review":{"effort":"low"}}}').tasks.review.effort, 'low');
+  assert.equal(resolved({}, '\uFEFF{"tasks":{"review":{"effort":"low"}}}').tasks.review.effort, 'low');
 });
 
 test('readUserSettings: unknown keys warn by name, never by value, and have no effect', () => {
@@ -71,7 +72,8 @@ test('readUserSettings: one bad value warns and the others apply', () => {
   assert.equal(r.tasks.memo.effort, 'max');
   assert.deepEqual({ ...r.cache }, { promptCacheTtl: '5m' });
   assert.equal(r.warnings.length, 3);
-  assert.equal(r.warnings.some((w) => w.includes('claude-opus-4-5') || w.includes('2h')), false);
+  // After the path: its random temp folder name can hold the same letters.
+  assert.equal(r.warnings.some((w) => /claude-opus-4-5|2h/.test(w.slice(w.indexOf(': ')))), false);
 });
 
 test('readUserSettings: only the accepted model names pass', () => {
@@ -136,7 +138,9 @@ test('resolveSettings: the floor beats the user and the desk, records what it re
   const user = resolved({ floor }, { tasks: { review: { model: 'sonnet', effort: 'medium' } } }).tasks.review;
   assert.deepEqual(user, { agent: 'reviewer', task: 'review', model: 'opus', effort: 'high', source: { model: 'floor', effort: 'floor' }, replaced: { model: 'sonnet', effort: 'medium' }, shared: { model: 'opus', effort: 'high' } });
   const desk = resolved({ floor, tasks: { review: { effort: 'low' } } }, {}).tasks.review;
-  assert.deepEqual([desk.effort, desk.source.effort, desk.replaced, desk.shared.effort], ['high', 'floor', { effort: 'low' }, 'high']);
+  assert.deepEqual([desk.effort, desk.source.effort, desk.replaced, desk.shared.effort], ['high', 'floor', undefined, 'high']); // the user set nothing: nothing of theirs was replaced
+  const mixed = resolved({ floor, tasks: { review: { effort: 'low' } } }, { tasks: { review: { model: 'sonnet' } } }).tasks.review;
+  assert.deepEqual(mixed.replaced, { model: 'sonnet' }, 'only the dimension the user set');
   const above = resolved({ floor }, { tasks: { review: { model: 'fable', effort: 'max' } } }).tasks.review;
   assert.deepEqual([above.model, above.effort, above.source, above.replaced], ['fable', 'max', { model: 'user', effort: 'user' }, undefined]);
   const equal = resolved({ floor }, {}).tasks.review;
@@ -174,6 +178,26 @@ test('the orders: lowest first, and the schemas cannot drift from them', () => {
   for (const e of [entry(user.properties.tasks), entry(desk.properties.tasks)]) assert.deepEqual([e.model.enum, e.effort.enum], [MODELS, EFFORTS]);
   const floor = entry(desk.properties.floor);
   assert.deepEqual([floor.model.enum, floor.effort.enum], [MODELS.filter((m) => m !== 'fable'), EFFORTS]);
+});
+
+test('loadConfig: refuses an unknown key at the top level, in a repo and in a tasks entry, naming it', () => {
+  assert.throws(() => loadConfig(deskWith({ repos: [], harnesess: ['claude'] })), /unknown key "harnesess" in the top level/);
+  assert.throws(() => loadConfig(deskWith({ repos: [{ id: 'app', path: '.', chek: 'x' }] })), /unknown key "chek" in repos\[0\]/);
+  assert.throws(() => loadConfig(deskWith({ tasks: { review: { modle: 'opus' } } })), /unknown key "modle" in tasks\.review/);
+});
+
+test('loadConfig: refuses a non-object tasks, tasks entry, repo entry or top level', () => {
+  assert.throws(() => loadConfig(deskWith({ tasks: { review: 'opus' } })), /tasks\.review must be an object/);
+  assert.throws(() => loadConfig(deskWith({ tasks: ['review'] })), /tasks must be an object/);
+  assert.throws(() => loadConfig(deskWith({ repos: ['app'] })), /repos\[0\] must be an object/);
+  assert.throws(() => loadConfig(deskWith([])), /top level must be an object/);
+});
+
+test('loadConfig: every key the schema lists is accepted, $schema included', () => {
+  const props = schema('desk-config').properties;
+  const repo = { id: 'app', path: '.', ...Object.fromEntries(Object.keys(props.repos.items.properties).filter((k) => !['id', 'path', 'copy', 'merge'].includes(k)).map((k) => [k, k === 'kind' ? 'git' : k === 'branchPrefix' ? 'a/' : 'x'])), copy: [], merge: 'direct' };
+  const c = loadConfig(deskWith({ ...Object.fromEntries(Object.keys(props).map((k) => [k, 'x'])), repos: [repo], tasks: { review: { model: 'opus', effort: 'low' } }, floor: {}, permissions: {}, harnesses: ['claude'], outputStyle: '' }));
+  assert.equal(c.repos[0].id, 'app');
 });
 
 test('findDesk: DESK_HOME wins, else walk up to desk.config.json, else null', () => {
@@ -252,4 +276,24 @@ test('transcript folders: every non-alphanumeric becomes -, matched case-insensi
   assert.ok(isDeskProject(p, projectDirName(c.home).toUpperCase()));
   assert.ok(isDeskProject(p, projectDirName(join(c.worktreesDir, 'a-x'))));
   assert.ok(!isDeskProject(p, projectDirName(c.home) + 'x'));
+});
+
+test('isMain: direct path and a linked folder match; no argv, a missing path or another file do not', () => {
+  const real = join(tmp(), 'real'), link = join(tmp(), 'lnk');
+  mkdirSync(real);
+  writeFileSync(join(real, 'a.mjs'), '');
+  symlinkSync(real, link, 'junction'); // a folder link works on Windows and, as a plain symlink, on Linux
+  const url = pathToFileURL(join(real, 'a.mjs')).href;
+  assert.equal(isMain(url, join(real, 'a.mjs')), true);
+  assert.equal(isMain(url, join(link, 'a.mjs')), true);
+  assert.equal(isMain(url, undefined), false);
+  assert.equal(isMain(url, join(link, 'missing.mjs')), false);
+  assert.equal(isMain(url, join(real, 'b.mjs')), false);
+});
+
+test('loadConfig: a harnesses value other than claude and copilot, and a malformed floor entry, are refused', () => {
+  assert.deepEqual(loadConfig(deskWith({ repos: [], harnesses: ['claude', 'copilot'] })).harnesses, ['claude', 'copilot']);
+  for (const harnesses of [['claud'], 'claude', [1], []]) assert.throws(() => loadConfig(deskWith({ repos: [], harnesses })), /harnesses must be/);
+  for (const floor of [true, 5, 'x', []]) assert.throws(() => loadConfig(deskWith({ repos: [], floor })), /floor must be an object/);
+  for (const entry of ['opus', null, [], { modle: 'opus' }]) assert.throws(() => loadConfig(deskWith({ repos: [], floor: { review: entry } })), /floor\.review must be an object/);
 });

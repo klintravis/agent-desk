@@ -6,7 +6,10 @@ How agent-desk is released: a git tag `v<version>` on `main` plus a GitHub relea
 ## Requirements
 
 ### Requirement: Version bump
-`node scripts/release.mjs bump <version>` SHALL require `<version>` to be `x.y.z` and greater than the current version, and the current `package.json`, `.claude-plugin/plugin.json` and `vscode/package.json` versions to agree. It SHALL write the version into all three files, keeping their formatting, and insert `## <version> - <YYYY-MM-DD>` under `## Unreleased` in `CHANGELOG.md`, so the Unreleased entries become that version's and an empty `## Unreleased` stays on top. On any refusal it SHALL exit 1 and write nothing.
+`node scripts/release.mjs bump <version>` SHALL require `<version>` to be `x.y.z` and greater than the current version, and the current `package.json`, `.claude-plugin/plugin.json` and `vscode/package.json` versions to agree.
+
+#### Scenario: Further rules
+It SHALL write the version into all three files, keeping their formatting, and insert `## <version> - <YYYY-MM-DD>` under `## Unreleased` in `CHANGELOG.md`, so the Unreleased entries become that version's and an empty `## Unreleased` stays on top. On any refusal it SHALL exit 1 and write nothing.
 
 #### Scenario: Good bump
 - **WHEN** the current version is 0.1.0, Unreleased has entries and `bump 0.2.0` runs
@@ -71,6 +74,13 @@ Pushing a tag `v*` SHALL run `.github/workflows/release.yml` with `contents: wri
 #### Scenario: Tag off main, out of step or already published
 - **WHEN** the tag is not on `main`, its version files differ from the checkout, or the public repo already has it
 - **THEN** publish fails and the public repo is unchanged
+
+### Requirement: Scripts run through a link
+`scripts/release.mjs`, `scripts/docs-check.mjs`, `scripts/gh-review-live.mjs` and `bin/desk.mjs` SHALL run their command when started through a symlink or junction, and SHALL NOT exit 0 silently.
+
+#### Scenario: Started through a junction
+- **WHEN** `node <junction>/release.mjs publish` runs with no tag
+- **THEN** it prints the usage error and exits 1
 
 ### Requirement: CI runners
 `.github/workflows/ci.yml` SHALL run on the self-hosted runner when the repository the event belongs to is private and on hosted Linux, Windows and macOS otherwise: Node 22 on each, and Node 20 on Linux (or the self-hosted runner) only. It SHALL run once per commit: on push, and on `pull_request` only for a pull request from a fork. A runner SHALL never be registered on the public repo, since a fork's pull request runs its own copy of the workflow.

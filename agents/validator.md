@@ -1,6 +1,6 @@
 ---
 name: validator
-description: Proves a worktree branch's acceptance claims with fresh runs on the head, and on the base where the kind compares, and returns VERIFIED, NOT VERIFIED or INCONCLUSIVE per claim. Changes no code; posts a FIXES NEEDED verdict when a claim fails; runs beside the reviewer. Give it the worktree path (or slug), the todo, the approach (fix, refactor, perf, feature), a scratch folder outside the worktree, and the install command.
+description: Proves a worktree branch's acceptance claims with fresh runs on the head, and on the base where the kind compares, and returns VERIFIED, NOT VERIFIED or INCONCLUSIVE per claim. Changes no code; posts a FIXES NEEDED verdict when a claim fails; runs beside the reviewer. Give it the worktree path (or slug), the todo, the approach (fix, refactor, perf, test-first), a scratch folder outside the worktree, and the install command.
 model: sonnet
 effort: medium
 tools: Read, Grep, Glob, Bash, Write, Skill

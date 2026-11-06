@@ -5,7 +5,7 @@ export type DeskStatus = {
   decisions: { id: string; title: string; options?: { label: string; why?: string }[] }[]
   active: { id: string; title: string; status: string; [k: string]: unknown }[]
   /** Open, blocked and active todos except an active one on a branch or claim (that one is in Work); active first, then by priority; never owner decisions, nor ideas unless active. */
-  todos: { id: string; title: string; status: string; [k: string]: unknown }[]
+  todos?: { id: string; title: string; status: string; [k: string]: unknown }[]
   claims: { slug: string; from: string; ts: string; last: string | null }[]
   sessions: { session: string; title?: string; slug?: string; agents: { type: string; about: string }[] }[] | null
   roots: { id: string; kind: string; path: string; gh?: string; defaultBranch?: string; merge?: 'direct' | 'review'; sha?: string }[]
@@ -13,7 +13,7 @@ export type DeskStatus = {
   prs: { slug: string; number: number; decision: string; comments: number; unresolved: number; sinceHead: number }[] | null
   overlaps: string[] | null
   tokens: { calls: number; fresh: number; cached: number; out: number } | null
-  /** The active user layer: tasks below the shared value and values a floor raised; null when none is active. */
+  /** The active user layer: tasks below the shared value and values of the user file a floor raised; null when none is active. */
   user: {
     file: string
     below: { task: string; model: string; effort: string; shared: { model: string; effort: string } }[]

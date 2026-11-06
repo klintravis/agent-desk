@@ -47,7 +47,10 @@ The extension SHALL hold no desk logic and SHALL run `node <desk>/node_modules/a
 - **THEN** the CLI acts on the desk of the workspace root
 
 ### Requirement: Refresh
-The views SHALL run the status at start, every 60 seconds and on the Refresh command, one run at a time; a request during a run SHALL cause one more run after it. Until the first result they SHALL say `Loading desk status…`. A failing run SHALL show its error and keep the last rows.
+The views SHALL run the status at start, every 60 seconds and on the Refresh command, one run at a time; a request during a run SHALL cause one more run after it, a plain one if any request was plain. Until the first result they SHALL say `Loading desk status…`. A failing run SHALL show its error and keep the last rows.
+
+#### Scenario: Further rules
+A `FileSystemWatcher` on the desk's `todo.jsonl`, `board.jsonl` and `decisions.jsonl` SHALL run `desk status --cached --json` 300 ms after the last event of a burst. A recorded ruling SHALL run it too. The watcher SHALL follow the desk when the workspace folders change and SHALL be disposed with its pending debounce when the extension stops. The 60 second run stays, as the fallback for a watcher that fails silently.
 
 #### Scenario: Failing run
 - **WHEN** a run exits non-zero
@@ -57,8 +60,19 @@ The views SHALL run the status at start, every 60 seconds and on the Refresh com
 - **WHEN** a ruling is recorded while a status run is in flight
 - **THEN** another run follows, so the decision leaves the view without waiting a minute
 
+#### Scenario: A burst of writes
+- **WHEN** the watcher fires several times within 300 ms
+- **THEN** one `desk status --cached --json` runs
+
+#### Scenario: The extension stops
+- **WHEN** the extension is disposed with a debounce pending
+- **THEN** the watcher is disposed and no run follows
+
 ### Requirement: Decide walk
-The Decide command SHALL read `desk decide --json`, as `hooks/pane.tsx` does: the id is the one just read, never the row's, so a ruling lands on the question the owner read. It SHALL offer the options in a quick pick, each row's label the option's label, its detail the option's why, the first marked recommended in its description, and `Other…` last for a free-text ruling in an input box; a decision with no options goes straight to the input box. It SHALL record the answer with `desk decide <id> <ruling>` without a shell, then read the next decision. A choice SHALL record the label only. One walk SHALL run at a time.
+The Decide command SHALL read `desk decide --json`, as `hooks/pane.tsx` does: the id is the one just read, never the row's, so a ruling lands on the question the owner read. It SHALL offer the options in a quick pick, each row's label the option's label, its detail the option's why, the first marked recommended in its description, and `Other…` last for a free-text ruling in an input box; a decision with no options goes straight to the input box.
+
+#### Scenario: Further rules
+It SHALL record the answer with `desk decide <id> <ruling>` without a shell, then read the next decision. A choice SHALL record the label only. One walk SHALL run at a time.
 
 #### Scenario: Pick and record
 - **WHEN** T-5 has options `Keep: it works` and `Drop: less code`, and the owner picks `Drop`
@@ -118,7 +132,10 @@ The Decisions view SHALL show each waiting decision as `<id> <title>`, its optio
 - **THEN** the view has one row, `No decisions waiting`
 
 ### Requirement: Work view
-The Work view SHALL hold one row per branch or claim, joined with the active todos on that slug (several are its children), most urgent branch first (as the pane's Open branches card), then `Pull requests`, `Overlaps` and `Running sessions` with their counts, each hidden when empty. A pull request row shows its review state, comments, unresolved and new-since-head counts, coloured as the pane's card, and `a person merges` when its branch's PR is open; the branch row then does not repeat the open PR. A row SHALL show the todo's summary, else its title, else the slug, with only the branch state word, `behind`, the PR, `claimed` and `N todos` as description, and the rest in the tooltip. With nothing in it the view SHALL show `Nothing in progress`.
+The Work view SHALL hold one row per branch or claim, joined with the active todos on that slug (several are its children), most urgent branch first (as the pane's Open branches card), then `Pull requests`, `Overlaps` and `Running sessions` with their counts, each hidden when empty.
+
+#### Scenario: Further rules
+A pull request row shows its review state, comments, unresolved and new-since-head counts, coloured as the pane's card, and `a person merges` when its branch's PR is open; the branch row then does not repeat the open PR. A row SHALL show the todo's summary, else its title, else the slug, with only the branch state word, `behind`, the PR, `claimed` and `N todos` as description, and the rest in the tooltip. With nothing in it the view SHALL show `Nothing in progress`.
 
 #### Scenario: One row per piece of work
 - **WHEN** a slug has a todo, a branch and a claim

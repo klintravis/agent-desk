@@ -69,8 +69,9 @@ keep-warm is `off`.
 
 ### Requirement: Warm-hold ping
 While keep-warm is `auto`, and warm-hold is armed or the session's agents are pending or running, the
-plugin SHALL check once a minute and ping the cache when it is 50 minutes old. Its state SHALL show in
-the Desk pane's Warm row, not on the status line.
+plugin SHALL check once a minute and ping the cache when it is 50 minutes old, and SHALL NOT start a
+ping while the previous one is still running. Its state SHALL show in the Desk pane's Warm row, not on
+the status line.
 
 #### Scenario: Waiting
 - **WHEN** the cache is under 50 minutes old
@@ -80,6 +81,10 @@ the Desk pane's Warm row, not on the status line.
 - **WHEN** the cache is 50 minutes old
 - **THEN** a fork asks for the single word `ok`, which reads the prefix and keeps the cache warm for another hour
 - **AND** the Warm row says how many tokens were read from the cache
+
+#### Scenario: Slow ping
+- **WHEN** a ping is still running at the next check
+- **THEN** no second ping is sent; a ping that fails frees the next check to ping again
 
 #### Scenario: Idle
 - **WHEN** no agent is running and the hold is not armed
@@ -94,8 +99,9 @@ the Desk pane's Warm row, not on the status line.
 Warm-hold SHALL stop, and say why in the Desk pane's Warm row, when holding is pointless or unsafe.
 
 #### Scenario: Cap
-- **WHEN** it has held for 4 hours
+- **WHEN** it has held for 4 hours with no main-session request in that time (its own pings do not count)
 - **THEN** it stops with `held 240m, the cap`
+- **AND** a main-session request restarts the 4 hours
 
 #### Scenario: Already cold
 - **WHEN** the cache is already 60 minutes old

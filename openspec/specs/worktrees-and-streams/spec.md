@@ -68,7 +68,9 @@ kind `folder` SHALL be refused by every `wt` command with a message pointing at 
 
 #### Scenario: CI report
 - **WHEN** it waits
-- **THEN** it waits up to 60 seconds for a CI run on the head, watches every run on that commit, posts a `ci` line `<sha7> <conclusion>` and prints the conclusion
+- **THEN** it waits up to 5 minutes for a CI run on the head, watches every run on that commit, posts a `ci` line `<sha7> <conclusion>` and prints the conclusion
+- **AND** a failed `gh` call during that wait counts as no run yet and the wait goes on; at the deadline the error is `no CI run found for <sha> after 5 minutes`, or names the `gh` error when the last call failed; `gh` not installed is no blip and fails at once
+- **AND** the call that reads the result after the watch is tried up to 3 times, 3 seconds apart; if all fail the error names the sha and the `gh` error and says CI's result is unknown
 - **AND** when CI is not `success` it prints the failed-log or still-running command for each such run and sets exit code 1
 
 #### Scenario: CI conclusion across runs
@@ -93,8 +95,9 @@ On a repo with `merge: "direct"`, `wt merge <slug>` SHALL fast-forward the defau
 
 #### Scenario: Merge steps
 - **WHEN** all gates pass
-- **THEN** the default branch is fast-forwarded to `origin/<default>` and then to the sha (`--ff-only`) and pushed
-- **AND** `merged` is posted, todos started with that slug are closed and the worktree is removed
+- **THEN** with a remote, the default branch is fast-forwarded to `origin/<default>`, the sha is checked to descend from it, the sha is pushed to `origin/<default>`, and only then is the local default branch fast-forwarded to the sha (`--ff-only`); without a remote it is fast-forwarded to the sha
+- **AND** a failed push does not move the default branch past `origin/<default>`, and a re-run closes the work once the sha is on `origin/<default>`, even after `origin` moved on
+- **AND** `merged` is posted, every `open`, `active` or `blocked` todo started with that slug becomes `done` with the note `merged (<slug>)`, and the worktree is removed
 
 #### Scenario: Unpushed commits
 - **WHEN** the local branch differs from `origin/<branch>`
@@ -195,6 +198,10 @@ The prompt SHALL give the session its task and pipeline, and SHALL tell it to st
 - **WHEN** a worktree stream's brief is built
 - **THEN** it says to STOP before `desk wt merge`
 
+#### Scenario: Review repo
+- **WHEN** a worktree stream's repo has `merge: "review"`
+- **THEN** the brief asks for the reviewer's PR findings in full in the final message, for `desk wt merge --findings`
+
 ### Requirement: Stream budget
 A positive `--budget <usd>`, or a `budgetUsd: <n>` line in a `---` front matter block at the top of the
 task file, SHALL be passed as `--max-budget-usd`, the flag winning; the front matter SHALL be removed
@@ -235,11 +242,15 @@ set exit code 1.
 - **THEN** the command fails with `--x needs a value`
 
 ### Requirement: wt finish rejected push
-When git rejects the push of `wt finish` as non-fast-forward, the error SHALL say to rerun with `--rebased`.
+When git rejects the push of `wt finish` as non-fast-forward, the error SHALL say to rerun with `--rebased` (unless it already ran with `--rebased`), and SHALL in both cases say to integrate the remote commits (`git rebase origin/<branch>`) or, only if nobody else pushed to it, delete the remote branch (`git push origin --delete <branch>`), since `--rebased` never overwrites commits the branch has not seen.
 
 #### Scenario: Amended after a push
 - **WHEN** the pushed branch was amended or rebased and `wt finish` runs without `--rebased`
 - **THEN** it fails with `git push failed: ... rerun with --rebased`
+
+#### Scenario: Old remote branch of the same name
+- **WHEN** a fresh worktree's branch meets a remote branch with commits it never had, with or without `--rebased`
+- **THEN** the error also says to integrate them (`git rebase origin/<branch>`) or, only if nobody else pushed to it, delete the remote branch (`git push origin --delete <branch>`), and `--rebased` still does not overwrite them
 
 ### Requirement: wt merge with an unremovable worktree
 When the merge is pushed but `git worktree remove` fails, `wt merge` SHALL show git's reason, SHALL still close the work and exit 0 with a warning only when git no longer lists the worktree, and SHALL otherwise keep the worktree and the claim and exit 1.
@@ -309,7 +320,7 @@ On a `review` repo, `wt merge <slug>` SHALL close the work when the branch's PR 
 
 #### Scenario: Squash or rebase merge
 - **WHEN** the PR is `MERGED`, and the local head is an ancestor of `pull/<n>/head` fetched from `origin`
-- **THEN** `merged` is posted naming the PR, todos started with that slug are closed, and the worktree and local branch are removed without requiring the branch to be an ancestor of the base ref
+- **THEN** `merged` is posted naming the PR, every `open`, `active` or `blocked` todo started with that slug becomes `done` with the note `merged (<slug>)`, and the worktree and local branch are removed without requiring the branch to be an ancestor of the base ref
 
 #### Scenario: Commits added on the server before the merge
 - **WHEN** the PR head has commits after the local head
@@ -335,7 +346,7 @@ On a `review` repo, when `wt remove` fails because the branch is not in `origin/
 
 #### Scenario: Clean merge
 - **WHEN** both worktrees exist in the same repo and are clean, and the target is on `<branchPrefix><other-slug>`
-- **THEN** the target gets the merge, `merged` is posted for the source naming the target branch, the source's todos are closed and its worktree and local branch are removed
+- **THEN** the target gets the merge, `merged` is posted for the source naming the target branch, the source's todos are closed with the note `merged into <other-slug's branch> (<slug>)` and its worktree and local branch are removed
 
 #### Scenario: Target's verdict no longer passes
 - **WHEN** the target had `MERGE @<old head>` before the merge

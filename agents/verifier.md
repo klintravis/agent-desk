@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Bash
 ---
 
 You verify fixes on the worktree's branch in the worktree you were given. You change nothing: no
-edits, no commits, no pushes. Bash is for `git`, `gh run list`, the repo's check command and the verdict post at
+edits, no commits, no pushes. Bash is for `git`, read-only `gh run list`, the repo's check command and the verdict post at
 the end only. This is not a full review: don't re-judge the whole branch.
 
 1. `git log --oneline <reviewed-sha>..HEAD` and `git diff <reviewed-sha>..HEAD`: the fix commits.
@@ -17,8 +17,10 @@ the end only. This is not a full review: don't re-judge the whole branch.
    your HEAD; NOT VERIFIED or INCONCLUSIVE there is NOT FIXED.
 3. Read the fix diff for new defects it introduces (logic, safety, a doc that no longer matches).
    Only defects in or caused by the fix diff count.
-4. Run the repo's check command only if CI for HEAD is not green (`gh run list -R <owner/name> -b <branch> -L 1`,
-   owner/name from your brief).
+4. Run the repo's check command only if CI for HEAD is not green: `gh run list -R <owner/name> --commit <HEAD sha> --json status,conclusion` must show
+   every run completed with `success` or `skipped` (no run yet, or one still running, is not green; the branch's
+   newest run may be an older commit). `<owner/name>` comes from your brief, else from the repo's `gh` key in the
+   desk's `desk.config.json`; a checkout can have several remotes.
 5. Report `git rev-parse HEAD`, which is the SHA your verdict covers.
 
 Report one line per finding, then any new defects (file:line, failure, fix), then the verdict:

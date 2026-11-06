@@ -235,13 +235,14 @@ test('record: a secret records nothing and neither does a missing check; a rulin
 // extension.js against a stand-in for the `vscode` module: wiring only. A real window is a hand check (vscode/README.md).
 function loadExtension(folders, answers, onRun = () => {}) {
   const commands = new Map(), messages = [], context = new Map(), asked = [];
-  const views = [];
+  const views = [], watchers = [];
   let onFolders;
   const next = (kind, opts) => { asked.push([kind, opts]); return Promise.resolve(answers.shift()); };
   const stub = {
     TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
     ThemeIcon: class { constructor(id, color) { Object.assign(this, { id, color }); } },
     ThemeColor: class { constructor(id) { this.id = id; } },
+    RelativePattern: class { constructor(base, pattern) { Object.assign(this, { base, pattern }); } },
     TreeItem: class { constructor(label, collapsibleState) { Object.assign(this, { label, collapsibleState }); } },
     EventEmitter: class { event = () => {}; fire() { views[0].fired = (views[0].fired ?? 0) + 1; } dispose() {} },
     window: {
@@ -256,7 +257,14 @@ function loadExtension(folders, answers, onRun = () => {}) {
       registerCommand: (id, f) => { commands.set(id, f); return { dispose() {} }; },
       executeCommand: (c, k, v) => context.set(k, v),
     },
-    workspace: { workspaceFolders: folders.map((fsPath) => ({ uri: { fsPath } })), onDidChangeWorkspaceFolders: (f) => { onFolders = f; return { dispose() {} }; } },
+    workspace: {
+      workspaceFolders: folders.map((fsPath) => ({ uri: { fsPath } })), onDidChangeWorkspaceFolders: (f) => { onFolders = f; return { dispose() {} }; },
+      createFileSystemWatcher: (pattern) => {
+        const w = { pattern, disposed: false, on: [], onDidChange(f) { w.on.push(f); }, onDidCreate(f) { w.on.push(f); }, onDidDelete(f) { w.on.push(f); }, dispose() { w.disposed = true; } };
+        watchers.push(w);
+        return w;
+      },
+    },
   };
   const load = Module._load;
   Module._load = (r, ...rest) => (r === 'vscode' ? stub : load(r, ...rest));
@@ -264,9 +272,88 @@ function loadExtension(folders, answers, onRun = () => {}) {
   try {
     const subscriptions = [];
     require('../vscode/extension.js').activate({ subscriptions });
-    return { stub, commands, messages, context, asked, subscriptions, views, view: views[0], refolder: (f) => { stub.workspace.workspaceFolders = f.map((fsPath) => ({ uri: { fsPath } })); onFolders(); }, close: () => subscriptions.forEach((s) => s.dispose()) };
+    return { stub, commands, messages, context, asked, subscriptions, views, watchers, view: views[0], refolder: (f) => { stub.workspace.workspaceFolders = f.map((fsPath) => ({ uri: { fsPath } })); onFolders(); }, close: () => subscriptions.forEach((s) => s.dispose()) };
   } finally { Module._load = load; }
 }
+
+// The extension with run() replaced: each call is recorded and answers when its gate opens (hold) or at once.
+async function spiedExtension(home, { hold = false, answers = [] } = {}) {
+  const mod = require('../vscode/desk.js'), real = mod.run, out = await real(home, ['status', '--json']);
+  const runs = [], gates = [];
+  mod.run = async (_d, args) => { runs.push(args.slice(1).join(' ')); if (hold) await new Promise((r) => gates.push(r)); return out; };
+  try { return { x: loadExtension([home], answers), runs, release: () => gates.shift()?.() }; } finally { mod.run = real; }
+}
+const pause = (ms = 20) => new Promise((r) => setTimeout(r, ms));
+const SETTLED = 450; // past the extension's 300 ms
+
+test('extension: a burst of file events is one --cached run, and the stop leaves no watcher or run behind', async () => {
+  const home = deskWithKit([]);
+  const { x, runs } = await spiedExtension(home);
+  try {
+    await pause();
+    assert.deepEqual(runs, ['--json']);
+    const [w] = x.watchers;
+    assert.deepEqual([w.pattern.base, w.pattern.pattern, w.on.length], [home, '{todo,board,decisions}.jsonl', 3]);
+    for (const fire of w.on) fire();
+    await pause(SETTLED);
+    assert.deepEqual(runs, ['--json', '--cached --json']);
+    w.on[0]();
+    x.close();
+    await pause(SETTLED);
+    assert.deepEqual(runs, ['--json', '--cached --json']);
+    assert.equal(w.disposed, true);
+  } finally { x.close(); }
+});
+
+test('extension: the watcher follows the desk, and no desk means no watcher', async () => {
+  const home = deskWithKit([]), other = deskWithKit([]);
+  const { x } = await spiedExtension(home);
+  try {
+    await pause();
+    x.refolder([other]);
+    assert.deepEqual([x.watchers.length, x.watchers[0].disposed, x.watchers[1].pattern.base], [2, true, other]);
+    x.refolder([tmp()]);
+    assert.deepEqual([x.watchers.length, x.watchers[1].disposed], [2, true]);
+  } finally { x.close(); }
+});
+
+test('extension: one run at a time; requests meanwhile make one more, plain if any was plain', async () => {
+  const home = deskWithKit([]);
+  const { x, runs, release } = await spiedExtension(home, { hold: true });
+  const settle = async () => { x.watchers[0].on[0](); await pause(SETTLED); };
+  try {
+    await pause();
+    await settle();
+    await settle();
+    assert.deepEqual(runs, ['--json']);
+    release();
+    await pause();
+    assert.deepEqual(runs, ['--json', '--cached --json']);
+    await settle();
+    void x.commands.get('agentDesk.refresh')();
+    await settle();
+    assert.deepEqual(runs, ['--json', '--cached --json']);
+    release();
+    await pause();
+    assert.deepEqual(runs, ['--json', '--cached --json', '--json']);
+    release();
+    await pause();
+    assert.equal(runs.length, 3);
+  } finally { x.close(); }
+});
+
+test('extension: the run after a recorded ruling is --cached', async () => {
+  const home = deskWithKit();
+  const { x, runs } = await spiedExtension(home, { answers: ['drop', 'drop'] });
+  try {
+    await pause();
+    assert.deepEqual(runs, ['--json']);
+    await x.commands.get('agentDesk.decide')();
+    await pause(SETTLED);
+    assert.ok(rulings(home).length >= 1);
+    assert.equal(runs.at(-1), '--cached --json');
+  } finally { x.close(); }
+});
 
 test('extension: every contributed command is registered, and no desk means no view and no run', async () => {
   const x = loadExtension([tmp()], []);

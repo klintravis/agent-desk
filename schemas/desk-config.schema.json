@@ -1,9 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "desk.config.json",
-  "description": "The desk's repos and settings. Paths are relative to the desk folder. Other keys are allowed.",
+  "description": "The desk's repos and settings. Paths are relative to the desk folder. `loadConfig` refuses any other key.",
   "type": "object",
   "properties": {
+    "$schema": { "type": "string" },
     "kitVersion": { "type": "string" },
     "worktreesDir": { "type": "string", "minLength": 1 },
     "scratchDir": { "type": "string", "minLength": 1 },

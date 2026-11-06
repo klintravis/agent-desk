@@ -1,5 +1,6 @@
 node_modules/
 .claude-plugin/types/
 .claude/settings.local.json
+.claude/settings.local.json.*.tmp
 *.log
 *.vsix

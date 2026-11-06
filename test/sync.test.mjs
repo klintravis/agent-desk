@@ -1,16 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, cpSync, rmSync, renameSync } from 'node:fs';
+import fs, { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, cpSync, rmSync, renameSync, chmodSync, statSync, symlinkSync, lstatSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { copilotAgent, parseFrontmatter, claudeSettings, mergeSettings, AGENTS_PATCH, parseNext } from '../lib/sync.mjs';
+import { copilotAgent, parseFrontmatter, claudeSettings, mergeSettings, AGENTS_PATCH, parseNext, writeShim, writeJson } from '../lib/sync.mjs';
 import { ghName } from '../lib/init.mjs';
 import { fold } from '../bin/desk.mjs';
-import { multiDesk, desk, git, tmp, KIT, BIN, env } from './helpers.mjs';
+import { multiDesk, desk, git, tmp, KIT, BIN, env, ok, setRepo } from './helpers.mjs';
 
 const KIT_VERSION = JSON.parse(readFileSync(join(KIT, 'package.json'), 'utf8')).version;
-const ok = (r) => { assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`); return r.stdout; };
 
 test('copilotAgent: name, description, mapped tools, effort; model dropped', () => {
   const out = copilotAgent('---\nname: rev\ndescription: Reads: the "branch"\nmodel: opus\neffort: high\ntools: Read, Grep, Glob, Bash, Bogus\n---\n\nBody text.\n');
@@ -53,6 +53,20 @@ test('structure-reviewer cannot edit and loads the condensed rubric; the vendore
   assert.equal(rubric['disable-model-invocation'], undefined);
 });
 
+test('only the report skills and grill are slash-only', () => {
+  const dir = join(KIT, 'skills');
+  const off = readdirSync(dir).filter((n) => String(parseFrontmatter(readFileSync(join(dir, n, 'SKILL.md'), 'utf8')).meta['disable-model-invocation']) === 'true');
+  assert.deepEqual(off.sort(), ['grill', 'ponytail-audit', 'ponytail-debt']);
+});
+
+test('the grill skill stays within its byte budget', () => {
+  assert.ok(statSync(join(KIT, 'skills', 'grill', 'SKILL.md')).size <= 2560);
+});
+
+test('handoff, kickoff and orchestrate all use context/T-n.md', () => {
+  for (const n of ['handoff', 'kickoff', 'orchestrate']) assert.match(readFileSync(join(KIT, 'skills', n, 'SKILL.md'), 'utf8'), /context\/T-n\.md/, n);
+});
+
 test('stack-lens: every lens in the table has a build and a review file, and no stray file', () => {
   const dir = join(KIT, 'skills', 'stack-lens');
   const listed = [...readFileSync(join(dir, 'SKILL.md'), 'utf8').matchAll(/^\| ([a-z]+) \| /gm)].map((m) => m[1]).filter((l) => l !== 'Lens');
@@ -89,10 +103,12 @@ test('approaches: fix and refactor end in Done when; only the refactor skill ove
 
 test('the must-fix list reaches the board: orchestrate posts FIXES NEEDED, and the stream prompt runs the validator', () => {
   const o = readFileSync(join(KIT, 'skills', 'orchestrate', 'SKILL.md'), 'utf8');
-  assert.match(o, /must-fix list[\s\S]{0,700}names, whatever is posted after it[\s\S]{0,300}desk board post verdict <slug> "FIXES NEEDED @<sha>/);
-  assert.match(o, /"MERGE @<sha> overrides: <why>"`, never to skip a fix/);
+  const loop = readFileSync(join(KIT, 'skills', 'orchestrate', 'review-loop.md'), 'utf8');
+  assert.match(o, /`review-loop\.md`/);
+  assert.match(loop, /must-fix list[\s\S]{0,700}names, whatever is posted after it[\s\S]{0,300}desk board post verdict <slug> "FIXES NEEDED @<sha>/);
+  assert.match(loop, /"MERGE @<sha> overrides: <why>"`, never to skip a fix/);
   assert.match(o, /the must-fix list empty/);
-  assert.match(o, /rebuild the must-fix list[\s\S]{0,120}post `FIXES NEEDED` again/);
+  assert.match(loop, /rebuild the must-fix list[\s\S]{0,120}post `FIXES NEEDED` again/);
   assert.match(readFileSync(join(KIT, 'agents', 'verifier.md'), 'utf8'), /NOT VERIFIED or INCONCLUSIVE there is NOT FIXED/);
   const wt = readFileSync(join(KIT, 'lib', 'wt.mjs'), 'utf8');
   assert.match(wt, /fresh \\`reviewer\\` \+ \\`validator\\`/);
@@ -123,8 +139,8 @@ test('init writes the desk once and keeps what exists', () => {
   assert.deepEqual(cfg.repos.map((r) => [r.id, r.kind, r.path, r.worktreePrefix, r.defaultBranch]),
     [['a', 'git', '../a', 'a-', 'main'], ['b', 'git', '../b', 'b-', 'main'], ['notes', 'folder', '../notes', undefined, undefined]]);
   assert.deepEqual(cfg.harnesses, ['claude', 'copilot']);
-  for (const f of ['AGENTS.md', 'CLAUDE.md', 'agent-rules.md', 'todo.jsonl', 'board.jsonl', 'decisions.jsonl', '.gitignore', 'desk.code-workspace', 'package.json', 'desk', 'desk.cmd']) assert.ok(existsSync(join(home, f)), f);
-  for (const f of ['NEXT.md', 'TODO.md']) assert.equal(existsSync(join(home, f)), false, f);
+  for (const f of ['AGENTS.md', 'CLAUDE.md', 'agent-rules.md', 'todo.jsonl', 'board.jsonl', 'decisions.jsonl', '.gitignore', 'desk.code-workspace', 'package.json', 'desk']) assert.ok(existsSync(join(home, f)), f);
+  for (const f of ['NEXT.md', 'TODO.md', 'desk.cmd']) assert.equal(existsSync(join(home, f)), false, f);
   const pkg = JSON.parse(readFileSync(join(home, 'package.json'), 'utf8'));
   assert.equal(pkg.devDependencies['agent-desk'], `github:klintravis/agent-desk#v${JSON.parse(readFileSync(join(KIT, 'package.json'), 'utf8')).version}`);
   writeFileSync(join(home, 'agent-rules.md'), 'mine\n');
@@ -134,6 +150,12 @@ test('init writes the desk once and keeps what exists', () => {
   assert.match(again, /kept .*package\.json \(agent-desk github:klintravis\/agent-desk#v9\)/, 'a pinned version is kept');
   assert.equal(readFileSync(join(home, 'agent-rules.md'), 'utf8'), 'mine\n');
   assert.notEqual(desk(tmp(), 'init', '--no-install', '--repo', 'x=missing').status, 0, 'a missing path is refused');
+});
+
+test('init --repo naming the desk folder itself writes path "."', () => {
+  const home = tmp();
+  ok(desk(home, 'init', '--no-install', '--repo', 'me=.'));
+  assert.equal(JSON.parse(readFileSync(join(home, 'desk.config.json'), 'utf8')).repos[0].path, '.');
 });
 
 test('init hint: both shell forms, the running kit when none is installed, apostrophes doubled', () => {
@@ -308,7 +330,7 @@ test('sync hides the plumbing in the desk\'s .vscode/settings.json, keeping the 
   const f = join(home, '.vscode', 'settings.json');
   ok(desk(home, 'sync'));
   const ex = JSON.parse(readFileSync(f, 'utf8'))['files.exclude'];
-  assert.equal(Object.keys(ex).length, 10);
+  assert.equal(Object.keys(ex).length, 9);
   assert.ok(Object.values(ex).every((v) => v === true));
   writeFileSync(f, JSON.stringify({ 'editor.tabSize': 2, 'files.exclude': { 'package.json': false, '*.tmp': true } }));
   ok(desk(home, 'sync'));
@@ -360,6 +382,10 @@ test('sync: Claude settings per checkout, Copilot files in the desk only, worksp
   }
   assert.ok(!existsSync(join(root, 'notes', '.claude')), 'a plain folder gets no settings file');
   assert.equal(git(join(root, 'a'), 'status', '--porcelain'), '', 'settings ignored via info/exclude');
+  const strayTmp = join(root, 'a', '.claude', 'settings.local.json.1.tmp');
+  writeFileSync(strayTmp, '{}\n');
+  assert.equal(git(join(root, 'a'), 'status', '--porcelain'), '', 'a leftover temp file is ignored too');
+  rmSync(strayTmp);
   for (const s of readdirSync(join(KIT, 'skills'))) assert.ok(existsSync(join(home, '.github', 'skills', s, 'SKILL.md')), s);
   for (const a of ['archiver', 'ci-triage', 'implementer', 'reviewer', 'scribe', 'structure-reviewer', 'validator', 'verifier']) assert.ok(existsSync(join(home, '.github', 'agents', `${a}.agent.md`)), a);
   const scribe = parseFrontmatter(readFileSync(join(KIT, 'agents', 'scribe.md'), 'utf8')).meta;
@@ -377,9 +403,7 @@ test('sync: Claude settings per checkout, Copilot files in the desk only, worksp
       `node "${kitCtx}" SubagentStart "${sl(home)}" "${sl(d)}"`, 'the running kit (none pinned), the desk and this checkout');
   }
   // the shim runs the desk command from any folder, DESK_HOME unset
-  const { status, stdout } = process.platform === 'win32'
-    ? spawnSync('cmd', ['/c', join(home, 'desk.cmd'), 'home'], { cwd: tmp(), env: { ...process.env, DESK_HOME: '' }, encoding: 'utf8' })
-    : spawnSync('sh', [join(home, 'desk'), 'home'], { cwd: tmp(), env: { ...process.env, DESK_HOME: '' }, encoding: 'utf8' });
+  const { status, stdout } = spawnSync('sh', [join(home, 'desk'), 'home'], { cwd: tmp(), env: { ...process.env, DESK_HOME: '' }, encoding: 'utf8' });
   assert.equal(status, 0);
   assert.equal(stdout.trim(), home);
   assert.ok(!existsSync(join(root, 'a', '.github')), 'repos get no Copilot files');
@@ -439,11 +463,21 @@ test('sync: kitVersion stays put after a failed sync and after a partial `desk s
   assert.equal(version(), '9.9.9');
 });
 
-test('sync: a desk/desk.cmd without the shim marker, or a desk/ folder, is left alone and sync exits 1', () => {
+test('sync: a desk.cmd with the marker is deleted and none is written', () => {
+  const { home } = multiDesk();
+  assert.ok(!existsSync(join(home, 'desk.cmd')), 'init wrote none');
+  writeFileSync(join(home, 'desk.cmd'), '@echo off\r\nrem written by desk sync\r\n');
+  ok(desk(home, 'sync'));
+  assert.ok(!existsSync(join(home, 'desk.cmd')));
+  assert.ok(existsSync(join(home, 'desk')));
+  assert.ok(!readFileSync(join(home, '.gitignore'), 'utf8').includes('desk.cmd'));
+});
+
+test('sync: a desk.cmd without the shim marker, or a desk without it or a desk/ folder, is left alone (a foreign desk.cmd only warns, a foreign desk exits 1)', () => {
   const { home } = multiDesk();
   writeFileSync(join(home, 'desk.cmd'), 'mine\r\n');
   let r = desk(home, 'sync');
-  assert.equal(r.status, 1);
+  assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /desk\.cmd exists and is not the desk shim/);
   assert.equal(readFileSync(join(home, 'desk.cmd'), 'utf8'), 'mine\r\n');
   assert.match(readFileSync(join(home, 'desk'), 'utf8'), /written by desk sync/, 'our own shim is still rewritten');
@@ -503,11 +537,7 @@ test('claudeSettings: the deny under review, in the form the permission docs giv
 
 test('desk sync: the deny and one line per review repo come and go; the user keeps their own rule', () => {
   const { home } = multiDesk();
-  const merge = (value) => {
-    const file = join(home, 'desk.config.json'), cfg = JSON.parse(readFileSync(file, 'utf8'));
-    cfg.repos.find((r) => r.id === 'a').merge = value;
-    writeFileSync(file, JSON.stringify(cfg, null, 2));
-  };
+  const merge = (value) => setRepo(home, 'a', { merge: value });
   const LINE = /^merge {3}a: review; edits to desk\.config\.json denied for Claude; protect main on the server$/m;
   const local = join(home, '.claude', 'settings.local.json');
   const denied = () => JSON.parse(readFileSync(local, 'utf8')).permissions.deny ?? [];
@@ -530,11 +560,7 @@ test('desk check: direct prints nothing new and asks gh nothing; review warns an
   const { home } = multiDesk(), kit = shippedKit(), answers = join(tmp(), 'gh.json');
   writeFileSync(answers, '{}');
   const stub = pathToFileURL(join(KIT, 'test', 'gh-stub.mjs')).href;
-  const set = (fields) => {
-    const file = join(home, 'desk.config.json'), cfg = JSON.parse(readFileSync(file, 'utf8'));
-    Object.assign(cfg.repos.find((r) => r.id === 'a'), fields);
-    writeFileSync(file, JSON.stringify(cfg, null, 2));
-  };
+  const set = (fields) => setRepo(home, 'a', fields);
   // Only node on PATH: the plugin checks skip, so this stays quick.
   const check = () => spawnSync(process.execPath, [join(kit, 'bin', 'desk.mjs'), 'check'], { cwd: home, encoding: 'utf8', timeout: 400e3,
     env: { ...env(home), GH_STUB: answers, NODE_OPTIONS: `--import=${stub}`, PATH: dirname(process.execPath), Path: dirname(process.execPath) } });
@@ -649,6 +675,31 @@ test('a tracked key in the desk folder survives the user removing it', () => {
   assert.equal(localSettings(home).idleCompaction, true);
   assert.equal(git(home, 'status', '--porcelain', '--', '.claude/settings.local.json').trim(), '');
   assert.equal(localSettings(join(root, 'a')).idleCompaction, undefined);
+});
+
+// A tracked desk-folder settings.local.json, a user file with cache keys, then `desk sync` with the given harnesses.
+const trackedWarning = (harnesses) => {
+  const { home } = multiDesk(), p = join(home, 'desk.config.json');
+  writeFileSync(p, JSON.stringify({ ...JSON.parse(readFileSync(p, 'utf8')), harnesses }));
+  git(home, 'init', '-q');
+  mkdirSync(join(home, '.claude'), { recursive: true });
+  writeFileSync(join(home, '.claude', 'settings.local.json'), '{}\n');
+  git(home, 'add', '-f', '.claude/settings.local.json');
+  const r = withUser(home, userFile({ cache: { promptCacheTtl: '5m' } }), 'sync');
+  assert.equal(r.status, 0, r.stderr);
+  if (!harnesses.includes('claude')) {
+    const s = withUser(home, userFile({ cache: { promptCacheTtl: '5m' } }), 'settings', '--json');
+    assert.deepEqual(JSON.parse(s.stdout).warnings.filter((w) => /not ignored by git/.test(w)), []);
+  }
+  return r.stderr.split('\n').filter((l) => /^warn .*not ignored by git/.test(l));
+};
+
+test('desk sync warns once on stderr about a tracked settings file when the claude harness is on', () => {
+  assert.equal(trackedWarning(['claude']).length, 1);
+});
+
+test('desk sync does not warn about a tracked settings file on a Copilot-only desk (the cache keys are Claude Code\'s)', () => {
+  assert.deepEqual(trackedWarning(['copilot']), []);
 });
 
 test('a key both layers set follows the desk in a tracked file', () => {
@@ -881,4 +932,70 @@ test('every line the AGENTS.md patch writes is in templates/AGENTS.md; no templa
   const tpl = readFileSync(join(KIT, 'templates', 'AGENTS.md'), 'utf8').split(/\r?\n/);
   for (const l of AGENTS_PATCH.values()) assert.ok(tpl.includes(l), l);
   assert.ok(!tpl.some((l) => /NEXT\.md|TODO\.md/.test(l)));
+});
+
+test('sync: an existing settings file keeps its mode and a symlinked one stays a symlink', { skip: process.platform === 'win32' }, () => {
+  const { root, home } = multiDesk();
+  const f = join(root, 'a', '.claude', 'settings.local.json'), real = join(root, 'a', 'real.json');
+  ok(desk(home, 'sync'));
+  chmodSync(f, 0o600);
+  ok(desk(home, 'sync'));
+  assert.equal(statSync(f).mode & 0o777, 0o600);
+  renameSync(f, real);
+  symlinkSync(real, f);
+  writeFileSync(real, '{"model":"x"}\n');
+  ok(desk(home, 'sync'));
+  assert.ok(lstatSync(f).isSymbolicLink());
+  assert.ok(JSON.parse(readFileSync(real, 'utf8')).hooks, 'the target was updated');
+  assert.deepEqual(readdirSync(dirname(f)).filter((n) => n.endsWith('.tmp')), []);
+});
+
+test('writeJson: a failed rename falls back to a plain write and leaves no temp file', () => {
+  const dir = tmp(), file = join(dir, 'held.json'), real = fs.renameSync;
+  writeFileSync(file, '{"old":1}\n');
+  fs.renameSync = () => { throw Object.assign(new Error('held open'), { code: 'EPERM' }); };
+  syncBuiltinESMExports();
+  try { writeJson(file, { a: 1 }); } finally { fs.renameSync = real; syncBuiltinESMExports(); }
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { a: 1 });
+  assert.deepEqual(readdirSync(dir), ['held.json']);
+});
+
+test('writeJson: a failed temp write throws and leaves the real file alone', () => {
+  const dir = tmp(), file = join(dir, 'kept.json'), real = fs.writeFileSync;
+  writeFileSync(file, '{"old":1}\n');
+  fs.writeFileSync = (p, ...rest) => { if (String(p).endsWith('.tmp')) throw Object.assign(new Error('full'), { code: 'ENOSPC' }); return real(p, ...rest); };
+  syncBuiltinESMExports();
+  try { assert.throws(() => writeJson(file, { a: 1 }), /full/); } finally { fs.writeFileSync = real; syncBuiltinESMExports(); }
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { old: 1 });
+  assert.deepEqual(readdirSync(dir), ['kept.json']);
+});
+
+test('writeJson: a failed rename leaves no temp file; if the plain write fails too, the error is thrown', () => {
+  const dir = tmp(), target = join(dir, 'taken');
+  mkdirSync(target); // a folder: rename and plain write both fail on it, on every OS
+  assert.throws(() => writeJson(target, { a: 1 }));
+  assert.deepEqual(readdirSync(dir), ['taken']);
+});
+
+test("writeShim: an apostrophe in the desk path is escaped in sh and no cmd shim is written; the sh shim still runs", () => {
+  const home = join(tmp(), "it's 100%");
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, 'desk.config.json'), '{}\n'); // `desk home` prints nothing without it
+  writeShim(home);
+  assert.ok(readFileSync(join(home, 'desk'), 'utf8').includes("DESK_HOME='" + home.replace(/\\/g, '/').replace(/'/g, "'\\''") + "'"));
+  assert.ok(!existsSync(join(home, 'desk.cmd')));
+  if (process.platform !== 'win32') {
+    const r = spawnSync('sh', [join(home, 'desk'), 'home'], { cwd: tmp(), env: { ...process.env, DESK_HOME: '' }, encoding: 'utf8' });
+    assert.equal(r.stdout.trim(), home, r.stderr);
+  }
+});
+
+test('a BOM in desk.config.json: sync exits 0 and check passes', () => {
+  const { home } = multiDesk();
+  const file = join(home, 'desk.config.json');
+  writeFileSync(file, `\uFEFF${readFileSync(file, 'utf8')}`);
+  ok(desk(home, 'sync'));
+  const c = desk(home, 'check'); // the check's own config read must not report "does not parse"
+  ok(c);
+  assert.doesNotMatch(c.stdout, /does not parse/);
 });

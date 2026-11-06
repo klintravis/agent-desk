@@ -3,22 +3,22 @@
 ## Purpose
 
 The `desk` entry point (`bin/desk.mjs`): dispatch, and the read-only and bookkeeping commands `status`,
-`check`, `tokens`, `overlap`, `decide`, `tidy`, `settings`, `home`. The `todo` and `board` commands are specified in
+`check`, `tokens`, `overlap`, `lenses`, `decide`, `tidy`, `settings`, `home`. The `todo` and `board` commands are specified in
 `todos-and-board`; `wt`, `stream`, `init`, `sync` and `workspace` in their own specs.
 
 ## Requirements
 
 ### Requirement: Dispatch
-`desk <command>` SHALL run one of `status`, `check`, `board`, `todo`, `tokens`, `overlap`, `decide`, `tidy`, `wt`, `stream`, `init`, `sync`, `workspace`, `settings`, or `home` (specified below).
+`desk <command>` SHALL run one of `status`, `check`, `board`, `todo`, `tokens`, `overlap`, `decide`, `lenses`, `tidy`, `wt`, `stream`, `init`, `sync`, `workspace`, `settings`, or `home` (specified below).
 
 #### Scenario: Version
 - **WHEN** `desk --version` runs
 - **THEN** the kit version is printed
 
-#### Scenario: Self-test
-- **WHEN** `desk --self-test` runs
-- **THEN** the built-in self-tests of board, todo, tokens, status, watch and decide run
-- **AND** it prints `ok` and exits 0, or prints `FAIL` and the failed checks and exits 1
+#### Scenario: No built-in self-tests
+- **WHEN** `desk --self-test` or `desk <command> --self-test` runs
+- **THEN** the CLI runs no checks: `desk --self-test`, `desk board` and `desk todo` exit 1 with the usage error, `desk status`, `desk tokens` and `desk overlap` ignore the flag and do their normal work, and `desk decide` exits 1 ("not a waiting owner decision")
+- **AND** the checks live in `test/units.test.mjs`
 
 #### Scenario: Unknown command
 - **WHEN** `desk frobnicate` runs
@@ -29,7 +29,7 @@ The `desk` entry point (`bin/desk.mjs`): dispatch, and the read-only and bookkee
 - **THEN** stderr shows `desk <command>: no repo "x"` and the exit code is 1
 
 #### Scenario: On-demand commands
-- **WHEN** `tidy`, `wt`, `stream`, `init`, `sync`, `workspace` or `settings` has a fault
+- **WHEN** `lenses`, `tidy`, `wt`, `stream`, `init`, `sync`, `workspace` or `settings` has a fault
 - **THEN** it loads on demand, so `status` still works
 
 ### Requirement: desk home
@@ -75,7 +75,7 @@ The `desk` entry point (`bin/desk.mjs`): dispatch, and the read-only and bookkee
 - **AND** nothing is added when N is 0 or the count cannot be read
 
 #### Scenario: Sources down
-- **WHEN** `gh` and the transcripts cannot be read
+- **WHEN** `gh` cannot be read and nothing is kept for it, and the transcripts cannot be read
 - **THEN** branches show `CI unavailable`, Running sessions shows `- unavailable` and the command exits 0
 
 #### Scenario: Another repo's run
@@ -116,7 +116,7 @@ The `desk` entry point (`bin/desk.mjs`): dispatch, and the read-only and bookkee
 - **THEN** the last good lookup is kept and a run completed in the gap still prints `CI:` on recovery
 
 ### Requirement: Check
-`desk check` SHALL run the kit's tests and validation and the config parses, print `ok` or `FAIL` per step, validate the desk's files against the kit's schemas as warnings, and exit 0 only when no step failed.
+`desk check` SHALL run the kit's tests and validation and the desk's `desk.config.json` loads through `loadConfig` (so a config the desk refuses fails the check), print `ok` or `FAIL` per step, validate the desk's files against the kit's schemas as warnings, and exit 0 only when no step failed.
 
 #### Scenario: Steps
 - **WHEN** `desk check` runs
@@ -140,6 +140,14 @@ The `desk` entry point (`bin/desk.mjs`): dispatch, and the read-only and bookkee
 - **WHEN** `claude` is not on PATH
 - **THEN** its steps print `skip <name>: claude not on PATH` and do not fail the check
 
+#### Scenario: Config that does not parse
+- **WHEN** a JSON file it parses (the plugin and marketplace manifests, `hooks/hooks.json`, the desk's `desk.config.json`) is not valid JSON
+- **THEN** its line is `FAIL <path>: does not parse`, the parser's message is not printed, and the run ends `desk check: <n> failed` with exit 1
+
+#### Scenario: Config the desk refuses
+- **WHEN** `desk.config.json` is valid JSON but `loadConfig` refuses it
+- **THEN** its line is `FAIL <path>: <the refusal message>` and the run ends `desk check: <n> failed` with exit 1
+
 #### Scenario: Desk files validated
 - **WHEN** it runs inside a desk
 - **THEN** `desk.config.json` and every line of `todo.jsonl`, `board.jsonl` and `decisions.jsonl` are validated against the kit's `schemas/` (a missing file is skipped)
@@ -150,7 +158,10 @@ The `desk` entry point (`bin/desk.mjs`): dispatch, and the read-only and bookkee
 - **THEN** no warning is printed for it
 
 ### Requirement: Tokens
-`desk tokens [hours] [--json] [--session <id8>|self] [--by-worktree]` SHALL report the token use of the desk's main sessions and subagents, one row each, then a total line. With `--json` a main session's row SHALL also carry `title`, and a subagent's row `type` and `about`. With `--by-worktree` it SHALL print one row per worktree in place of those rows, then the same total line. Every transcript SHALL have one worktree key, worked out from the transcript and `desk.config.json` alone, never from the worktrees that exist now.
+`desk tokens [hours] [--json] [--session <id8>|self] [--by-worktree]` SHALL report the token use of the desk's main sessions and subagents, one row each, then a total line. With `--json` a main session's row SHALL also carry `title`, and a subagent's row `type` and `about`. With `--by-worktree` it SHALL print one row per worktree in place of those rows, then the same total line.
+
+#### Scenario: Further rules
+Every transcript SHALL have one worktree key, worked out from the transcript and `desk.config.json` alone, never from the worktrees that exist now.
 
 #### Scenario: Worktree key
 - **WHEN** a path in a transcript holds `<worktreesDir folder name>/<worktreePrefix><slug>` of a git repo in the config, ignoring case, with either path separator
@@ -254,7 +265,10 @@ The `desk` entry point (`bin/desk.mjs`): dispatch, and the read-only and bookkee
 - **THEN** committed changes against the base ref plus uncommitted changes count, at most 6 files are listed then `(+N)`, and paths in different repos never overlap
 
 ### Requirement: Decide and rulings
-`desk decide` SHALL show the first waiting owner decision, `desk decide --json` SHALL print the same decision as JSON, `desk decide T-n <ruling>` SHALL append the ruling to `decisions.jsonl` and close the todo, `desk decide T-n --pick <n>` SHALL do the same with the nth option's label, counted from 1 as `--json` lists them, and `desk decide --list [n]` SHALL print the recorded rulings. `--pick` SHALL be read only as an argument of its own, never from the text of a ruling. A ruling MAY be an option's label or free text. An option's rationale SHALL NOT become part of its label. An option with an empty label SHALL NOT be listed or counted. A ruling shaped like a secret SHALL be refused, since `decisions.jsonl` is committed.
+`desk decide` SHALL show the first waiting owner decision, `desk decide --json` SHALL print the same decision as JSON, `desk decide T-n <ruling>` SHALL append the ruling to `decisions.jsonl` and close the todo, `desk decide T-n --pick <n>` SHALL do the same with the nth option's label, counted from 1 as `--json` lists them, and `desk decide --list [n]` SHALL print the recorded rulings.
+
+#### Scenario: Further rules
+`--pick` SHALL be read only as an argument of its own, never from the text of a ruling. A ruling MAY be an option's label or free text. An option's rationale SHALL NOT become part of its label. An option with an empty label SHALL NOT be listed or counted. A ruling shaped like a secret SHALL be refused, since `decisions.jsonl` is committed.
 
 #### Scenario: Show
 - **WHEN** `desk decide` runs
@@ -290,6 +304,10 @@ The `desk` entry point (`bin/desk.mjs`): dispatch, and the read-only and bookkee
 - **THEN** that label is recorded whole, as if given as the ruling, and `T-1` is closed
 - **AND** the mod's typed `/decide T-1 --pick 2` sends the flag and the number as separate arguments and does the same; typed text not starting with the flag stays one argument
 
+#### Scenario: A pick written with =
+- **WHEN** the first ruling argument starts with `--pick=`, as `decide T-1 --pick=2` or the typed `/decide T-1 --pick=2`
+- **THEN** the command exits 1 saying to pick the option in the list or write the flag with a space, echoing none of the text, nothing is recorded and the todo stays open, since a shell and a clicked label send the same single argument
+
 #### Scenario: An empty label
 - **WHEN** an old todo's why is `(recommended); b`
 - **THEN** `--json` lists only `b`, and `decide T-1 --pick 1` records `b`
@@ -317,9 +335,16 @@ The `desk` entry point (`bin/desk.mjs`): dispatch, and the read-only and bookkee
 - **AND** with none it prints `No rulings recorded.`
 
 ### Requirement: Status JSON
-`desk status --json` SHALL print one JSON object and a newline, built from the same gathered data as the
-text screen and valid against `schemas/desk-status.schema.json`. Without `--json`, `desk status` SHALL
-print the text screen unchanged. `--watch` SHALL take priority over `--json`.
+`desk status --json` SHALL print one JSON object and a newline, built from the same gathered data as the text screen and valid against `schemas/desk-status.schema.json`. Without `--json`, `desk status` SHALL print the text screen unchanged. `--watch` SHALL take priority over `--json`.
+A `desk status` run SHALL keep its `gh` answers in `<scratchDir>/status-gh.json`.
+
+#### Scenario: Config the desk refuses
+- **WHEN** `desk.config.json` is refused and `desk status` runs
+- **THEN** the screen still prints, without roots and without claim marks, and the command does not fail on the config
+
+#### Scenario: Further rules
+With `--cached` it SHALL use the kept answers without calling `gh`, and read everything else fresh; when none can be read it SHALL ask `gh` and keep the answers, as a plain run does.
+When a `gh` call fails during a plain run, the repo it was for SHALL keep its CI runs, pull requests and review-row pull requests from the kept answers (none, when nothing is kept for it), and a repo whose call succeeds SHALL replace them with the new answer, even an empty one. Each repo is judged on its own: a failing repo SHALL NOT make a kind unavailable for the others. A kind is unavailable (null) only when no repo has `gh`, or every repo's call failed and nothing is kept; a failed read SHALL NOT replace a kept answer.
 
 #### Scenario: Fields
 - **WHEN** `desk status --json` runs
@@ -342,12 +367,32 @@ print the text screen unchanged. `--watch` SHALL take priority over `--json`.
 - **AND** the waiting decisions and claims in the JSON are the ones the text lists
 
 #### Scenario: Sources down
-- **WHEN** `gh` and the transcripts cannot be read
+- **WHEN** `gh` cannot be read and nothing is kept for it, and the transcripts cannot be read
 - **THEN** `sessions` is null, each branch's `ci` is `CI unavailable`, and the command exits 0
 
 #### Scenario: Verdict kept whole
 - **WHEN** a branch's newest verdict carries `by <model>/<effort>`
 - **THEN** its `verdict` holds the whole text, up to the 120 characters the board stores
+
+#### Scenario: Cached run after a plain run
+- **WHEN** `desk status --json` has run, a todo is added, and `desk status --cached --json` runs
+- **THEN** the second run calls `gh` zero times, shows the new todo, and has the first run's branch CI and PR state
+
+#### Scenario: Cached run with nothing kept
+- **WHEN** `desk status --cached --json` runs and `status-gh.json` is missing or torn
+- **THEN** it asks `gh`, shows the answers and keeps them
+
+#### Scenario: A failed call keeps the old answer
+- **WHEN** a plain `desk status` run keeps answers, and the next run's `gh` call for one repo's CI, pull requests or review-row pull requests fails
+- **THEN** that repo's kept rows of that kind stay in `status-gh.json` and in the output, and a repo whose call succeeded shows its new answer
+
+#### Scenario: A failing repo with nothing kept
+- **WHEN** nothing is kept, and one repo's `gh` call for a kind fails while another's succeeds
+- **THEN** the succeeding repo's rows of that kind are shown and kept, and the kind is not null
+
+#### Scenario: An empty answer replaces
+- **WHEN** a repo's `gh` call succeeds with no rows
+- **THEN** that repo's kept rows of that kind are gone
 
 ### Requirement: Settings command
 `desk settings [--json]` SHALL print, for each task id, the resolved `model` and `effort` with the source layer of each, and for each cache key its value and source. It SHALL write nothing. With `--json` it SHALL print one JSON object holding `userFile`, `active`, `tasks`, `cache` and `warnings`, and each task SHALL hold `agent`, `task`, `model`, `effort`, `source` and `shared`. Without `--json`, warnings SHALL go to stderr as `warn <text>`.
@@ -381,7 +426,7 @@ print the text screen unchanged. `--watch` SHALL take priority over `--json`.
 - **THEN** it states that model and effort are advisory on Copilot
 
 ### Requirement: User layer on the status screen
-When a user layer is active, `desk status` SHALL print one line directly under its heading, naming the user file, the tasks whose resolved model or effort is below `shared`, and values a floor raised. When none is active the screen SHALL be unchanged. A problem reading the user file SHALL NOT fail the command.
+When a user layer is active, `desk status` SHALL print one line directly under its heading, naming the user file, the tasks whose resolved model or effort is below `shared`, and values of the user file a floor raised. When none is active the screen SHALL be unchanged. A problem reading the user file SHALL NOT fail the command.
 
 #### Scenario: Cheaper review
 - **WHEN** the user file lowers `review` to `sonnet` and `medium` with no floor
@@ -509,7 +554,10 @@ An all-zero assistant line with the `requestId` of a call already counted SHALL 
 - **AND** `--by-worktree` prints neither pattern line nor the depth and parent columns
 
 ### Requirement: Branch state in status JSON
-Each branch of `desk status --json` SHALL carry `state`, computed once in the CLI: `CI failed` when a run of the head sha did not pass, `fixes needed` for an on-head `FIXES`, `DO NOT` or `MERGE AFTER` verdict (the newest, or any the merge gate counts), `rebase` when behind, then `not pushed` when the repo has an origin and `origin/<branch>` is not the head, then `ready` only when every run of the head sha passed (or the repo has no gh) and the merge gate's `mergeOk` holds, else `needs review`; with CI not yet decided `CI running`, `CI stale` (runs, none on the head), `no CI yet` or `CI unknown` (lookup failed). It SHALL add `verdictOld: true` when the newest verdict names another commit.
+Each branch of `desk status --json` SHALL carry `state`, computed once in the CLI, in the order the State order scenario gives.
+
+#### Scenario: State order
+`CI failed` when a run of the head sha did not pass, `fixes needed` for an on-head `FIXES`, `DO NOT` or `MERGE AFTER` verdict (the newest, or any the merge gate counts), `rebase` when behind, then `not pushed` when the repo has an origin and `origin/<branch>` is not the head, then `ready` only when every run of the head sha passed (or the repo has no gh) and the merge gate's `mergeOk` holds, else `needs review`; with CI not yet decided `CI running`, `CI stale` (runs, none on the head), `no CI yet` or `CI unknown` (lookup failed). It SHALL add `verdictOld: true` when the newest verdict names another commit.
 
 #### Scenario: Several runs of the head
 - **WHEN** one run of the head sha succeeded and another failed
@@ -552,3 +600,43 @@ Each entry of `decisions` in `desk status --json` SHALL hold `options`, read the
 #### Scenario: Nothing open
 - **WHEN** no todo qualifies
 - **THEN** `todos` is an empty list and the object still has `v` 2
+
+### Requirement: Settings warning for an unignored local file
+`desk settings` SHALL report that the desk's `.claude/settings.local.json` is not ignored by git, so the user's cache settings are not written to it, in its `warnings`, and SHALL NOT print it separately. It SHALL do so only when the desk has the `claude` harness.
+
+#### Scenario: Not ignored, JSON
+- **WHEN** `desk settings --json` runs, the desk has the `claude` harness, the user file has cache keys and the desk's `.claude/settings.local.json` is not ignored by git
+- **THEN** `warnings` holds one entry naming the file as not ignored by git, and stderr holds no such line
+
+#### Scenario: Not ignored, plain
+- **WHEN** the same runs without `--json`
+- **THEN** stderr holds that warning once as `warn <text>`
+
+#### Scenario: Not ignored, without the claude harness
+- **WHEN** the same runs on a desk whose harnesses are `copilot` only
+- **THEN** `warnings` holds no such entry
+
+### Requirement: Lenses
+`desk lenses <slug> [--json]` SHALL print one line `<lens>: <reason>` for each `stack-lens` lens that the open worktree `<slug>` matches, in the table's order, and nothing when none matches; `--json` SHALL print the same as an array of `{ lens, why }`. The rules in `lib/lenses.mjs` SHALL carry the table's lens names in its order.
+
+#### Scenario: What is matched
+- **WHEN** the lenses of a worktree are computed
+- **THEN** a path regex runs on every changed file (as `desk overlap` counts them), a regex on the added lines of code files (never Markdown, JSON, YAML or other prose and data files), and the kind of the open todo with that slug (`fix` brings `testing`, `perf` brings `perf`)
+- **AND** the reason is the first match (`kind fix`, a path, or `<path> adds <text>`), then `(+N)` for the rest
+
+#### Scenario: Files by path
+- **WHEN** the worktree changed `lib/a.ts`, `test/x.test.mjs` and `hooks/redact.ts`
+- **THEN** the lines are `typescript: lib/a.ts (+1)`, `testing: test/x.test.mjs` and `security: hooks/redact.ts`
+
+#### Scenario: Kind fix
+- **WHEN** the todo with the slug has kind `fix` and the worktree changed only `lib/a.ts`
+- **THEN** the lines are `typescript: lib/a.ts` and `testing: kind fix`
+
+#### Scenario: Added lines
+- **WHEN** a commit adds `spawnSync(` to `lib/wt.mjs` and the word `secret` to a skill's `SKILL.md`
+- **THEN** `security: lib/wt.mjs adds spawnSync(` is printed and the `SKILL.md` line counts for no lens
+
+#### Scenario: No match or no worktree
+- **WHEN** the worktree changed only `README.md` under a `feature` todo
+- **THEN** nothing is printed and the exit code is 0
+- **AND** `desk lenses nosuch` exits 1 with `desk lenses: no worktree "nosuch"`

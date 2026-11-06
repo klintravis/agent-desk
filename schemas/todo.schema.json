@@ -12,7 +12,7 @@
     "id": { "type": "string", "pattern": "^T-\\d+$" },
     "set": {
       "type": "object",
-      "description": "Known fields are typed; others are allowed (`todo add --<any> <value>`).",
+      "description": "Known fields are typed; others are allowed in a hand-written line (the `todo` commands refuse an unknown flag).",
       "properties": {
         "title": { "type": "string" },
         "summary": { "type": "string", "description": "About 50 characters (cut to 60); the Desk pane shows it instead of the title." },

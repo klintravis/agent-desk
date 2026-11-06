@@ -1,7 +1,7 @@
 import { expect, test, type TestBody } from 'claude-code/testing'
 
 import type { DeskStatus } from '../types'
-import { branchColor, branchNote, branchState, headline, overlapRows, prColor, quotaColor, worst } from './pane'
+import { branchColor, branchNote, branchState, headline, LOOK_EVERY, overlapRows, prColor, quotaColor, worst } from './pane'
 import { durationOf } from './quota'
 
 const PANE = {
@@ -49,6 +49,26 @@ test('an interactive session opens the pane and shows desk status', async ($, on
     expect((await ui.find({ type: 'Text', text: /cb-skill/ }))?.text).toBe('T-1 cb-skill')
     await ui.unmount()
   }
+})
+
+test('a status from an older CLI with no todos renders the Todos tab as unavailable', async ($, on) => {
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('clock.every', () => new Promise(() => {}))
+  on('clock.now', () => ({ value: 0 }))
+  on('process.run', (_$, e) => {
+    const { todos: _t, ...old } = JSON.parse(json())
+    const stdout = e.argv.at(-1) === '--json' ? JSON.stringify(old) : ''
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await wait()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ key: 'tab-todos' }))?.text).toBe('Todos ?')
+  await ui.press({ key: 'tab-todos' })
+  await wait()
+  expect(await ui.find({ type: 'Text', text: /^No open todos$/ })).toBeFalsy()
+  await ui.unmount()
 })
 
 // The VS Code extension and the desktop app: an SDK session (not interactive, no surface); the editor attaches later.
@@ -115,20 +135,21 @@ const BAND = (surface: 'terminal' | 'desktop', hasSurvey = false) => ({
 } as const)
 
 // A desk: `home` exits 0, `status --json` prints `status.s`, `decide` records.
-function deskStub(on: On, status: { s: string }, argv: string[][], home = 0, o: { shown?: (string | undefined)[]; ticks?: (() => void)[]; clock?: { t: number }; decide?: () => { exitCode?: number; stdout?: string; stderr?: string } } = {}) {
+function deskStub(on: On, status: { s: string }, argv: string[][], home = 0, o: { shown?: (string | undefined)[]; ticks?: (() => void)[]; looks?: (() => void)[]; homePath?: string; hold?: () => Promise<void>; clock?: { t: number }; decide?: () => { exitCode?: number; stdout?: string; stderr?: string } } = {}) {
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.status', (_$, e) => { o.shown?.push(e.text); return { value: undefined } })
   // Each period is a dispatch; the plugin's fn runs when it resolves. With `ticks` the test holds the dispatch and fires it by hand; without, it never resolves: no tick.
-  on('clock.every', () => new Promise((res) => o.ticks?.push(() => res({ value: undefined }))))
+  on('clock.every', (_$, e) => new Promise((res) => (e.ms === LOOK_EVERY ? o.looks : o.ticks)?.push(() => res({ value: undefined }))))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('clock.now', () => ({ value: o.clock?.t ?? 0 }))
   on('process.run', (_$, e) => {
     argv.push([...e.argv])
     const sub = e.argv[2]
     const d = (sub === 'decide' && o.decide?.()) || {}
-    const stdout = d.stdout ?? (sub === 'decide' ? 'Recorded T-5: take A' : sub === 'status' ? status.s : '')
-    return { value: { exitCode: d.exitCode ?? (sub === 'home' ? home : 0), stdout, stderr: d.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
+    const stdout = d.stdout ?? (sub === 'decide' ? 'Recorded T-5: take A' : sub === 'status' ? status.s : sub === 'home' ? o.homePath ?? '' : '')
+    const value = { value: { exitCode: d.exitCode ?? (sub === 'home' ? home : 0), stdout, stderr: d.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
+    return sub === 'status' && o.hold ? o.hold().then(() => value) : value
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
 }
@@ -146,7 +167,7 @@ test('pane: rows read the status JSON', async ($, on) => {
   expect((await pane.find({ type: 'Text', text: /cb-skill · main/ }))?.text).toBe('cb-skill · main · claimed 0m00s'.replace('0m00s', durationOf(0)))
   expect((await pane.find({ key: 'tab-decisions' }))?.text).toBe(`Decisions ${TWO.length}`)
   expect((await pane.findAll({ type: 'Button' })).map((b) => b.key).filter((k) => /^tab-/.test(k ?? ''))).toEqual(['tab-decisions', 'tab-work', 'tab-todos'])
-  expect((await pane.find({ type: 'Text', text: '●', color: 'yellow' }))).toBeTruthy() // the closed tab says decisions wait
+  expect((await pane.findAll({ type: 'Text', text: '●' })).map((d) => d.props?.color)).toEqual(['yellow']) // find by key does not reach a Text; the decisions mark is the only dot; the closed tab says decisions wait
   expect(await pane.find({ type: 'Text', text: /^T-5 pick A$/ })).toBeFalsy()
   await pane.press({ key: 'tab-decisions' })
   await wait()
@@ -203,7 +224,7 @@ test('pane: every status field is on a tab', async ($, on) => {
   await shown(/^kit · develop @aaaaaaa · CI o\/r · \/k$/)
   await shown(/^notes · folder · \/n$/)
   await shown(/^3 calls · fresh 2k · cached 1\.5M · out 350$/)
-  await shown(/never approval/)
+  await shown(/^As of \d{4}-\d\d-\d\d \d\d:\d\dZ$/)
   await pane.unmount()
 })
 
@@ -264,6 +285,7 @@ test('headline: only the non-zero counts, coloured by the worst; nothing when al
   expect(headline([br(), br()])).toEqual({ text: '2 ready to merge', color: 'green' })
   expect(headline([br(), br({ state: 'needs review' }), br({ state: 'needs review' })])).toEqual({ text: '1 ready to merge · 2 need review', color: 'orange' })
   expect(headline([br({ state: 'needs review' })])?.text).toBe('1 needs review')
+  expect(headline([br({ state: 'not pushed' })])).toEqual({ text: '1 not pushed', color: 'orange' })
   expect(headline([br(), br({ state: 'fixes needed' }), br({ state: 'CI failed' })])).toEqual({ text: '1 ready to merge · 1 fixes needed · 1 CI failed', color: 'red' })
 })
 
@@ -448,7 +470,7 @@ test('pane: the Decisions tab shows each option and its why; a decision without 
   expect(await pane.find({ type: 'Text', text: /^Recommended: keep · it works$/ })).toBeTruthy()
   expect(await pane.find({ type: 'Text', text: /^Or: drop$/ })).toBeTruthy()
   expect(await pane.find({ type: 'Text', text: /^T-6 pick B$/ })).toBeTruthy()
-  expect((await pane.find({ type: 'Button', key: 'decide' }))?.text).toBe('Decide T-5')
+  expect((await pane.find({ type: 'Button', key: 'decide' }))?.text).toBe('Decide (2)')
   await pane.unmount()
 })
 
@@ -577,12 +599,81 @@ test('pane: outside a desk the band shows only near-full', async ($, on) => {
   await ui.unmount()
 })
 
+const statusRuns = (argv: string[][]) => argv.filter((a) => a[2] === 'status').map((a) => a.slice(3).join(' '))
+
+test('pane: a look runs --cached once per change, and leaves the plain run to the minute', async ($, on) => {
+  const argv: string[][] = [], looks: (() => void)[] = [], ticks: (() => void)[] = [], stats: string[] = []
+  const file = { size: 1 }
+  deskStub(on, { s: json() }, argv, 0, { looks, ticks, homePath: 'C:/desk\n' })
+  on('fs.stat', (_$, e) => { stats.push(e.path); return { value: { kind: 'file', size: file.size, mtimeMs: 5, isLink: false } } })
+  const fire = async (fns: (() => void)[]) => { for (const run of fns.splice(0)) run(); await wait() }
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await wait()
+  expect(statusRuns(argv)).toEqual(['--json'])
+  await fire(looks)
+  expect(statusRuns(argv)).toEqual(['--json']) // nothing changed since the start
+  // Off Windows, "C:/desk" is a relative path and the harness puts the working folder in front of it.
+  expect(stats.slice(0, 3).map((p) => p.replaceAll('\\', '/').replace(/^.*C:\/desk\//, ''))).toEqual(['todo.jsonl', 'board.jsonl', 'decisions.jsonl'])
+  file.size = 2
+  await fire(looks)
+  expect(statusRuns(argv)).toEqual(['--json', '--cached --json'])
+  await fire(looks)
+  expect(statusRuns(argv)).toEqual(['--json', '--cached --json'])
+  await fire(ticks)
+  expect(statusRuns(argv)).toEqual(['--json', '--cached --json', '--json'])
+})
+
+test('pane: no desk path means no look', async ($, on) => {
+  const argv: string[][] = [], looks: (() => void)[] = [], stats: string[] = []
+  deskStub(on, { s: json() }, argv, 0, { looks })
+  on('fs.stat', (_$, e) => { stats.push(e.path); throw new Error('no') })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await wait()
+  for (const run of looks.splice(0)) run()
+  await wait()
+  expect(stats).toEqual([])
+  expect(statusRuns(argv)).toEqual(['--json'])
+})
+
+test('pane: a missing file does not run status on every look', async ($, on) => {
+  const argv: string[][] = [], looks: (() => void)[] = []
+  deskStub(on, { s: json() }, argv, 0, { looks, homePath: 'C:/desk\n' })
+  on('fs.stat', () => { throw new Error('ENOENT') })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await wait()
+  for (let i = 0; i < 2; i++) { for (const run of looks.splice(0)) run(); await wait() }
+  expect(statusRuns(argv)).toEqual(['--json'])
+})
+
+test('pane: one run at a time; requests meanwhile make one more, plain if any was plain', async ($, on) => {
+  const argv: string[][] = [], ticks: (() => void)[] = [], gates: (() => void)[] = []
+  deskStub(on, { s: json() }, argv, 0, { ticks, hold: () => new Promise((r) => gates.push(r)) })
+  const release = async () => { gates.shift()?.(); await wait() }
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await wait()
+  // A ruling alone: the run after it stays cached.
+  await $.command.run({ command: 'decide', args: 'T-5 take A', ...RUN })
+  await $.command.run({ command: 'decide', args: 'T-6 take B', ...RUN })
+  expect(statusRuns(argv)).toEqual(['--json'])
+  await release()
+  expect(statusRuns(argv)).toEqual(['--json', '--cached --json'])
+  // A ruling and the minute together: one run, the plain one, so the minute's gh round is not lost.
+  await $.command.run({ command: 'decide', args: 'T-7 take C', ...RUN })
+  for (const run of ticks.splice(0)) run()
+  await wait()
+  expect(statusRuns(argv)).toEqual(['--json', '--cached --json'])
+  await release()
+  expect(statusRuns(argv)).toEqual(['--json', '--cached --json', '--json'])
+  await release()
+  expect(statusRuns(argv)).toEqual(['--json', '--cached --json', '--json'])
+})
+
 test('/decide passes the id and the ruling as two argv elements', async ($, on) => {
   const argv: string[][] = []
   deskStub(on, { s: '' }, argv)
   const r = await $.command.run({ command: 'decide', args: '  T-5 take A; "quoted" too ', ...RUN })
   expect(argv.at(-2)?.slice(2)).toEqual(['decide', 'T-5', 'take A; "quoted" too'])
-  expect(argv.at(-1)?.slice(2)).toEqual(['status', '--json'])
+  expect(argv.at(-1)?.slice(2)).toEqual(['status', '--cached', '--json']) // a ruling is local: no gh round for it
   expect(r.text).toBe('Recorded T-5: take A')
   await $.command.run({ command: 'decide', args: '', ...RUN })
   expect(argv.at(-1)?.slice(2)).toEqual(['decide'])
@@ -605,6 +696,8 @@ test('/decide T-n --pick ... splits for the CLI, so it refuses a mistyped value;
   expect(await sent('T-5 --pick')).toEqual(['decide', 'T-5', '--pick'])
   expect(await sent('T-5 --picky choice')).toEqual(['decide', 'T-5', '--picky choice'])
   expect(await sent('T-5 use --pick 2')).toEqual(['decide', 'T-5', 'use --pick 2'])
+  // One argument, so the CLI refuses it (it cannot tell it from a label); the mod must not split or reword it.
+  expect(await sent('T-5 --pick=2')).toEqual(['decide', 'T-5', '--pick=2'])
 })
 
 test('in a desk the meters head the pane', async ($, on) => {
@@ -660,7 +753,7 @@ test('pane: two waiting: the band reads the count and the Button, no ctx row', a
   await wait()
   const ui = await $.ui.mount(BAND('terminal'))
   expect((await ui.find({ type: 'Text', text: /waiting/ }))?.text).toBe('⚑ 2 decisions waiting ')
-  expect((await ui.find({ type: 'Button', key: 'decide' }))?.text).toBe('Decide T-5')
+  expect((await ui.find({ type: 'Button', key: 'decide' }))?.text).toBe('Decide (2)')
   expect(await ui.find({ type: 'Text', text: /near full/ })).toBeFalsy()
   await ui.unmount()
 })
@@ -676,7 +769,7 @@ test('pane: near full only: the band reads the ctx row, no Button', async ($, on
   await ui.unmount()
 })
 
-// What `desk decide --json` prints: `--self-test` and test/desk.test.mjs pin that shape. A hooks test cannot import bin/desk.mjs.
+// What `desk decide --json` prints: test/units.test.mjs and test/desk.test.mjs pin that shape. A hooks test cannot import bin/desk.mjs.
 const printed = (id: string, options: (string | { label: string; why?: string })[], title = 'pick', context: string | null = null) =>
   `${JSON.stringify({ id, title, context, options: options.map((o) => (typeof o === 'string' ? { label: o } : o)) })}\n`
 const NONE = 'null\n'
@@ -710,7 +803,7 @@ function pressStub(on: On, prints: Print[], answers: Answer[] = [], draft = '') 
 }
 const decides = (d: { argv: string[][] }) => d.argv.filter((a) => a[2] === 'decide').map((a) => a.slice(3))
 
-// A typed /decide with no args: the Button's dialog walk where a surface draws, the old text where none does.
+// A typed /decide with no args: the Decide Button's dialog walk where a surface draws, the old text where none does.
 const typedDecide = async ($: Parameters<TestBody>[0], on: On, d: { toasts: string[] }, surface = true) => {
   if (surface) {
     on('session.surfaces', () => ({ value: ['terminal'] }) as never)
@@ -790,7 +883,7 @@ for (const [where, site] of [['band', BAND('terminal')], ['pane', { ...PANE, sur
     await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
     await wait()
     const ui = await mount($)
-    expect((await ui.find({ type: 'Button', key: 'decide' }))?.text).toBe('Decide T-5')
+    expect((await ui.find({ type: 'Button', key: 'decide' }))?.text).toBe('Decide (2)')
     await ui.press({ key: 'decide' })
     for (let i = 0; i < 20 && !d.toasts.length; i++) await wait()
     await wait()
@@ -843,7 +936,7 @@ for (const [where, site] of [['band', BAND('terminal')], ['pane', { ...PANE, sur
     expect(d.asks[0]!.choices).toEqual(KD)
     expect(decides(d)).toEqual([['--json'], ['T-5', '(b) drop'], ['--json']])
     const again = await mount($)
-    expect((await again.find({ type: 'Button', key: 'decide' }))?.text).toBe('Decide T-6')
+    expect((await again.find({ type: 'Button', key: 'decide' }))?.text).toBe('Decide (1)')
     await again.unmount()
   })
 
@@ -874,6 +967,29 @@ for (const [where, site] of [['band', BAND('terminal')], ['pane', { ...PANE, sur
     const ruling = decides(d).at(-2)![1]!
     expect(ruling.includes(key)).toBe(false)
     expect(ruling).toMatch(/^use \[REDACTED-SECRET-[0-9a-f]{8}\]$/)
+  })
+
+  test(`${where} press: a masked typed answer toasts without the secret (T-163)`, async ($, on) => {
+    const key = `${'gh' + 'p_'}${'aB3dE6gH9k'.repeat(4).slice(0, 36)}`
+    const d = pressStub(on, [printed('T-5', KD), REC, NONE], [`use ${key}`])
+    await press($, d)
+    const toast = d.toasts.find((t) => /masked/.test(t))
+    expect(toast).toBeDefined()
+    expect(toast!.includes(key)).toBe(false)
+    expect(toast!.includes('use ')).toBe(false)
+  })
+
+  test(`${where} press: a masked answer the CLI refuses shows only the refusal (T-163)`, async ($, on) => {
+    const key = `${'gh' + 'p_'}${'aB3dE6gH9k'.repeat(4).slice(0, 36)}`
+    const d = pressStub(on, [printed('T-5', KD), REFUSED], [`use ${key}`])
+    await press($, d)
+    expect(d.toasts).toEqual([REFUSED.stderr.trim()])
+  })
+
+  test(`${where} press: an unchanged typed answer shows no masked toast (T-163)`, async ($, on) => {
+    const d = pressStub(on, [printed('T-5', KD), REC, NONE], ['neither, wait for v0.4'])
+    await press($, d)
+    expect(d.toasts.some((t) => /masked/.test(t))).toBe(false)
   })
 
   test(`${where} press: a long option reaches the dialog and the record whole`, async ($, on) => {
@@ -966,7 +1082,7 @@ for (const [where, site] of [['band', BAND('terminal')], ['pane', { ...PANE, sur
     expect(d.asks).toEqual([])
   })
 
-  test(`${where} press: a newer id than the Button's: the one read fresh is asked and ruled`, async ($, on) => {
+  test(`${where} press: a newer id than the status's: the one read fresh is asked and ruled`, async ($, on) => {
     const d = pressStub(on, [printed('T-60', KD, 'newer'), REC, NONE], ['(a) keep'])
     await press($, d)
     expect(d.asks[0]!.question).toContain('T-60: newer')

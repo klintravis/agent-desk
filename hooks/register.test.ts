@@ -56,6 +56,70 @@ test('auto compaction cuts re-readable output and keeps the rest word for word',
   expect(r.tokensBefore).toBe(200_000)
 })
 
+test('a snapshot through PowerShell or git -C stays whole, other git output is cut', async ($, on) => {
+  engine(on, [])
+  const calls = [
+    ['dash-c', 'Bash', 'git -C /repo status --short'],
+    ['quoted', 'Bash', 'git -C "/my repo" stash list'],
+    ['ps', 'PowerShell', 'git status'],
+    ['ps-dash-c', 'PowerShell', 'git -C C:\\repo status'],
+    ['ps-single', 'PowerShell', "git -C 'C:\\my repo' status"],
+    ['log', 'Bash', 'git -C /repo log'],
+    ['ps-log', 'PowerShell', 'git log'],
+    ['ps-log-p', 'PowerShell', 'git log -p'],
+  ]
+  const r = await $.session.compact({ trigger: 'auto', messages: [
+    { role: 'user', text: 'start', toolUses: [] },
+    { role: 'assistant', text: '', toolUses: calls.map(([tool_use_id, tool, command]) => ({ tool_use_id: tool_use_id!, tool: tool!, input: { command } })) },
+    { role: 'user', text: '', toolUses: [], toolResults: calls.map(([tool_use_id]) => ({ tool_use_id: tool_use_id!, text: big('s'), isError: false })) },
+    ...filler(8),
+  ] })
+  const kept = r.messages?.[2]?.toolResults?.filter((x) => x.text.length === 20_000).map((x) => x.tool_use_id)
+  expect(kept).toEqual(['dash-c', 'quoted', 'ps', 'ps-dash-c', 'ps-single'])
+})
+
+// As the engine hands them over: one response's parallel calls are separate rows, each with a handle.
+function parallelCalls(
+  first: SessionMessage['toolUses'][number],
+  second: SessionMessage['toolUses'][number] = { tool_use_id: 'r2', tool: 'Read', input: { file_path: 'b.ts' }, text: big('r') },
+): SessionMessage[] {
+  return [
+    { role: 'user', text: 'start', toolUses: [], handle: 'h0' },
+    { role: 'assistant', text: '', handle: 'a1', toolUses: [first] },
+    { role: 'assistant', text: '', handle: 'a2', toolUses: [second] },
+    { role: 'user', text: '', toolUses: [], handle: 'u1', toolResults: [{ tool_use_id: first.tool_use_id, text: big('r'), isError: false }] },
+    { role: 'user', text: '', toolUses: [], handle: 'u2', toolResults: [{ tool_use_id: second.tool_use_id, text: big('r'), isError: false }] },
+    ...filler(8),
+  ]
+}
+
+test('parallel calls keep their handles while their results are cut', async ($, on) => {
+  engine(on, [])
+  const first = { tool_use_id: 'r1', tool: 'Read', input: { file_path: 'a.ts' }, text: big('r') }
+  const r = await $.session.compact({ trigger: 'auto', agentId: 'a1', messages: parallelCalls(first) })
+  expect(r.messages?.[1]?.handle).toBe('a1')
+  expect(r.messages?.[2]?.handle).toBe('a2')
+  expect(r.messages?.[3]?.toolResults?.[0]?.text).toContain('[pruned')
+  expect(r.messages?.[4]?.toolResults?.[0]?.text).toContain('[pruned')
+})
+
+test('a write call running in parallel stays whole, with its handle', async ($, on) => {
+  engine(on, [])
+  const first = { tool_use_id: 'w1', tool: 'Write', input: { file_path: 'a.ts', content: big('w') }, text: 'ok' }
+  const r = await $.session.compact({ trigger: 'auto', agentId: 'a1', messages: parallelCalls(first) })
+  expect(r.messages?.[1]?.handle).toBe('a1')
+  expect(String(r.messages?.[1]?.toolUses[0]?.input.content).length).toBe(20_000)
+})
+
+test('a write call last in its parallel group stays whole, with its handle', async ($, on) => {
+  engine(on, [])
+  const first = { tool_use_id: 'r1', tool: 'Read', input: { file_path: 'a.ts' }, text: big('r') }
+  const second = { tool_use_id: 'w2', tool: 'Write', input: { file_path: 'b.ts', content: big('w') }, text: 'ok' }
+  const r = await $.session.compact({ trigger: 'auto', agentId: 'a1', messages: parallelCalls(first, second) })
+  expect(r.messages?.[2]?.handle).toBe('a2')
+  expect(String(r.messages?.[2]?.toolUses[0]?.input.content).length).toBe(20_000)
+})
+
 test('a subagent compaction is pruned too', async ($, on) => {
   const seen: SessionCompactInput[] = []
   engine(on, seen)

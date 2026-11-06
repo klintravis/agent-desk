@@ -29,7 +29,8 @@ What each kind must prove (this is the one list; the orchestrator and the valida
   no pinned test was edited after the commit that pinned it (`git diff <pin commit>..HEAD -- <test paths>`
   lists any; each needs the implementer's reason);
 - **perf**: the number against its baseline, run per the `stack-lens` skill's `lenses/perf.build.md`;
-- **feature**: each behaviour its spec or todo promises, on the head.
+- **feature**: each behaviour its spec or todo promises, on the head; its test commit (`test: ...`,
+  body `red: <cmd> | exit <n>` or `red: n/a <why>`) fails on the behaviour's assertion and passes on the head.
 
 In a repo with a spec workflow, each new scenario is a claim.
 

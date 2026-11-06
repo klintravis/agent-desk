@@ -17,6 +17,7 @@ The vendored `skills/thermo-nuclear-code-quality-review/` (Cursor's thermos plug
 | `skills/validate/SKILL.md` (adapted from `verify-this`) | cursor-team-kit, github.com/cursor/plugins | Copyright (c) 2026 Cursor |
 | `skills/stack-lens/lenses/*.md`, `skills/stack-lens/SKILL.md` (rules adapted from `typescript-best-practices`, `tdd`, `benchmark-checklist` and the `principle-*` skills) | pstack, github.com/cursor/plugins `pstack/` | Copyright (c) 2026 Lauren Tan |
 | `skills/stack-lens/lenses/*.md` (`typescript-exhaustive-switch`, `no-inline-imports`, `deslop`), `agents/reviewer.md` and `skills/stack-lens/lenses/security.*.md` (rules from `thermo-nuclear-review`), `agents/implementer.md` (self-deslop step) | cursor-team-kit and thermos, github.com/cursor/plugins | Copyright (c) 2026 Cursor |
+| `skills/grill/SKILL.md` (idea from `grilling` and `interview-me`; written from scratch, no text copied) | mattpocock/skills, github.com/mattpocock/skills; agent-skills, github.com/addyosmani/agent-skills | Copyright (c) 2026 Matt Pocock; Copyright (c) 2025 Addy Osmani |
 
 The MIT license, as it applies to each port above:
 

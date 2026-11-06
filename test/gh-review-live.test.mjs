@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { liveTest } from '../scripts/gh-review-live.mjs';
+import { tmpdir } from 'node:os';
+import { realpathSync } from 'node:fs';
+import { liveTest, sh } from '../scripts/gh-review-live.mjs';
+import { KIT, tmp } from './helpers.mjs';
 
 const REPO = 'owner/private-repo';
 
@@ -44,6 +47,12 @@ test('gh-review-live: refuses a public origin, touching nothing', () => {
   assert.throws(() => liveTest(f.run, 1), /refusing/);
   assert.equal(f.calls.length, 2);
   assert.ok(f.calls[1].includes(`https://github.com/${REPO}.git`), 'gh views the push URL');
+});
+
+test('gh-review-live: refuses a folder with no .git, running nothing', () => {
+  const f = fake();
+  assert.throws(() => liveTest(f.run, 1, tmp()), /not a git checkout/);
+  assert.equal(f.calls.length, 0);
 });
 
 test('gh-review-live: refuses an origin with two push URLs, touching nothing after the read', () => {
@@ -100,6 +109,12 @@ test('gh-review-live: a merge the server did not do throws, closes the PR and de
   assert.throws(() => liveTest(f.run, 1), /merged on the server/);
   assert.ok(f.calls.some((c) => c.startsWith(`gh -R ${REPO} pr close 7`)));
   assert.equal(deletes(f), 2);
+});
+
+test('gh-review-live: sh runs in the repo root, not the caller cwd', () => {
+  const old = process.cwd();
+  process.chdir(tmpdir()); // importing ran nothing; only this read-only git call runs
+  try { assert.equal(realpathSync(sh('git', ['rev-parse', '--show-toplevel'])), realpathSync(KIT)); } finally { process.chdir(old); }
 });
 
 test('gh-review-live: a failed close proof throws, and the cleanup still runs', () => {

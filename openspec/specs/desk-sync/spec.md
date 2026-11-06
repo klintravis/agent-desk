@@ -113,13 +113,19 @@ With the `copilot` harness, `desk sync` SHALL write, in the desk folder only, ea
 - **THEN** its Copilot file has no `model`
 
 ### Requirement: Shims
-`desk sync` SHALL write `desk` (sh) and `desk.cmd` in the desk folder; each sets `DESK_HOME` and runs
-the pinned kit's `bin/desk.mjs` with the arguments. A file of that name without the marker
-`written by desk sync` SHALL be left alone with a warning and exit code 1.
+`desk sync` SHALL write `desk` (sh) in the desk folder; it sets `DESK_HOME` and runs the pinned kit's `bin/desk.mjs` with the arguments. It SHALL write no `desk.cmd`, and SHALL delete one that carries the marker `written by desk sync`. A file of that name without the marker SHALL be left alone with a warning and no change to the exit code.
 
 #### Scenario: Foreign file
 - **WHEN** `desk` exists and lacks the marker
 - **THEN** it is not rewritten and a warning names it
+
+#### Scenario: Old desk.cmd
+- **WHEN** `desk.cmd` exists and carries the marker
+- **THEN** `desk sync` deletes it
+
+#### Scenario: Foreign desk.cmd
+- **WHEN** `desk.cmd` exists and lacks the marker
+- **THEN** it is kept, a warning names it and the exit code stays 0
 
 ### Requirement: Workspace file
 `desk workspace` (and `desk sync` when the file exists, and `wt new`/`remove`/`discard`) SHALL write
@@ -136,11 +142,11 @@ plain JSON SHALL be left unchanged with exit code 1.
 - **THEN** it survives the rewrite
 
 ### Requirement: Plumbing hidden in VS Code
-`desk sync` and `desk workspace` SHALL add `files.exclude` entries set to `true` to the desk folder's `.vscode/settings.json` for `desk`, `desk.cmd`, `node_modules`, `package.json`, `package-lock.json`, `.github`, `.claude`, `.gitignore`, `*.code-workspace` and `NEXT.md.bak`. They SHALL skip `.claude` when the desk keeps its rules at `.claude/agent-rules.md`, and SHALL NOT put the excludes in the `.code-workspace` file.
+`desk sync` and `desk workspace` SHALL add `files.exclude` entries set to `true` to the desk folder's `.vscode/settings.json` for `desk`, `node_modules`, `package.json`, `package-lock.json`, `.github`, `.claude`, `.gitignore`, `*.code-workspace` and `NEXT.md.bak`. They SHALL skip `.claude` when the desk keeps its rules at `.claude/agent-rules.md`, and SHALL NOT put the excludes in the `.code-workspace` file.
 
 #### Scenario: Excludes written
 - **WHEN** `desk sync` runs and `.vscode/settings.json` is missing
-- **THEN** it holds `files.exclude` with the ten entries `true`
+- **THEN** it holds `files.exclude` with the nine entries `true`
 
 ### Requirement: VS Code settings kept
 For the desk folder's `.vscode/settings.json`, `desk sync` and `desk workspace` SHALL keep every other key and every `files.exclude` entry already present (a `false` included), write nothing when all are present, and leave a file that is not plain JSON unchanged with a warning and without failing the command.
@@ -316,9 +322,13 @@ The user file SHALL have no effect on any file git tracks or could commit. `desk
 - **THEN** the user's cache keys are written to that path and the record file is unchanged
 
 #### Scenario: Tracked settings file
-- **WHEN** a repo tracks `.claude/settings.local.json`
+- **WHEN** a repo tracks `.claude/settings.local.json` and the desk has the `claude` harness and the user file has cache keys
 - **THEN** no user value is written to that file and a warning names it
 - **AND** the rest of the sync proceeds
+
+#### Scenario: Tracked settings file without the claude harness
+- **WHEN** a repo tracks `.claude/settings.local.json` and the desk's harnesses are `copilot` only
+- **THEN** no warning is printed: the cache keys are Claude Code's and are written nowhere
 
 #### Scenario: Tracked key outlives the user's name
 - **WHEN** a repo's tracked `.claude/settings.local.json` holds a key, the record lists that name from the user file, and the key is removed from the user file or its `cache` is emptied

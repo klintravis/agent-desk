@@ -6,17 +6,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { multiDesk, desk, git, repo, tmp, KIT } from './helpers.mjs';
+import { multiDesk, desk, git, repo, tmp, KIT, setRepo } from './helpers.mjs';
 import { ASSIGN_CASES, ESCAPE_CASES, UNREADABLE_CASES, mentions, verdict } from '../hooks/mergeguard.mjs';
 
 const GUARD = join(KIT, 'scripts', 'merge-guard.mjs');
 const { DESK_HOME: _, ...noDesk } = process.env;
-
-function setRepo(home, id, fields) {
-  const file = join(home, 'desk.config.json'), cfg = JSON.parse(readFileSync(file, 'utf8'));
-  Object.assign(cfg.repos.find((r) => r.id === id), fields);
-  writeFileSync(file, JSON.stringify(cfg, null, 2));
-}
 
 // `from` is the script's own folder: the plugin hook starts it in the session root, the desk.
 function run(cwd, command, { tool = 'Bash', from = cwd, env = noDesk } = {}) {
@@ -161,6 +155,33 @@ test('the denial names the branch, the tag form, desk wt merge and the person on
   assert.equal(denial(a, 'git push origin feat/x', { from: home }), null);
 });
 
+test('a branch switch earlier in the line counts in the real script; a file checkout does not', () => {
+  const { home, wt } = mixed();
+  assert.equal(denial(wt, 'git push', { from: home }), null, 'control: the worktree itself is on an agent branch');
+  assert.match(denial(wt, 'git checkout main && git merge agent/demo && git push', { from: home }), /main/);
+  assert.match(denial(wt, 'git switch main; git push origin HEAD', { from: home, tool: 'PowerShell' }), /main/);
+  assert.equal(denial(wt, 'git checkout -- f && git push', { from: home }), null);
+});
+
+test('the file-checkout hint shows only when the checkout moves off the current branch', () => {
+  const { home, a, wt } = mixed();
+  assert.match(denial(wt, 'git checkout main && git push', { from: home }), /if main is a file/);
+  for (const c of ['git switch main', 'git checkout -b main', 'git switch -c main']) {
+    const d = denial(wt, `${c} && git push`, { from: home });
+    assert.match(d, /main/, c); // still refused
+    assert.doesNotMatch(d, /is a file/, c);
+  }
+  assert.doesNotMatch(denial(a, 'git switch main && git push', { from: home }), /is a file/); // already on main
+  assert.match(denial(a, 'git switch main && git push', { from: home }), /main/);
+});
+
+test('a BOM in desk.config.json still refuses: the config loads, so the guard does not fail open', () => {
+  const { home, a } = mixed();
+  const file = join(home, 'desk.config.json');
+  writeFileSync(file, `\uFEFF${readFileSync(file, 'utf8')}`);
+  assert.match(denial(a, 'git push origin main', { from: home }), /main/);
+});
+
 test('fails closed: a line it cannot read and that names push or merge is refused wherever it is typed', () => {
   const { root, home, a, b } = mixed();
   const hidden = "cd a && echo ${x:-'}'}; git push origin main";
@@ -178,6 +199,13 @@ test('fails closed: a line it cannot read and that names push or merge is refuse
   const direct = multiDesk(), { log, env } = spy();
   assert.equal(denial(join(direct.root, 'a'), hidden, { from: direct.home, env }), null, 'no review repo on the desk');
   assert.equal(existsSync(log), false, 'a direct desk spawns no git');
+});
+
+test('an unknown key in desk.config.json does not make the guard fail open', () => {
+  const { home, a } = mixed();
+  const file = join(home, 'desk.config.json'), cfg = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...cfg, fromANewerKit: 1, repos: cfg.repos.map((r) => ({ ...r, newField: 1 })) }));
+  assert.match(denial(a, 'git push origin main', { from: home }), /main/);
 });
 
 test('fails open: unknown repo, failing git, broken config, bad input, no desk', () => {

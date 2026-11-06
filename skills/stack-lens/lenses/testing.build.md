@@ -5,4 +5,5 @@
 - Take the expected value from the requirement, never from a run of the code under test.
 - Don't mock what you can run. Mock only what you cannot run locally (a paid API, real hardware).
 - One focused test per behaviour; no coverage padding, no unrelated fixture churn.
+- A feature's test is its own commit before the code, with `red: <cmd> | exit <n>` in the body (`red: n/a <why>` if none is cheap).
 - Never weaken an existing assertion or edit a test to match wrong code.

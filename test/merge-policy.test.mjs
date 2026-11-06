@@ -2,11 +2,11 @@
 // Temp dirs only; `gh` is the preload in gh-stub.mjs, and the bare origin holds refs/pull/<n>/head for real.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, rmSync } from 'node:fs';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { multiDesk, desk, git, commit, env, tmp, BIN } from './helpers.mjs';
+import { multiDesk, desk, git, commit, env, tmp, BIN, ok, board, setRepo } from './helpers.mjs';
 import { prBody } from '../lib/wt.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { mergeChecks, statusData, statusText } from '../bin/desk.mjs';
@@ -15,17 +15,9 @@ import { hasSecret } from '../hooks/secretpatterns.mjs';
 import { prText } from '../hooks/prtext.mjs';
 
 const STUB = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), 'gh-stub.mjs')).href;
-const ok = (r) => { assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`); return r.stdout; };
 const fails = (r, re) => { assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`); assert.match(r.stderr, re); };
-const board = (home) => readFileSync(join(home, 'board.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 // Fixture key built at run time, so no real-looking key sits in this source.
 const KEY = `gh${'p_'}${'x'.repeat(30)}`;
-
-function setRepo(home, id, fields) {
-  const file = join(home, 'desk.config.json'), cfg = JSON.parse(readFileSync(file, 'utf8'));
-  Object.assign(cfg.repos.find((r) => r.id === id), fields);
-  writeFileSync(file, JSON.stringify(cfg, null, 2));
-}
 
 // The CLI with `gh` stubbed and this answer file.
 function stubbed(home, stubFile, answers, ...args) {
@@ -409,7 +401,13 @@ test('PR body: size limit, and a secret refused anywhere', () => {
   assert.throws(() => prBody(sha, `a key ${KEY} here`, ''), /shaped like a secret/);
   assert.throws(() => prBody(sha, 'clean', `abc1234 add ${KEY}`), /shaped like a secret/);
   assert.throws(() => prBody(sha, `db ${['postgres://user', 'hunter22@host/db'].join(':')}`, ''), /shaped like a secret/);
+  assert.throws(() => prBody(sha, `db ${['redis://', 'hunter22@host'].join(':')}`, ''), /shaped like a secret/);
+  assert.throws(() => prBody(sha, `API_TOKEN=${['prod-live', 'xK29Lm4Pq7Rt5Vw8Zn3Bc6Df'].join('-')}`, ''), /shaped like a secret/);
+  assert.ok(prBody(sha, 'key: /api/v2/keys/rotate and token: user_profile_settings_v2', ''), 'a path or code name beside a key name is not a key');
   assert.ok(prBody(sha, 'db postgres://user:${pass}@host/db', ''), 'a template placeholder is source text');
+  assert.throws(() => prBody(sha, `db ${['postgres://app', 'p@' + 'ssw0rd@db'].join(':')}`, ''), /shaped like a secret/);
+  assert.ok(prBody(sha, 'db postgres://app:${PASS}@h:5432?x=a', ''), 'a template placeholder takes no piece after an @');
+  assert.throws(() => prBody(sha, '{"Key": "photos/2024/SummerTrip/IMG1234.jpg"}', ''), /shaped like a secret/);
 });
 
 test('hasSecret holds no state between calls', () => {
@@ -499,6 +497,16 @@ const dropRepo = (home, id) => {
   const file = join(home, 'desk.config.json'), cfg = JSON.parse(readFileSync(file, 'utf8'));
   writeFileSync(file, JSON.stringify({ ...cfg, repos: cfg.repos.filter((r) => r.id !== id) }, null, 2));
 };
+
+test('change flag: a BOM in desk.config.json still flags a flip', () => {
+  const { home } = multiDesk();
+  setRepo(home, 'a', { merge: 'review', gh: 'o/r' });
+  tracked(home);
+  setRepo(home, 'a', { merge: 'direct' });
+  const file = join(home, 'desk.config.json');
+  writeFileSync(file, `\u{FEFF}${readFileSync(file, 'utf8')}`);
+  assert.deepEqual(flags(home), [changed('a', 'review', 'direct')]);
+});
 
 test('direct: no line and no gh call from the check, with the desk in git or not', () => {
   const { home } = multiDesk();
@@ -600,6 +608,115 @@ test('status: a merged PR that does not hold the row\'s head says merged, withou
   assert.equal(stale(input(new Map([['x', false]]), new Map([['x', '']]))), undefined);
 });
 
+test('status --cached: no gh call when answers are kept, local files fresh, asks when none can be read', () => {
+  const f = fixture(REVIEW);
+  const kept = join(f.home, 'scratch', 'status-gh.json');
+  // runs and graphql give ci and the top-level prs real values to keep.
+  const open = {
+    prs: [{ number: 7, state: 'OPEN', headRefName: 'agent/demo', url: 'u' }],
+    runs: [{ headBranch: 'agent/demo', headSha: f.sha, status: 'completed', conclusion: 'success' }],
+    graphql: [{ number: 7, headRefName: 'agent/demo', reviewDecision: 'APPROVED', comments: { totalCount: 1, nodes: [] } }],
+  };
+  const status = (answers, ...flags) => JSON.parse(ok(f.run(answers, 'status', ...flags, '--json')));
+
+  // Nothing kept yet: --cached asks once and keeps the answers.
+  const first = status(open, '--cached');
+  const asked = f.calls().length;
+  assert.ok(asked > 0);
+  assert.equal(first.branches.find((b) => b.slug === 'demo').pr.number, 7);
+  assert.match(first.branches.find((b) => b.slug === 'demo').ci, /success/);
+  assert.equal(first.prs[0].number, 7);
+
+  // Kept: GitHub says otherwise now, but no call goes out, and the todo written since shows.
+  ok(desk(f.home, 'todo', 'add', 'written since', '--area', 'a'));
+  const cached = status({ prs: [], runs: [], graphql: [] }, '--cached');
+  assert.equal(f.calls().length, asked);
+  assert.equal(cached.branches.find((b) => b.slug === 'demo').pr.number, 7);
+  assert.deepEqual(cached.branches.map((b) => b.ci), first.branches.map((b) => b.ci));
+  assert.deepEqual(cached.prs, first.prs);
+  assert.ok(cached.todos.some((t) => t.title === 'written since'));
+
+  // A plain run asks as it did, and what it heard is what --cached then shows.
+  const plain = status({ prs: [] });
+  assert.equal(f.calls().length, asked * 2);
+  assert.equal(plain.branches.find((b) => b.slug === 'demo').pr, undefined);
+  assert.equal(status(open, '--cached').branches.find((b) => b.slug === 'demo').pr, undefined);
+  assert.equal(f.calls().length, asked * 2);
+
+  // A torn or missing keeper falls back to asking, and is whole again after.
+  for (const lose of [() => writeFileSync(kept, '{"reviewPrs":['), () => rmSync(kept)]) {
+    lose();
+    const before = f.calls().length;
+    status(open, '--cached');
+    assert.equal(f.calls().length, before + asked);
+    assert.equal(JSON.parse(readFileSync(kept, 'utf8')).reviewPrs[0].number, 7);
+    status({ prs: [] }); // back to none, for the next round
+  }
+});
+
+test('status: gh unreadable with nothing kept reads CI unavailable and leaves prs null', () => {
+  const f = fixture({ gh: 'o/r', merge: 'review' });
+  const s = JSON.parse(ok(f.run({ missing: true }, 'status', '--json')));
+  assert.equal(s.branches.find((b) => b.slug === 'demo').ci, 'CI unavailable');
+  assert.equal(s.prs, null);
+});
+
+test('status: a failed gh call keeps that repo\'s old CI, PR and review answers; an empty answer replaces them', () => {
+  const f = fixture({ gh: 'o/r', merge: 'review' });
+  setRepo(f.home, 'b', { gh: 'o/s', merge: 'review' });
+  const kept = () => JSON.parse(readFileSync(join(f.home, 'scratch', 'status-gh.json'), 'utf8'));
+  const by = (rows, id) => (rows ?? []).filter((x) => x.repo === id).length;
+  const good = {
+    prs: [{ number: 7, state: 'OPEN', headRefName: 'agent/demo', url: 'u' }],
+    runs: [{ headBranch: 'agent/demo', headSha: f.sha, status: 'completed', conclusion: 'success' }],
+    graphql: [{ number: 7, headRefName: 'agent/demo', reviewDecision: 'APPROVED', comments: { totalCount: 1, nodes: [] } }],
+  };
+  const empty = { prs: [], runs: [], graphql: [] };
+  const status = (answers) => JSON.parse(ok(f.run(answers, 'status', '--json')));
+  const counts = () => ['reviewPrs', 'runs', 'prs'].map((k) => [by(kept()[k], 'a'), by(kept()[k], 'b')]);
+
+  status(good);
+  assert.deepEqual(counts(), [[1, 1], [1, 1], [1, 1]]);
+  for (const fail of ['pr list', 'run list', 'api']) {
+    const down = status({ ...empty, fail });
+    assert.deepEqual(counts(), { 'pr list': [[1, 1], [0, 0], [0, 0]], 'run list': [[0, 0], [1, 1], [0, 0]], api: [[0, 0], [0, 0], [1, 1]] }[fail], `${fail}: only its own answers survive`);
+    if (fail === 'run list') assert.match(down.branches.find((b) => b.slug === 'demo').ci, /success/);
+    status(good);
+  }
+  // One repo failing does not freeze the other: a answers (empty), b keeps.
+  status({ ...empty, fail: 'pr list', failOnly: 'o/s' });
+  assert.deepEqual(counts()[0], [0, 1]);
+  status(good);
+  status({ ...empty, fail: 'api', failOnly: 'o/s' });
+  assert.deepEqual(counts()[2], [0, 1]);
+  // Both answer, empty: gone.
+  status(empty);
+  assert.deepEqual(counts(), [[0, 0], [0, 0], [0, 0]]);
+});
+
+test('status: with nothing kept, one failing repo does not make a kind unavailable for the others', () => {
+  const f = fixture({ gh: 'o/r', merge: 'review' });
+  setRepo(f.home, 'b', { gh: 'o/s', merge: 'review' });
+  const kept = () => JSON.parse(readFileSync(join(f.home, 'scratch', 'status-gh.json'), 'utf8'));
+  const good = {
+    prs: [{ number: 7, state: 'OPEN', headRefName: 'agent/demo', url: 'u' }],
+    runs: [{ headBranch: 'agent/demo', headSha: f.sha, status: 'completed', conclusion: 'success' }],
+    graphql: [{ number: 7, headRefName: 'agent/demo', reviewDecision: 'APPROVED', comments: { totalCount: 1, nodes: [] } }],
+  };
+  for (const fail of ['pr list', 'run list', 'api']) {
+    rmSync(join(f.home, 'scratch', 'status-gh.json'), { force: true });
+    const s = JSON.parse(ok(f.run({ ...good, fail, failOnly: 'o/s' }, 'status', '--json')));
+    const k = kept();
+    const key = { 'pr list': 'reviewPrs', 'run list': 'runs', api: 'prs' }[fail];
+    assert.deepEqual(k[key].map((x) => x.repo), ['a'], `${fail}: repo a's rows are kept, not null`);
+    if (fail === 'run list') assert.match(s.branches.find((b) => b.slug === 'demo').ci, /success/);
+  }
+  // every repo failing with nothing kept is still unavailable (null), not empty
+  rmSync(join(f.home, 'scratch', 'status-gh.json'), { force: true });
+  ok(f.run({ ...good, fail: 'run list' }, 'status', '--json'));
+  assert.equal(kept().runs, null);
+});
+
 test('status: gatherStatus marks a merged PR stale only when git says it lacks the local head', () => {
   const f = fixture(REVIEW);
   const descendant = commit(f.wt, 'two.txt', 'two\n'); // the "Update branch" shape: on top of the local head
@@ -622,6 +739,8 @@ test('status: an open fork PR with the branch name does not fill the slug\'s PR 
   assert.deepEqual(prs(fork, node).map((p) => p.number), [5], 'the fork comes first and still loses');
   assert.deepEqual(prs(fork), []);
   assert.match(f.calls().find((c) => c.args[0] === 'api').args.join(' '), /isCrossRepository/);
+  // -f, not -F: -F turns a repo name like `2048` into a number and the query fails.
+  assert.deepEqual(f.calls().find((c) => c.args[0] === 'api').args.slice(0, 7), ['api', 'graphql', '-f', 'owner=o', '-f', 'name=r', '-f']);
 });
 
 test('direct: status --json has no pr and no merge, and no extra gh call', () => {
@@ -632,5 +751,69 @@ test('direct: status --json has no pr and no merge, and no extra gh call', () =>
     assert.equal('merge' in o.roots.find((r) => r.id === 'a'), false);
     assert.equal(f.calls().filter((c) => c.args.includes('pr')).length, 0);
     assert.doesNotMatch(o.text, /review,|PR #/);
+  }
+});
+
+test('wt finish: a failed gh call while waiting for the first CI run counts as no run yet', () => {
+  const f = fixture({ gh: 'o/r' }, { verdict: false });
+  const r = f.run({ failFirst: 1 }, 'wt', 'finish', 'demo');
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /: success \(1 run\)/);
+  assert.ok(f.calls().filter((c) => c.args.includes('list') && c.args.includes('run')).length >= 2, 'gh run list was retried');
+});
+
+test('wt finish: at the CI wait deadline the error names the last gh failure, or just the 5 minutes', () => {
+  const clockJump = 6 * 60000;
+  for (const [stub, re] of [
+    [{ runs: [], clockJump }, /no CI run found for \w+ after 5 minutes/],
+    [{ fail: 'run list', clockJump }, /no CI run found for \w+; gh failed: gh says boom/],
+    [{ runs: [], failFirst: 1, clockJump }, /no CI run found for \w+ after 5 minutes/], // a good empty call clears the earlier failure
+  ]) {
+    const f = fixture({ gh: 'o/r' }, { verdict: false });
+    fails(f.run(stub, 'wt', 'finish', 'demo'), re);
+  }
+});
+
+test('wt finish: the CI result read after the watch is retried; if it keeps failing the error says the result is unknown', () => {
+  const f = fixture({ gh: 'o/r' }, { verdict: false });
+  const r = f.run({ failAfter: 1, failFirst: 2 }, 'wt', 'finish', 'demo'); // call 1 finds the run, the read blips twice: only a third try succeeds
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /: success \(1 run\)/);
+  const g = fixture({ gh: 'o/r' }, { verdict: false });
+  fails(g.run({ failAfter: 1, failFirst: 99 }, 'wt', 'finish', 'demo'), /result for \w+ is unknown; gh failed: gh blip/);
+});
+
+test('wt finish: gh not installed fails at once, not after the CI wait', () => {
+  const f = fixture({ gh: 'o/r' }, { verdict: false });
+  const r = f.run({ missing: true }, 'wt', 'finish', 'demo');
+  fails(r, /ENOENT/);
+  assert.doesNotMatch(r.stderr, /gh failed/); // that text means it waited out the deadline first
+});
+
+test('status --watch: a repo whose gh call fails for one look keeps its rows, so no CI: line repeats and the PR: lines still print', () => {
+  const f = fixture({ gh: 'o/r' });
+  setRepo(f.home, 'b', { gh: 'o/s' });
+  const stubFile = join(tmp(), 'gh.json');
+  const runs = [{ headBranch: 'agent/demo', headSha: f.sha, status: 'completed', conclusion: 'success' }];
+  const script = `import { look, carry, watchDiff } from ${JSON.stringify(pathToFileURL(BIN).href)};
+    import { writeFileSync } from 'node:fs';
+    const runs = ${JSON.stringify(runs)};
+    const good = (d) => ({ runs, graphql: [{ number: 7, headRefName: 'agent/demo', reviewDecision: d, comments: { totalCount: 0, nodes: [] } }] });
+    const next = (prev, i, o) => { writeFileSync(process.env.GH_STUB, JSON.stringify(o)); return carry(prev, look(i, prev)); };
+    const out = {};
+    for (const fail of ['run list', 'api']) {
+      const first = next({}, 1, good('REVIEW_REQUIRED'));
+      const down = next(first, 2, { ...good('REVIEW_REQUIRED'), fail, failOnly: 'o/s' });
+      out[fail] = { kept: { runs: down.runs.filter((x) => x.repo === 'b').length, prs: down.prs.filter((x) => x.repo === 'b').length }, lines: watchDiff(down, next(down, 3, good('APPROVED'))).lines.filter((l) => /^(CI|PR):/.test(l)) };
+    }
+    console.log(JSON.stringify(out));`;
+  writeFileSync(stubFile, '{}');
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: f.home, env: { ...env(f.home), GH_STUB: stubFile, NODE_OPTIONS: `--import=${STUB}` }, encoding: 'utf8' });
+  const got = JSON.parse(ok(r).trim().split('\n').at(-1));
+  for (const k of ['run list', 'api']) {
+    // Both repos answer the same sha, so the CI: lines alone would not notice a lost row of b's.
+    assert.deepEqual(got[k].kept, { runs: 1, prs: 1 }, `${k}: the failing repo keeps its rows`);
+    assert.deepEqual(got[k].lines.filter((l) => l.startsWith('CI:')), [], `${k}: no CI: line repeats`);
+    assert.equal(got[k].lines.filter((l) => l.startsWith('PR:')).length, 2, `${k}: both repos' PR: lines print`);
   }
 });

@@ -6,7 +6,7 @@ context: |
   agent-desk is two parts that share one version: a Node 20+ ESM CLI (`bin/desk.mjs`, `lib/*.mjs`, no
   dependencies) and a Claude Code plugin whose mod is TypeScript hooks (`hooks/*.ts`, `hooks/*.tsx`).
   Skills, agents and templates are Markdown. Checks: `npm test && claude plugin test && claude plugin validate .`
-  (`desk check` runs the same). Work goes on `develop` through `agent/<slug>` branches; `main` is releases.
+  (`desk check` runs the same; `desk wt finish` also runs `npm run typecheck` first, locally only, since CI has no types file). Work goes on `develop` through `agent/<slug>` branches; `main` is releases.
   Behaviour is specified in `openspec/specs/<capability>/spec.md`; a change to behaviour is an OpenSpec
   change under `openspec/changes/`. README.md and CHANGELOG.md ship with every user-visible change.
   `openspec/inventory.md` lists every command, flag, env var, config key, hook and file with the README

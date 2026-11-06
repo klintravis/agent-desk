@@ -1,6 +1,7 @@
 // The merge guard's rule: under `merge: review`, no shell command pushes to, deletes or merges into a
 // branch outside the repo's branchPrefix, and no `gh pr merge`. A guardrail, not a wall: the server rule
-// is the wall. Not seen, all of it allowed: `bash -c`, `eval`, `Invoke-Expression`, scripts, aliases,
+// is the wall. Not seen, all of it allowed: `bash -c`, `cmd /c`, `eval`, `Invoke-Expression`, `powershell -c`, `pwsh -c`, scripts, aliases,
+// a branch switch by `git switch -`, `git checkout @{-1}`, `git checkout $X` or any other command (`git rebase x main`, `gh pr checkout`, `git symbolic-ref`),
 // `$VAR` and `$(...)` as names, `gh api`, `rtk run`, bash `git {push,} origin main`, `a[ 0 ]=x git push`, `a[x y]=x git push`, `a["]"]=x git push`, `a[b[0]]=x git push`, `env GH_REPO=o/a GH_REPO+=b gh pr merge` (env sets `GH_REPO+`, read here as an append), `GH_REPO=o/a env GH_REPO+=b gh pr merge 1`, `echo ${x:-$(git push)}`,
 // `echo ${x:-'}'}; git push #'` (a `${...}` ends at its first `}`, whatever the quotes),
 // `` echo `echo '`; git push; echo `echo '` `` (a backtick body with an odd quote is read past its backtick), PowerShell
@@ -8,10 +9,11 @@
 // `$o[($k)] = git push`, `[Console]::Title = git push`, `$a <# x #> = git push`, `<# x #> git push`, `return git push`,
 // `$(git push)` inside `@"..."@`, `@{ x = git push }` and its family (a PowerShell hashtable value whose key is only a `$(...)`, sits in parentheses, or has no `$`: `@{ "$(a)" = git push origin main }`, `@{ "$()" = ... }`, `@{ ("$x") = ... }`, `@{ "x" = ... }`, `@{ $() = ... }`), `. git push` and PowerShell 7's "pu`u{73}h".
 // A line the parser cannot read is refused when it names push or merge, or has a backslash after $'. A line it misreads but can read is judged as read, so a parser miss can still be a bypass.
-// A known false positive, refused though git never runs: `"$x y" = git push` (PowerShell rejects the target) and `& "$x y" = git push` (`&` calls the string). A lone string reads the same as a hashtable key, `@{ "$x" = git push }`, which does run git.
+// A known false positive, refused though git never runs: `"$x y" = git push` (PowerShell rejects the target) and `& "$x y" = git push` (`&` calls the string). A lone string reads the same as a hashtable key, `@{ "$x" = git push }`, which does run git. Another: a lone word after `git checkout` is read as a branch though it may be a file, tag, commit or remote ref, `git checkout package.json; git push` (write `git checkout -- package.json`), `git checkout --track origin/agent/y; git push`. And heredoc text with a line starting `git checkout main`, before a bare push.
 // Shared, Node-free. This file reads the command; scripts/merge-guard.mjs maps its directories to repos.
 
 // shortcut: a `cd` counts as run, even one behind `&`, a pipe or a failed `&&`, and `popd` and `cd -` are not followed; the server rule covers those.
+// shortcut: a `git checkout|switch` counts as run, even one that fails, for every later push or merge on the line whatever its directory, and it only adds a branch to judge, so `git checkout main; git checkout agent/x; git push` and `git -C ../b checkout main; git push` are refused; upgrade by following HEAD per repo, which needs to know the checkout worked.
 
 const WRAPPERS = new Set(['command', 'env', 'exec', 'builtin', 'coproc', 'nohup', 'time', 'timeout', 'nice', 'sudo', 'xargs', 'rtk', 'if', 'then', 'do', 'else', 'elif', 'while', 'until', '!']);
 // Words that run the rest of the line only straight after `rtk`; `proxy` is an alias of `bypass`.
@@ -178,14 +180,44 @@ function scan(src, ps) {
 }
 
 /**
+ * The branch `git checkout|switch` lands on. Unknown options are skipped, so a name after one still counts.
+ * @param {string} sub @param {{ t: string, dyn: boolean }[]} args
+ * @returns {string | null} null for a file checkout, a detached head, or a name only git knows
+ */
+function switchTarget(sub, args) {
+  const pos = [];
+  for (let a = 0; a < args.length; a++) {
+    const w = args[a], t = w.t, flag = t.split('=')[0];
+    if (t === '--') {
+      if (sub === 'checkout' && args[a + 1]) return null; // `checkout main -- f` takes files; `switch -- main` is the branch
+      pos.push(...args.slice(a + 1));
+      break;
+    }
+    if (w.dyn || t === '-' || !t.startsWith('-')) { pos.push(w); continue; }
+    const short = /^-[qftlmd]*[bBcC](.*)$/s.exec(t); // -b -B of checkout, -c -C of switch, in a cluster or glued to the name
+    if (short || (flag !== '--force' && is(flag, '--create', '--force-create', '--orphan'))) {
+      if (short?.[1]) return short[1];
+      if (t !== flag) return t.slice(flag.length + 1);
+      return args[a + 1] && !args[a + 1].dyn ? args[a + 1].t : null;
+    }
+    if (/^-[^-]*[dp23]/.test(t) || is(flag, '--detach', '--patch', '--ours', '--theirs')) return null;
+    if (t === flag && is(flag, '--conflict', '--pathspec-from-file')) a++; // an empty pathspec file still switches, so the name after it counts
+  }
+  if (pos.length !== 1 || pos[0].dyn) return null; // `checkout main f` takes files
+  return /^(HEAD$|@$|@\{|\.|-)/.test(pos[0].t) ? null : pos[0].t; // no branch starts with a dot: `checkout .`
+}
+
+/**
  * The commands the guard judges, each with the `cd` / `-C` steps that lead to its directory.
  * @param {string} cmd @param {string} [shell] the tool name; PowerShell has other escapes than bash
- * @returns {{ kind: 'push' | 'merge' | 'gh' | 'unreadable', dirs: (string | null)[], args: { t: string, dyn: boolean }[], repo?: string }[]} a null dir is not knowable here
+ * @returns {{ kind: 'push' | 'merge' | 'gh' | 'unreadable', dirs: (string | null)[], args: { t: string, dyn: boolean }[], repo?: string, switched?: string[], maybeFile?: string[] }[]} a null dir is not knowable here; switched holds the branches an earlier checkout or switch on the line named, maybeFile those a lone `git checkout <word>` named (may be files)
  */
 export function parse(cmd, shell) {
   const ps = /powershell/i.test(shell ?? '');
   const ops = [], stack = [];
   let dirs = [];
+  let switched = []; // outside `stack`: a checkout in a subshell still moves HEAD
+  let maybeFile = []; // the names a lone `git checkout <word>` took: those may be files
   // PowerShell takes \ as a path separator on every OS; / reads the same on Windows.
   const path = (t) => (ps ? t.replace(/\\/g, '/') : t);
   const value = (w) => (!w || w.dyn ? null : path(w.t));
@@ -222,7 +254,11 @@ export function parse(cmd, shell) {
         else if (GIT_VALUE_FLAGS.has(f)) a++;
       }
       const sub = args[a]?.t;
-      if (sub === 'push' || sub === 'merge') ops.push({ kind: sub, dirs: d, args: args.slice(a + 1) });
+      if (sub === 'push' || sub === 'merge') ops.push({ kind: sub, dirs: d, args: args.slice(a + 1), switched, maybeFile });
+      else if (sub === 'checkout' || sub === 'switch') {
+        const to = switchTarget(sub, args.slice(a + 1));
+        if (to) { switched = [...switched, to]; if (sub === 'checkout' && args.length === a + 2) maybeFile = [...maybeFile, to]; }
+      }
     } else if (name === 'gh' || name === 'gh.exe') {
       const pos = [];
       let repo = ghEnv;
@@ -245,7 +281,7 @@ export function parse(cmd, shell) {
 /** @param {ReturnType<typeof parse>[number]} op @param {string} prefix @param {string} [current] current branch, empty when detached @returns {string | null} what it would do, or null to allow */
 export function judge(op, prefix, current = '') {
   const outside = (b) => !b.startsWith(prefix);
-  const onCurrent = (verb) => (current && outside(current) ? `git ${verb} ${current}` : null);
+  const onCurrent = (verb) => { const b = [current, ...(op.switched ?? [])].find((x) => x && outside(x)); return b ? `git ${verb} ${b}${b !== current && (op.maybeFile ?? []).includes(b) ? ` (if ${b} is a file, write git checkout -- ${b})` : ''}` : null; };
   if (op.kind === 'gh') return 'gh pr merge';
   if (op.kind === 'unreadable') return "a line that names push or merge, or has a backslash after $', and that the guard cannot read (check its quotes)";
   if (op.kind === 'merge') return op.args.some((w) => is(w.t, '--abort', '--quit')) ? null : onCurrent('merge into');
@@ -421,6 +457,21 @@ export const CASES = [
   // Merge
   ['git merge origin/main', 'agent/x', false], ['git merge agent/x', 'main', true], ['git merge agent/x', 'release/1', true], ['git merge --abort', 'main', false], ['git merge --quit', 'main', false], ['git merge --continue', 'main', true], ['git merge', '', false],
   ['git merge-base main agent/x', 'main', false], ['git merge-tree a b', 'main', false], ['git merge-file a b c', 'main', false],
+  // A branch switch earlier in the line adds a refusal: every create form, and any directory, since a subfolder shares HEAD
+  ['git checkout main && git merge agent/x && git push', 'agent/x', true], ['git switch main; git push origin HEAD', 'agent/x', true, P], ['git checkout main && git push', 'agent/x', true], ['git checkout main && git merge agent/x', 'agent/x', true], ['git.exe checkout main; git push', 'agent/x', true, P], ['git checkout "main" && git push origin @', 'agent/x', true], ['git checkout main && git push', '', true],
+  ['git switch -c main && git push', 'agent/x', true], ['git switch -C main; git push', 'agent/x', true, P], ['git switch -fc main && git push', 'agent/x', true], ['git switch -cmain && git push', 'agent/x', true], ['git switch --cre main && git push', 'agent/x', true], ['git switch --create=main && git push', 'agent/x', true], ['git switch --force-create main && git push', 'agent/x', true], ['git switch --orphan main && git push', 'agent/x', true], ['git switch --force -c main && git push', 'agent/x', true],
+  ['git checkout -b main && git push', 'agent/x', true], ['git checkout -B main origin/main; git push', 'agent/x', true], ['git checkout -bmain && git push', 'agent/x', true], ['git checkout -qb main && git push', 'agent/x', true], ['git checkout --orphan main && git push', 'agent/x', true], ['git checkout -f main && git push', 'agent/x', true],
+  ['git checkout main -- && git push', 'agent/x', true], ['git switch -- main; git push', 'agent/x', true, P], ['git switch main -- && git push', 'agent/x', true], ['git checkout --conflict merge main && git push', 'agent/x', true], ['git checkout --conflict=merge main && git push', 'agent/x', true], ['git checkout --pathspec-from-file=l main && git push', 'agent/x', true], ['git checkout --pathspec-from-file l main && git push', 'agent/x', true], ['git switch -qd main; git checkout -t -b main; git push', 'agent/x', true],
+  ['(git checkout main); git push', 'agent/x', true], ['git checkout main && cd sub && git push', 'agent/x', true], ['cd sub; git checkout main; cd ..; git push', 'agent/x', true], ['git -C ../b checkout main; git push', 'agent/x', true],
+  // It never lifts one: the checkout may have failed (a worktree holds that branch), so `git push` still leaves from the first branch
+  ['git checkout agent/y; git push', 'main', true], ['git checkout -b agent/y && git push', 'main', true], ['git -C ../b checkout agent/y && git push', 'main', true], ['git checkout main; git checkout agent/x; git push', 'agent/x', true], ['git checkout agent/y && git push', '', false], ['git checkout agent/y && git push', 'agent/x', false], ['git switch -c agent/y && git push', 'agent/x', false], ['git switch --force agent/y && git push', 'agent/x', false],
+  // A file checkout, a detached head or no name: not a switch to a branch
+  ['git checkout -- f && git push', 'agent/x', false], ['git checkout -q -- f && git push', 'agent/x', false], ['git checkout main -- f && git push', 'agent/x', false], ['git checkout main f && git push', 'agent/x', false], ['git checkout --ours f && git push', 'agent/x', false], ['git checkout --theirs f && git push', 'agent/x', false], ['git checkout -2 f && git push', 'agent/x', false], ['git checkout -p main && git push', 'agent/x', false], ['git checkout -qp main && git push', 'agent/x', false],
+  ['git checkout HEAD && git push', 'agent/x', false], ['git checkout @ && git push', 'agent/x', false], ['git checkout . && git push', 'agent/x', false], ['git checkout ./f && git push', 'agent/x', false], ['git checkout -d main && git push', 'agent/x', false], ['git checkout --detach && git push', 'agent/x', false], ['git switch --detach main; git push', 'agent/x', false, P],
+  // Not seen: `$X` and `-` as the name. A later or quoted switch, or a push that names its branch, is no concern of this
+  ['git checkout $B && git push', 'agent/x', false], ['git switch - && git push', 'agent/x', false], ['git checkout @{-1} && git push', 'agent/x', false], ['git switch -c $B && git push', 'agent/x', false], ['git push; git checkout main', 'agent/x', false], ['git commit -m "git checkout main" && git push', 'agent/x', false], ['git checkout main && git push origin agent/x', 'agent/x', false], ['git checkout main && git push --tags', 'agent/x', false], ['git checkout main && git merge --abort', 'agent/x', false], ['git status; git checkout main', 'agent/x', false],
+  // The known false positives: a lone word could be a file, and a heredoc line reads as a command
+  ['git checkout package.json && git push', 'agent/x', true], ["git commit -F - <<'EOF'\ngit checkout main\nEOF\ngit push", 'agent/x', true],
   // gh
   ['gh pr merge', 'agent/x', true], ['gh pr merge 12 --squash', 'agent/x', true], ['gh pr --repo o/r merge 1', 'agent/x', true], ['gh pr view 12', 'main', false], ['gh pr list --search merge', 'main', false], ['gh.exe pr merge 1', 'agent/x', true],
   // Quoted text, comments, heredocs

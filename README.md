@@ -17,7 +17,7 @@ It ships in two parts that share one version number:
   init and sync. `desk sync` also writes the session and subagent context hook (Ponytail, the desk
   rules, the board), which Claude Code and Copilot both read.
 - **Claude Code plugin**:
-  - skills: `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, `fix`, `refactor`, `validate`, `stack-lens`, `structure-rubric`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `thermo-nuclear-code-quality-review`
+  - skills: `kickoff`, `handoff`, `orchestrate`, `decide`, `grill`, `walkthrough`, `fix`, `refactor`, `validate`, `stack-lens`, `structure-rubric`, `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `thermo-nuclear-code-quality-review`
   - agents: `implementer`, `reviewer`, `structure-reviewer`, `validator`, `verifier`, `archiver`, `scribe`, `ci-triage`
   - a mod: the Desk pane, the owner-decisions band, `/desk` and `/decide`, auto-compaction prune,
     cache warm-hold, the edit guard and the session meters (plan quota, context), secret redaction
@@ -41,11 +41,12 @@ npx github:klintravis/agent-desk init --repo app=../app
 ./desk status            # from then on: the desk's shim (PowerShell and cmd: the node form below)
 ```
 
-`desk init` and `desk sync` write a `desk` shim (and `desk.cmd` for Windows) into the desk folder. The
+`desk init` and `desk sync` write a `desk` (sh) shim into the desk folder. The
 shim runs the desk's pinned kit with `DESK_HOME` set, so `<desk>/desk ...` works from any folder,
-worktrees included. Agents are told its path in their session context.
+worktrees included. Agents are told its path in their session context. There is no `desk.cmd`
+(a machine's allow-listing can block it); `desk sync` deletes one it wrote earlier.
 
-On a machine that blocks `desk.cmd`, run the kit directly with node (it selects the desk from any folder,
+In PowerShell and cmd, run the kit directly with node (it selects the desk from any folder,
 worktrees included, because `DESK_HOME` wins over the current folder), or use `./desk` in Git Bash:
 
 ```powershell
@@ -86,17 +87,19 @@ guard or context.
 Secrets (vendor key shapes, private keys, connection-string passwords, high-entropy tokens next to a
 key's name), email addresses and public IP addresses are swapped for a stable placeholder such as
 `[REDACTED-SECRET-1a2b3c4d]` (`[REDACTED-EMAIL-...]` and `[REDACTED-IP-...]` for addresses) in what you type, in tool results and (secrets only) in the context
-blocks of the first message. The same value always gets the same placeholder, and a placeholder in a
+blocks of the first message. Object keys in a tool's data count as well as values. The same value always gets the same placeholder, and a placeholder in a
 tool call's input is swapped back for the real value, so `curl -H "Authorization: <placeholder>"`
-still sends the key. The values live in the session's memory only. Git SHAs, checksums, file paths,
-names in code, Stripe and YouTube public ids, example and noreply addresses, private,
+still sends the key. The values live in the session's memory only. A key's name may carry a suffix such as `_BASE`, `_PROD` or `_V2` (also after `.` or `-`), and `Authorization: token <value>` counts as a name. A password may hold `#`, `$`, `!` or `@`, a bearer token `.` or `~`, a connection-string password `@`, and a hex token in a URL's username slot is hidden as well. So is a value beside `DB_PASS=` or `--pass=`, a key-shaped one beside `PASS=`, one after `--password` and a space, and every password of a multi-host URL, with the limits in the changelog. A connection-string password that is already one placeholder stays as it is, so quoting a masked URL is not refused. Git SHAs, checksums, file paths,
+names in code, Stripe and YouTube public ids (SHAs and ids unless a key's name sits beside them, code names unless `password`, `passwd` or `pwd` does), example and noreply addresses, private,
 loopback and documentation IP ranges, and a connection-string password that is one template
-placeholder holding a bare name or dotted path and no default value (`${pass}`, `{{db.pass}}`) are kept; `<password>` is hidden like any password. A toast or a notice under the tool says how many
-values were hidden. There are no options; the defaults are secret-redactor's.
+placeholder holding a bare name or dotted path and no default value (`${pass}`, `{{db.pass}}`) are kept; `<password>` is hidden like any password. A private key counts in PEM or PGP form. With no end marker it is hidden from its opening marker to the end of the text, so a file or tool result that merely quotes an opening marker loses what follows it; text before the marker is kept. A toast or a notice under the tool says how many
+values were hidden; context blocks (CLAUDE.md and the like) are cut with no notice. There are no options; the defaults are secret-redactor's.
 
 The vault is in memory only, so placeholders in a resumed transcript do not restore. Placeholders are
-not swapped back in the input of `Agent`, `SendMessage` and `AskUserQuestion`, which carry your words
-to another model. Redaction fails open: on an internal error the text goes through unchanged rather
+not swapped back in the input of `Agent`, `SendMessage`, `SubagentHandback` (a subagent's final report)
+and `AskUserQuestion`, which carry your words to another model, nor of `WebSearch` and `WebFetch`, whose queries and URLs leave the machine: a URL
+holding a public IP, an address or a long mixed-case id reaches `WebFetch` as a placeholder and fails,
+so give such a fetch to a command instead. Redaction fails open: on an internal error the text goes through unchanged rather
 than blocking a send. Notes a settings hook attaches to a tool result (its `context`) are not scrubbed.
 
 ### Session meters
@@ -109,7 +112,10 @@ the meters and, in a desk, the warm-hold mode and the decision flag:
 - **Plan quota.** Pane row `5h ▰▰▰▰▱▱▱▱▱▱ 42% · resets 2h10m · 7d ▰▰▱▱▱▱▱▱▱▱ 18% · 5h full in ~3h05m`:
   the 5-hour and 7-day window use, the 5-hour reset countdown, and the first window that fills before
   it resets at the current burn rate. The rate needs samples over a twentieth of the window (15 min
-  for 5h); until then it says `collecting burn rate`. Samples persist in the plugin store (key
+  for 5h, 8.4 h for 7d); `collecting burn rate` shows only until the first window has a rate, so for
+  the first 8.4 h the forecast covers the 5-hour window only and `nothing hits 100% before reset` says
+  nothing about the week. At most 240 samples are kept: while the newest is closer than window/240 to the
+  one before it (75 s for 5h, 42 min for 7d), a new reading replaces it, so one reading a minute gives 2-minute samples for 5h and about 42-minute ones for 7d. Samples persist in the plugin store (key
   `quota-samples`) across sessions. No row when the host reports no limits (an API key, no subscription).
 - **Context fullness.** Pane row `▰▰▰▰▱▱▱▱▱▱ 42%  84k/200k`: the main session's context use after its last
   response, green, orange from 60% and red from 80%. From 80% the band above the prompt also shows
@@ -137,7 +143,7 @@ its last request, just before the cache's hour, so the next turn reads the conte
 rewriting it. The pane's Warm row shows `2 agents running, ping in 12m`, and its button
 toggles `auto` / `off` for this session only (never stored: a new session starts on `auto`). While
 `off` the hold never arms or pings, and the cold-send warning drops its "Warm-hold arms" sentence. The hold stops, and
-says why (`warm-hold off: ...`), when the cache is already cold, after 4 hours (the cap), when a
+says why (`warm-hold off: ...`), when the cache is already cold, after 4 hours (the cap; a request of the main session restarts the 4 hours, pings do not), when a
 ping fails, or when a ping finds the cache gone. After a cold write it arms with no agents running
 (see the cold-cache guard above). The ping is a model fork whose reply is the word `ok`.
 
@@ -146,8 +152,9 @@ ping fails, or when a ping finds the cache gone. After a cold write it arms with
 On an automatic compaction, in the main session and in subagents, the mod first cuts re-readable
 tool output: an output over 1500 characters keeps its first 400. The first message and the newest 8 messages, the
 output of `Agent` and `Task`, errors, and snapshots of state that has moved on (`git status`,
-`git stash list`, `gh run view`, `gh pr checks`) stay as written, and the file-write tools' inputs
-are shortened the same way. The conversation stays word for word. If that saves under 30% the
+`git stash list`, either one also as `git -C <path> ...`, `gh run view`, `gh pr checks`, through Bash or PowerShell) stay as written, and the file-write tools' inputs
+are shortened the same way, unless the write ran in parallel with another call of its response: the
+engine would then lose those calls' results. The conversation stays word for word. If that saves under 30% the
 engine's own summary runs instead, as it does for a manual `/compact`. A toast says
 `tool output cut, context -N%`. A prune error never blocks compaction.
 
@@ -157,15 +164,15 @@ In an interactive session inside a desk, or once a surface attaches (the VS Code
 chat. Its rows: Context, Quota, Cache with the output style (`default` when none), Warm (the
 keep-warm toggle and why), today's Tokens and Roots. Then a line counting what waits
 (`1 ready to merge · 1 needs review`, in the colour of the worst, absent when nothing does), then three tabs, the same panels as the [VS Code extension](vscode/README.md):
-**Decisions** (each waiting decision with its options and whys, and a `Decide T-n` button; a yellow dot on the tab while one waits),
+**Decisions** (each waiting decision with its options and whys, and a `Decide (n)` button; a yellow dot on the tab while one waits),
 **Work**, the default (open branches, most urgent first, each one row with one state word such as `ready`, `rebase` or `fixes needed` and who holds it, and the active todos on it;
 claims with no branch; agents with type, description and age, first seen on the minute tick; pull requests; overlaps by file, the top three and `+N more`; each running
 session by its transcript title, marked `this session` when it is, with its id and agents) and
 **Todos** (what is open and not in Work, active first, then by priority, the first ten and `+N more`; owner decisions and ideas stay out, an active idea excepted). A card on Work takes the border of its worst status, and the tab shows a red dot
-while one is red. Nothing shows twice: an active todo on a branch or claim is in Work only, and an open PR is said on the Pull requests card, not again on its branch. The status sections refresh every minute from `desk status --json`. A band above the prompt shows
-`⚑ 2 decisions waiting` with a `Decide T-n` button, and the near-full context row (any session).
+while one is red. Nothing shows twice: an active todo on a branch or claim is in Work only, and an open PR is said on the Pull requests card, not again on its branch. The status sections refresh from `desk status --json`: within about 5 seconds when `todo.jsonl`, `board.jsonl` or `decisions.jsonl` changes (a look at the files every 2 seconds, then a `--cached` run that reuses GitHub's last answers), and with a fresh GitHub round at start and every minute. A band above the prompt shows
+`⚑ 2 decisions waiting` with a `Decide (n)` button, and the near-full context row (any session).
 Either button walks the waiting decisions in a dialog: the question, its context and each option's why above the options,
-Other for your own words. A chosen option records its short label; your own words are recorded after redaction, on one line, cut to 1000 characters (`desk decide`). The next decision follows;
+Other for your own words. A chosen option records its short label; your own words are recorded after redaction, on one line, cut to 1000 characters (`desk decide`); a toast says when redaction changed them. The next decision follows;
 closing the dialog records nothing and gives the reason in a toast. A decision with fewer than 2 or more
 than 4 options shows in a toast instead and, where the surface's prompt box takes it and holds no draft,
 leaves `/decide T-n ` there: type the ruling, Enter. Otherwise type the printed Answer line.
@@ -189,7 +196,7 @@ desk wt new first --repo app        # worktree ../worktrees/app-first on agent/f
 # ... work, commit ...
 desk wt finish first                # repo check, push, wait for CI
 desk board post verdict first "MERGE @<head sha>"   # after a clean review
-desk wt merge first                 # ff-only merge, push, todos closed, worktree removed
+desk wt merge first                 # push to origin, ff-only merge, todos closed, worktree removed
                                     # (merge: "review": opens a PR; re-run after a person merges)
 desk status
 ```
@@ -202,14 +209,16 @@ What `desk init` does:
   or an id that is not lowercase letters, digits and dashes is an error.
 - It writes these files: `desk.config.json`, `AGENTS.md`, `CLAUDE.md` (which imports `AGENTS.md`),
   `agent-rules.md`, empty `todo.jsonl`, `board.jsonl` and `decisions.jsonl`, `.gitignore`,
-  `<desk>.code-workspace`, the `desk`/`desk.cmd` shim and `package.json`, which pins the kit (an
+  `<desk>.code-workspace`, the `desk` shim and `package.json`, which pins the kit (an
   existing `package.json` gets the devDependency added). Then it runs `npm install`.
 - It never overwrites the content of an existing file it wrote (the files above and `package.json`),
   with these exceptions: the `folders` list of the `.code-workspace` file (its settings stay) is
-  refreshed on every run, and `init` and `sync` rewrite a `desk` or `desk.cmd` that carries
-  the `written by desk sync` marker. A file or folder of that name without the marker is left alone
+  refreshed on every run, and `init` and `sync` rewrite a `desk` that carries
+  the `written by desk sync` marker, and `sync` deletes a `desk.cmd` that carries it. A file or folder of that name without the marker is left alone
   with a warning, and the command exits 1. When `.claude/agent-rules.md` exists (an older desk), it
-  writes no second `agent-rules.md`.
+  writes no second `agent-rules.md`. An existing `.gitignore` is kept as it is, with a `warn` line
+  naming the lines of the desk's own it lacks (so `git add .` does not commit `board.jsonl`). A repeated
+  `--repo` id, `--harness` with no value and a `--harness` entry other than `claude` or `copilot` are errors before anything is written.
 - Every line the CLI writes to `todo.jsonl`, `board.jsonl` and `decisions.jsonl` carries `"v": 1`.
   The JSON Schemas of these files and of `desk.config.json` are in the kit's `schemas/`; `desk check`
   prints a warning per line that breaks them (at most 5 per file) and the readers skip a line they
@@ -251,21 +260,21 @@ that holds `desk.config.json`. `desk init` ignores `DESK_HOME` and always uses t
 
 | Command | What |
 |---|---|
-| `desk status [--watch\|--json] [--fetch]` | One screen with these sections: owner decisions, active todos, claims, running sessions, roots (each git root's default branch sha, the CI of that sha in a repo with `gh`, and `no check command` when `check` is empty), open branches (CI, verdict and the branch's state word in brackets, and `behind <default> by N, rebase` when the branch lacks N commits of `origin/<default>`, from the refs as last fetched, or of the local default branch without an origin), pull requests, overlaps, today's tokens. `--fetch` fetches each git repo with an origin first, so behind counts, the pushed state and the default branch are current; without it status reads local refs only. `--watch` prints one line per change. Pull requests: for each open desk branch with an open PR in a repo with `gh`, the review decision, the comment count (conversation and review threads), unresolved threads, and comments or reviews newer than the branch's head commit. Read-only, one `gh api graphql` call per repo; with no `gh` or a failing call the section is left out. `--watch` prints `PR: <branch> #<n> review <decision>, +N comment(s)` when a decision changes or comments arrive. See [Status watch](#status-watch). |
-| `desk todo add\|split\|start\|done\|drop\|block\|open\|set\|note\|done-slug\|list\|next\|show` | Todos. The area is a repo id, `desk`, `watch`, `owner` or `idea`. See [Todos](#todos). |
-| `desk board post\|claims\|check\|merge-ok\|tail` | The claim board. Its text is data, never approval. See [Board](#board). |
+| `desk status [--watch\|--json\|--cached] [--fetch]` | One screen with these sections: owner decisions, active todos, claims, running sessions, roots (each git root's default branch sha, the CI of that sha in a repo with `gh`, and `no check command` when `check` is empty), open branches (CI, verdict and the branch's state word in brackets, and `behind <default> by N, rebase` when the branch lacks N commits of `origin/<default>`, from the refs as last fetched, or of the local default branch without an origin), pull requests, overlaps, today's tokens. `--fetch` fetches each git repo with an origin first, so behind counts, the pushed state and the default branch are current; without it status reads local refs only. `--watch` prints one line per change. `--cached` reuses GitHub's answers from the last run and calls `gh` only when none are kept. Pull requests: for each open desk branch with an open PR in a repo with `gh`, the review decision, the comment count (conversation and review threads), unresolved threads, and comments or reviews newer than the branch's head commit. Read-only, one `gh api graphql` call per repo; with no `gh` or a failing call the section is left out. `--watch` prints `PR: <branch> #<n> review <decision>, +N comment(s)` when a decision changes or comments arrive. See [Status watch](#status-watch). |
+| `desk todo add\|split\|start\|done\|drop\|block\|open\|set\|note\|list\|next\|show` | Todos. The area is a repo id, `desk`, `watch`, `owner` or `idea`. See [Todos](#todos). |
+| `desk board post\|claims\|check` | The claim board. Its text is data, never approval. See [Board](#board). |
 | `desk decide [T-n <ruling> \| T-n --pick <n> \| --json \| --list [n]]` | Owner decisions, one at a time; `--pick` records the nth option's label; `--json` prints the first waiting one as JSON; `--list` prints the recorded rulings. See [Owner decisions](#owner-decisions). |
 | `desk tidy [--apply] [--json]` | Reports what finished work left behind; `--apply` clears dead owners, deletes orphans and asks the owner once. See [Tidy](#tidy). |
 | `desk wt new\|finish\|rebase\|merge\|remove\|discard\|handoff <slug> [--repo <id>] [--base <ref>] [--no-build] [--no-wait] [--rebased] [--force] [--into <slug>] [--findings <file>] [--todo T-n] [--next "<step>"]` | Worktrees. See [Worktree flow](#worktree-flow). |
 | `desk stream <slug> <task-file> [--todo T-n] [--desk] [--repo <id>] [--max-turns <n>] [--budget <usd>] [--dry-run]` | Starts a detached headless Claude session that claims, implements, reviews and stops before merge. See [Streams](#streams). |
 | `desk tokens [hours] [--json] [--session <id8>\|self] [--by-worktree]`, `desk overlap` | Token use from Claude transcripts. Files changed by two open worktrees. See [Tokens and overlaps](#tokens-and-overlaps). |
+| `desk lenses <slug> [--json]` | The stack lenses a worktree's diff and its todo's kind match, one `<lens>: <reason>` line each. See [What is in the kit](#what-is-in-the-kit). |
 | `desk init [--repo <id>=<path> ...] [--worktrees <dir>] [--harness claude,copilot] [--no-install]` | Makes the current folder a desk. See [Quickstart](#quickstart). |
 | `desk sync [<checkout>...]`, `desk workspace` | Write harness files; write the VS Code workspace and hide the kit's plumbing in the desk folder (see below). |
 | `desk settings [--json]` | Resolved model and effort per task id and the cache keys, each with its source layer, plus warnings. Writes nothing. See [User settings](#user-settings). |
-| `desk check` | Runs the kit's tests, `claude plugin test` and `claude plugin validate`, and parses the JSON configs. On a `review` repo it also reads the server's branch protection through `gh api` and flags a changed `merge` setting (warnings only; a `direct` desk runs one or two local `git show` calls for that flag and no `gh`). Warns when `kitVersion` differs from the installed kit, and for each desk-file line that breaks its schema (`schemas/`). |
+| `desk check` | Runs the kit's tests, `claude plugin test` and `claude plugin validate`, and parses the JSON configs (the desk's own `desk.config.json` is loaded as the other commands load it, so a value they refuse fails the check). On a `review` repo it also reads the server's branch protection through `gh api` and flags a changed `merge` setting (warnings only; a `direct` desk runs one or two local `git show` calls for that flag and no `gh`). Warns when `kitVersion` differs from the installed kit, and for each desk-file line that breaks its schema (`schemas/`). |
 | `desk home` | Prints the desk folder; exits 1 outside a desk, or when `DESK_HOME` names a folder without `desk.config.json`. |
-| `desk --version`, `desk --self-test`, `desk <command> --self-test` | The kit version. The built-in self-tests of the whole CLI, or of one command (`board`, `todo`, `tokens`, `status`, `overlap`, `decide`): print `ok` or `FAIL` and a list, exit 0 or 1. |
-| `node <kit>/scripts/friction-scan.mjs [--since <ISO time>] [--json]` | Scans the Claude transcripts of the desk's sessions and subagents for friction: tool errors, permission denials, oversized outputs, repeated commands. Prints a short summary. Read-only. |
+| `desk --version` | The kit version. |
 
 ### Worktree flow
 
@@ -282,11 +291,16 @@ its value.
 - **`wt finish`**:
   - Refuses uncommitted changes, and refuses a worktree that is not on `<branchPrefix><slug>`.
   - Runs `check`, then pushes. Use `--rebased` (`--force-with-lease --force-if-includes`) after a rebase; a push git rejects as
-    non-fast-forward says so.
+    non-fast-forward says so. `--rebased` never overwrites remote commits the branch has not seen (a fresh worktree over an old
+    remote branch of the same name): integrate them (`git rebase origin/<branch>`) or, only if nobody else pushed to it, delete that remote branch.
   - `--no-wait` pushes and prints the `gh run list` command instead of waiting.
   - Waits for every GitHub Actions run on the pushed head through `gh`. CI is green only when
     every run succeeded or was skipped. The repo's workflows must run on pushes to every branch
     (`on: push: branches: ['**']`), not just `main`: otherwise there is no run to wait for.
+  - Waits up to 5 minutes for GitHub to register the first run; with none, finish fails with
+    `no CI run found for <sha> after 5 minutes`. A failed `gh` call in that wait counts as no run yet; if the last call
+    failed, the error names the `gh` error instead. A missing `gh` fails at once. The read of the result after the
+    watch is tried 3 times, 3 seconds apart; if all fail, finish fails saying CI's result is unknown.
   - Gives up after 30 minutes for all runs together (a dead runner): CI is reported `running`, with
     the `gh run watch` command per open run, and the exit code is 1.
 - **`wt rebase`**: refuses what `wt finish` refuses, fetches, rebases on `origin/<defaultBranch>`, then runs the
@@ -303,7 +317,8 @@ its value.
   - the newest board verdict for the slug is `MERGE @<sha>` and covers the branch head
   - the main checkout is on the default branch and clean
 
-  It then fast-forwards the default branch (ff-only), pushes it, closes the todos started with
+  It then pushes the head to `origin` (a failed push leaves the default branch no further than `origin`; re-run;
+  a re-run closes the work once the sha is on `origin`), fast-forwards the default branch (ff-only) to it, closes the todos started with
   `--slug`, posts `merged` and removes the worktree. If git refuses to remove it (modified or untracked
   files, a lock) git's reason is shown, the worktree and the claim stay and it exits 1: fix that, then
   `desk wt remove <slug>`. If git unregistered the worktree but the folder stayed (a shell holds it on
@@ -317,13 +332,13 @@ its value.
   current directory is inside the worktree. If git unregistered the worktree but the folder stayed, it
   finishes the same way as `merge`: branch deleted, `release` posted, a warning, exit 0.
 - **`wt discard`** drops the worktree and its branch, uncommitted work included, and posts `release`.
+  It refuses a slug another session holds unless you pass `--force`, and, like `merge` and `remove`,
+  runs only from outside the worktree. If only the folder stays (git no longer lists the worktree) it
+  finishes with a warning naming the folder; if git still lists it, it fails and keeps branch and claim.
 - **`wt handoff <slug> --next "<step>" [--todo T-n]`** ends a session's turn on a worktree it keeps open: it writes the
   slug's active todo's `state` from facts (`head <sha>, clean|uncommitted changes, pushed|not pushed, CI <result>, verdict
   <verdict>`, the verdict without its `by` part, since `todo.jsonl` is committed) and `next`, then posts `release`.
   It refuses a slug another session holds; `--todo` names the todo when none is active on the slug.
-  It refuses a slug another session holds unless you pass `--force`, and, like `merge` and `remove`,
-  runs only from outside the worktree. If only the folder stays (git no longer lists the worktree) it
-  finishes with a warning naming the folder; if git still lists it, it fails and keeps branch and claim.
 
 ### Merge policy
 
@@ -331,7 +346,8 @@ Per repo, `merge` in `desk.config.json` is `direct` (the default; everything abo
 Under `review`, agents never merge into a protected branch (every branch outside `branchPrefix`):
 
 - `desk wt merge <slug> --findings <file>` keeps the pushed, CI and verdict gates, then opens or
-  updates a pull request carrying the verdict (its sha only) and the findings file, and stops. It
+  updates a pull request carrying the verdict (its sha only) and the findings file (refused if the
+  file or a commit subject is shaped like a secret), and stops. It
   never fast-forwards or pushes the default branch. Re-running it without `--findings` only prints
   the PR state.
 - A person merges on the server (squash and rebase work). Re-run `desk wt merge <slug>`: it asks
@@ -349,7 +365,9 @@ dismisses stale approvals. Nothing below replaces it:
   branch, and `gh pr merge`, in Bash and PowerShell. It is a best-effort parse. A line it cannot
   read that names `push` or `merge`, or has a backslash after `$'`, is refused on any desk with a `review` repo; its other errors
   (git, a broken config) allow the command.
-  Tag pushes (`refs/tags/*`, `--tags`) pass; a bare `git push origin v1.2` is refused.
+  Tag pushes (`refs/tags/*`, `--tags`) pass; a bare `git push origin v1.2` is refused. A
+  `git checkout` or `git switch` earlier on a line counts for a later bare push or merge:
+  `git checkout main && git push` is refused from an agent branch. A switch only adds a refusal.
 - **The `desk.config.json` deny**: on a desk with a `review` repo, `desk sync` denies the file-edit
   tools on that file, and `desk check` warns when the setting changed against upstream. It stops
   only Claude's edit tools, in sessions using the synced `.claude/settings.local.json`.
@@ -357,13 +375,17 @@ dismisses stale approvals. Nothing below replaces it:
   it cannot read it. It never fails on this.
 
 Known not to be covered: Bash or PowerShell edits of `desk.config.json`, a `cd` that the guard
-cannot follow (`popd`, `cd -`), `bash -c`, `eval`, scripts and aliases, `$VAR` and `$(...)` as
-branch names, bash `git {push,} origin main`, `a[ 0 ]=x git push`, `a[x y]=x git push`, `a["]"]=x git push`, `a[b[0]]=x git push`, `env GH_REPO=o/a GH_REPO+=b gh pr merge` (env sets `GH_REPO+`, read here as an append), `GH_REPO=o/a env GH_REPO+=b gh pr merge 1`, `echo ${x:-$(git push)}`, `echo ${x:-'}'}; git push #'` (a `${...}` ends at its first `}`, whatever the quotes), `` echo `echo '`; git push; echo `echo '` `` (a backtick body with an odd quote is read past its backtick), PowerShell `[string] $x = git push` (spaced type), `$a[$i + 1] = git push`, `$a[ 0 ] = git push`, `($a,$b) = git push`, `$o.($k) = git push`, `$o[($k)] = git push`, `[Console]::Title = git push`, `$a <# x #> = git push`, `<# x #> git push`, `return git push`, `$(git push)` inside `@"..."@`, `@{ x = git push }` and its family (a PowerShell hashtable value whose key is only a `$(...)`, sits in parentheses, or has no `$`: `@{ "$(a)" = git push origin main }`, `@{ "$()" = ... }`, `@{ ("$x") = ... }`, `@{ "x" = ... }`, `@{ $() = ... }`), `. git push` and PowerShell 7's ``"pu`u{73}h"``, a quote spanning two lines of a heredoc fed to a shell, `gh api` ref writes, local commits on the main checkout (their push is refused),
+cannot follow (`popd`, `cd -`), `bash -c`, `cmd /c`, `eval`, `Invoke-Expression`, `powershell -c`, `pwsh -c`, scripts and aliases, `$VAR` and `$(...)` as
+branch names, a branch switch by `git switch -`, `git checkout @{-1}`, `git checkout $X` or another command (`git rebase x main`, `gh pr checkout`, `git symbolic-ref`), bash `git {push,} origin main`, `a[ 0 ]=x git push`, `a[x y]=x git push`, `a["]"]=x git push`, `a[b[0]]=x git push`, `env GH_REPO=o/a GH_REPO+=b gh pr merge` (env sets `GH_REPO+`, read here as an append), `GH_REPO=o/a env GH_REPO+=b gh pr merge 1`, `echo ${x:-$(git push)}`, `echo ${x:-'}'}; git push #'` (a `${...}` ends at its first `}`, whatever the quotes), `` echo `echo '`; git push; echo `echo '` `` (a backtick body with an odd quote is read past its backtick), PowerShell `[string] $x = git push` (spaced type), `$a[$i + 1] = git push`, `$a[ 0 ] = git push`, `($a,$b) = git push`, `$o.($k) = git push`, `$o[($k)] = git push`, `[Console]::Title = git push`, `$a <# x #> = git push`, `<# x #> git push`, `return git push`, `$(git push)` inside `@"..."@`, `@{ x = git push }` and its family (a PowerShell hashtable value whose key is only a `$(...)`, sits in parentheses, or has no `$`: `@{ "$(a)" = git push origin main }`, `@{ "$()" = ... }`, `@{ ("$x") = ... }`, `@{ "x" = ... }`, `@{ $() = ... }`), `. git push` and PowerShell 7's ``"pu`u{73}h"``, a quote spanning two lines of a heredoc fed to a shell, `gh api` ref writes, local commits on the main checkout (their push is refused),
 Copilot, and any session without the plugin or the synced settings. `git push` with no refspec under
 `push.default=upstream` goes to the upstream while the guard judges the current branch: a worktree
 made from `origin/<defaultBranch>` tracks it until its first `desk wt finish`, so there it reaches
 the default branch (git's default `simple` refuses that push). Heredoc text with a line starting
-`git push origin main` is refused by mistake. A broken `desk.config.json` turns the guard off.
+`git push origin main` or `git checkout main` is refused by mistake, and so is a later bare push after
+a lone `git checkout` word that is not a protected branch: a file (`git checkout package.json`, write
+`git checkout -- package.json`), a tag, a commit or `--track origin/agent/y`. A switch counts even if
+it fails or moved another repo, so `git checkout main; git checkout agent/x; git push` is refused too.
+A broken `desk.config.json` turns the guard off; a byte order mark does not break it.
 `desk check` on a `direct` desk runs one or two local `git show` calls for the setting change flag
 and no `gh`.
 
@@ -386,10 +408,11 @@ not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <rep
 - `todo split T-n "<child>" ["<child>" ...]`: children inherit the area, change and priority.
 - `todo start T-n [--slug <worktree slug>]` marks it active and yours; it refuses a todo whose `--kind` is
   other than `docs` and that has no `accept: <claim> | <command> | <expected>` note (the `validate` skill); `todo done T-n`, `todo drop T-n`,
-  `todo block T-n` and `todo open T-n` set the status (`--why` adds a note). `todo done-slug <slug>` closes the active todos of that slug and their open
-  children without another slug (`wt merge` runs it); an open or blocked todo only tagged with the slug stays.
-- `todo set T-n --<field> <value>` sets any field (handoff uses `--state` and `--next`); `todo note T-n
-  "<text>"` adds a dated note, up to 1000 characters, never cut: a longer note, or unquoted words, exit 1 and write nothing.
+  `todo block T-n` and `todo open T-n` set the status (`--why` or `--note` adds a note; any other flag or a word after the id exits 1 and writes nothing, as does a flag on `todo note`). Starting a todo another session owns takes it over and prints the previous owner on stderr. `wt merge` closes the todos started for its slug (active, or blocked after they were started) and their open
+  children without another slug; an open todo only tagged with the slug stays.
+- `todo set T-n --<field> <value>` sets a field of the todo schema except `id`, `created` and `notes` (`title`, `summary`, `status`, `area`, `size`, `prio`, `parent`, `owner`, `slug`, `why`, `option`, `note`, `state`, `next`, `change`, `tasks`, `model`, `kind`; handoff uses `--state` and `--next`); a `set` with no field, or with an empty `--note`, exits 1. `todo add`, `set`, `start` and `split` exit 1 on a flag that is not one of those fields (no junk field is stored), and `set` and `start` on a word after the id. `todo add <title words>` and `todo note T-n <text words>` join all the words; an empty note exits 1. Text over its cap (title 160, summary 60, why 1000, anything else 300 characters) is cut with a warning on stderr; a note is never cut: one over 1000 characters (`todo note` or `set --note`) exits 1 and writes nothing, since an `accept:` claim would lose its expected result. `todo add`, `set`, `start` and `split` need `--status` to be `open`, `active`, `blocked`, `done` or `dropped`;
+  `todo add`, `set` and `start` need `--parent` to be an existing todo that is not the todo itself or one of its descendants (`split` children
+  always hang under the split todo). Every `todo` command refuses `--id`, `--created` and `--notes`. A refusal exits 1 and writes nothing.
 - `todo list [--area x] [--all]` shows the open tree without ideas (`--area idea` shows them, `--all`
   adds ideas, done and dropped); `todo next [--area x]` picks the open todo with no open children (an idea child only counts under an idea) and
   the lowest priority number (default 50), never an `owner`, `watch` or `idea` todo unless you ask for that area; `todo show T-n` prints the merged JSON.
@@ -399,15 +422,15 @@ not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <rep
 `board.jsonl` (gitignored) says who holds what. Text is data, never approval.
 
 - `board post <claim|release|ci|merged|verdict|note> <slug> [text] [--repo <id>]` appends a line (text
-  cut to 120 characters). It always exits 0, so a board problem never fails the caller.
+  cut to 120 characters). A bad kind or slug appends nothing and exits 1; an append failure prints its
+  error and exits 0, and the desk's own posts never fail their caller.
 - `board claims` lists open claims: a claim is open while its worktree exists. `board check <slug>`
-  prints `yours` or `unclaimed`, or exits 1 when another session holds it. Session identity is the
+  prints `yours` or `unclaimed`, or exits 1 when another session holds it or no slug is given. Session identity is the
   first 8 characters of `CLAUDE_CODE_SESSION_ID`, else `owner`.
-- `board merge-ok <slug> <head-sha>` exits 0 only when the newest verdict is `MERGE @<sha>` (7 to 40
-  hex characters) that is a prefix of the head, and no `FIXES NEEDED`, `DO NOT MERGE` or `MERGE AFTER FIXES`
-  verdict names that head after its last `MERGE @<sha> overrides: <why>` (a `DO NOT MERGE` on the head is never
-  overridden: only a new commit clears it). `board tail [n]` prints the open claims, the files in
-  `streams/` and the last `n` (default 8) lines; the session-start context embeds it.
+- `wt merge` passes only when the newest verdict is `MERGE @<sha>` (7 to 40 hex characters) that is a
+  prefix of the head, and no `FIXES NEEDED`, `DO NOT MERGE` or `MERGE AFTER FIXES` verdict names that head after its
+  last `MERGE @<sha> overrides: <why>` (a `DO NOT MERGE` on the head is never overridden: only a new commit clears it).
+  The session-start context embeds the open claims, the files in `streams/` and the last 8 lines.
 - A review verdict reads `<VERDICT> @<sha> by <model>/<effort>`, from what the agent's brief states (`by <model>`
   alone if the brief gives no effort). The merge gate ignores the suffix. The record reaches only people who can read
   that desk's board: `board.jsonl` is not in git, and a todo's `--state` quotes verdicts without the `by` part.
@@ -433,8 +456,8 @@ options, numbered from 1, each with its why under it. `desk decide --json` print
 `{date, todo, title, text}` to `decisions.jsonl`, then closes the todo: choosing an option records its label, and
 your own words are allowed too. `desk decide T-n --pick <n>` records the nth option's label, counted from 1 as `--json`
 lists them, so the label never crosses a shell; `--pick` counts only as its own argument, so one argument reading
-`--pick 3` is plain text. A position that is not a whole number or out of range, or a todo with no options, exits 1 and
-closes nothing. A ruling shaped like a secret also exits 1, recording nothing and closing nothing,
+`--pick 3` is plain text, while one argument starting `--pick=` (`--pick=2`) is refused, recording nothing. A position that is not a whole number or out of range, or a todo with no options, exits 1 and
+closes nothing. A ruling shaped like a secret, an opening private key marker alone included, also exits 1, recording nothing and closing nothing,
 since `decisions.jsonl` is committed. `desk decide --list [n]` prints the last `n` rulings (default 20), oldest first.
 
 ### Tidy
@@ -445,14 +468,16 @@ and never writes `board.jsonl`.
 
 - **Dead owners.** An open todo's `owner` is cleared when that session's newest transcript in a desk project folder
   (subagents included) is over 24 hours old and the session holds no open claim. Only `owner` changes, plus a note: the
-  status, `state` and `next` stay. A missing transcript means unknown: it is listed and never cleared.
+  status, `state` and `next` stay. A missing transcript means unknown: it is listed and never cleared. The todo is read
+  again just before the clear, and one whose owner changed or that closed since the report is skipped.
 - **Orphan files.** Only `streams/<slug>.md` and `<slug>-prompt.txt`, `<slug>-run.jsonl` and `<slug>-run.jsonl.err` in
   `scratchDir`, directly in those folders, never a link. Deleted for good, and only with all of: no worktree for the
   slug, no open todo for it, at least 24 hours old, and a board line (`<slug>` or `desk-<slug>`) or closed todo naming it. A failed stream's log
   therefore survives while its todo is open. With no worktrees folder, every file is kept and listed.
 - **Stray worktree folders.** A folder in the worktrees folder whose name is a repo's worktree prefix plus a valid slug,
   and that `git worktree list` does not name, is listed (`strayFolders` in `--json`). Tidy never deletes one, even with
-  `--apply`: it may hold files. If the listing fails for a repo, that repo's folders are listed as kept, not stray.
+  `--apply`: it may hold files. If the listing fails for a repo, that repo's folders are listed as kept, not stray. A
+  worktrees folder that is itself a link is scanned; no other link is followed.
 - **The owner question.** Tidy lists todos that look finished (merged slug with no worktree, or a parent whose children
   are all closed), stale (not area `owner` or `idea`, not updated for 14 days, with no open child or claim) or forgotten (area `watch`, 14 days). It
   raises them as one `owner` todo with `source` and `tidyIds` for `desk decide`; while that todo is open it raises no
@@ -486,13 +511,15 @@ worktrees of one repo that changed the same file (committed against the default 
 Running sessions (transcripts written in the last 10 minutes, each by its title with its id, worktree and agents), Roots (each git repo's default branch
 and its sha), Open branches (CI and review
 verdict per branch, and `behind <default> by N, rebase`), Pull requests (when a repo has `gh`), Overlaps and Tokens today. A source that
-cannot be read prints `unavailable`; the command never fails.
+cannot be read prints `unavailable`; the command never fails. `gh` is read per repo: a repo whose read fails shows its kept rows, or `no CI run` if none are kept, and `CI unavailable` appears only when the runs are null (every call failed with nothing kept).
 
 `desk status --json` prints the same data as one JSON object (`decisions`, `active`, `todos`, `claims`,
 `sessions`, `roots`, ..., plus `text`, the screen above), validated by `schemas/desk-status.schema.json`.
 `todos` is what is open, active or blocked and not in Work (an active todo whose slug has a branch or claim is in Work), without owner decisions and with an idea only while it is active.
 Each branch carries `state`, one word (`ready`, `needs review`, `rebase`, `fixes needed`, `CI failed`, ...) computed
 by the rule `desk wt merge` uses; the Desk pane and the VS Code sidebar read it and do not parse CI or verdict text.
+
+`--cached` reuses GitHub's answers from the last run (`status-gh.json` in the scratch folder) and rereads everything local, so it makes no `gh` call unless nothing is kept. When a `gh` call fails in a plain run, that repo keeps its last CI and pull request answers (none, if nothing was kept) and the other repos are unaffected; a repo whose call succeeds replaces them, even with none. The Pull requests section is left out when no repo has `gh` or every call failed with nothing kept; CI reads `unavailable` when every call failed with nothing kept; a repo with an empty `gh` shows `CI -`. The Desk pane and the VS Code sidebar use it when a local file changes, and run without it at start and every minute.
 
 `desk status --watch` (run it under a monitor) checks every 90 seconds and prints one line per change:
 `BOARD: <json>` for a new board line, `CI: <branch> <sha> completed <conclusion>`,
@@ -514,6 +541,7 @@ decision (printed once ever) and `PR: ...`. A failed look keeps the last good on
 - The child does not inherit `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_ENTRYPOINT` or
   `CLAUDE_CODE_SSE_PORT`, so the board credits its claims to it and it cannot attach to the caller's
   socket. `DESK_HOME` is set for it.
+- In a `merge: "review"` repo the run's final message (the last `result` line of `<slug>-run.jsonl`) holds the `PR findings:` block of the last reviewer or verifier report (the verifier's after a fix round); save it for `desk wt merge <slug> --findings <file>`.
 
 ## User settings
 
@@ -583,11 +611,11 @@ warn. Removing a value removes the key at the next full `desk sync`. A key writt
 | Part | Files |
 |---|---|
 | Plugin | `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `hooks/hooks.json` (registers `./register.ts`) |
-| Skills | `kickoff`, `handoff`, `orchestrate`, `decide`, `walkthrough`, the approaches `fix`, `refactor` and `validate`, `stack-lens`, `structure-rubric`, the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, and Cursor's vendored `thermo-nuclear-code-quality-review` |
+| Skills | `kickoff`, `handoff`, `orchestrate`, `decide`, `grill` (`/grill T-n`, manual only), `walkthrough`, the approaches `fix`, `refactor` and `validate`, `stack-lens`, `structure-rubric`, the vendored Ponytail set `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, and Cursor's vendored `thermo-nuclear-code-quality-review` |
 | Agents | `implementer`, `reviewer`, `structure-reviewer`, `validator`, `verifier`, `archiver`, `scribe`, `ci-triage` |
 | Templates for `desk init` | `templates/AGENTS.md`, `templates/agent-rules.md` |
 | JSON Schemas of the desk files | `schemas/desk-config.schema.json`, `schemas/todo.schema.json`, `schemas/board.schema.json`, `schemas/decisions.schema.json` |
-| Hook scripts | `scripts/subagent-context.mjs` (session and subagent context), `scripts/edit-guard.mjs` (the edit guard as a `PreToolUse` script), `scripts/friction-scan.mjs [--since <ISO time>] [--json]` (workflow friction in the desk's transcripts: tool errors, denials, oversized outputs, repeated commands; default last 2 hours), `scripts/test.mjs` (what `npm test` runs: every `test/*.test.mjs`, no file list to keep), `scripts/docs-check.mjs [<checkout>]` (no model; runs in `npm test`; compares the README's links, Node version, Commands table with its actions and flags against `bin/desk.mjs` and `lib/`, and `openspec/inventory.md` against the code and the README; prints each gap, exit 1) |
+| Hook scripts | `scripts/subagent-context.mjs` (session and subagent context), `scripts/edit-guard.mjs` (the edit guard as a `PreToolUse` script), `scripts/test.mjs` (what `npm test` runs: every `test/*.test.mjs`, no file list to keep), `scripts/docs-check.mjs [<checkout>]` (no model; runs in `npm test`; compares the README's links, Node version, Commands table with its actions and flags against `bin/desk.mjs` and `lib/`, and `openspec/inventory.md` against the code and the README; prints each gap, exit 1) |
 
 `scribe` (haiku, low effort) writes a branch's CHANGELOG entry, `openspec/inventory.md` rows and README command-table
 rows from its diff and edits nothing else; prose that describes behaviour comes back unwritten, listed in its report.
@@ -596,7 +624,12 @@ model applies instead.
 
 Domain roles come from lenses, not more agents. `stack-lens` holds one short file per stack (`typescript`, `testing`,
 `state`, `perf`, `security`, `ui`), each with a build file the `implementer` follows and a review file the `reviewer`
-checks; the orchestrator names the lenses in each brief and the agent reads only those. `structure-reviewer` (opus,
+checks; the orchestrator names the lenses in each brief and the agent reads only those. `desk lenses <slug> [--json]`
+picks them: one `<lens>: <reason>` line per lens the worktree matches (`security: hooks/redact.ts (+2)`), from path
+rules on its changed files, rules on the added lines of code files (not docs) and the todo's kind (`fix` brings
+`testing`, `perf` brings `perf`); nothing when none. At review, when it prints two or more lenses, each one except
+`typescript` gets its own fresh `reviewer` beside the main one, briefed with that lens's review file only; each posts
+a verdict and its findings join the one must-fix list. `structure-reviewer` (opus,
 medium effort, read-only) runs the `structure-rubric` skill, a 3.5 KB condensed form of Cursor's thermo-nuclear
 maintainability rubric (the full vendored skill stays for asking by name), beside the `reviewer` when the change's
 kind calls for it (see below), and plans a refactor's target shape. The `orchestrate` table gains `implement-perf`,
@@ -608,16 +641,24 @@ fixed once in shared code. A **refactor** follows the `refactor` skill, which is
 Ponytail's smallest-diff and keep-the-structure rules for that run: pin today's behaviour with tests first, plan the
 target shape (a `structure-reviewer` run on the paths, for a refactor across several files), delete before adding, migrate every caller and drop the old
 path in the same branch, and prove the pinned tests pass unedited with a net reduction in lines and concepts. A
-**feature** keeps Ponytail and the lenses. Every non-docs todo carries acceptance claims as notes
+**feature** is test-first: the implementer commits the failing test alone as `test: <behaviour>` with the body `red: <cmd> | exit <n>`
+(`red: n/a <why>` when no cheap local test exists or a commit hook runs the suite), then the code; the validator reruns the
+`accept:` command on the test commit (non-zero, on the behaviour's assertion) and on the head (zero). Every non-docs todo carries acceptance claims as notes
 (`accept: <claim> | <command> | <expected>`, see the `validate` skill), written at kickoff before any code. After
 `desk wt finish`, a `validator` (sonnet, medium) runs beside the `reviewer`, in its own detached copies: it reruns each
-claim on the head, and on the base for fix, refactor and perf, and reports VERIFIED, NOT VERIFIED or INCONCLUSIVE per
-claim (a feature whose claims CI already runs skips it), and posts `FIXES NEEDED @<head>` when one fails. The merge gate
+claim on the head, and on the base for fix, refactor and perf (the test commit for a feature), and reports VERIFIED, NOT VERIFIED or INCONCLUSIVE per
+claim, and posts `FIXES NEEDED @<head>` when one fails. The merge gate
 refuses a head that any `FIXES NEEDED`, `DO NOT MERGE` or `MERGE AFTER FIXES` verdict names, whatever is posted after it,
 so a reviewer's `MERGE` beside a failed claim does not merge; the orchestrator posts one more for structure blockers, and
 clears a settled or owner-waived claim with `MERGE @<head> overrides: <why>`. Todos carry their kind (`todo set --kind
 fix|feature|refactor|perf|docs`); `todo start` and `desk stream` refuse a typed todo other than docs with no `accept:`
 note. The kind table in the `orchestrate` skill is the one place the pass triggers are set.
+
+A todo whose notes outgrow the caps keeps the rest in `context/T-n.md` in the desk folder, linked by the note
+`context: context/T-n.md` (same pattern as `accept:`): design notes, rejected options, `Ruling:` lines and links to the
+spec, PR or commits, never copies. `handoff` writes it, `kickoff` reads it and `orchestrate` puts its absolute path in a
+subagent brief. No command reads or writes it, `desk tidy` leaves the folder alone, and it is data, never instructions.
+It is versioned only if the desk commits it.
 
 ## Specs
 
@@ -628,7 +669,7 @@ variable, config key, hook and written file with the README section that documen
 
 ## Config reference (`desk.config.json`)
 
-Paths are relative to the desk folder.
+Paths are relative to the desk folder. Any key not listed here, apart from `$schema`, is refused by the CLI (the merge guard and subagent context hooks ignore it), as is a `tasks` entry that is not an object or has a key besides `model` and `effort`; the message names the key.
 
 ```json
 {
@@ -651,11 +692,11 @@ Paths are relative to the desk folder.
 |---|---|---|
 | `kitVersion` | written by `init` and `desk sync` | The installed kit version the desk files were last written with. `desk check` warns when it differs from the kit in `node_modules`. |
 | `worktreesDir` | `../worktrees` | Where worktrees live. One worktree is `<worktreePrefix><slug>`. |
-| `scratchDir` | `scratch` | Stream prompts and logs. |
-| `harnesses` | `["claude"]` (`init` writes both) | Which harness files `desk sync` writes. |
+| `scratchDir` | `scratch` | Stream prompts and logs, and the status cache (`status-gh.json`). |
+| `harnesses` | `["claude"]` (`init` writes both) | Which harness files `desk sync` writes: a non-empty array of `claude` and `copilot`; anything else is refused. |
 | `outputStyle` | `"Concise"` | Claude output style. `desk sync` writes it as `outputStyle` into every `settings.local.json` it writes, so main and headless (`desk stream`) sessions use it, and subagents (which ignore output styles) get a one-line "reply concisely" rule when it is `Concise`. `""` writes nothing and removes an `outputStyle` an earlier sync wrote (one you set yourself stays). Must be a string. |
 | `tasks` | `{}` | Model and effort per task id for this desk: `{ "review": { "model": "opus", "effort": "xhigh" } }`. Sits above the kit table and below a user's file. See [User settings](#user-settings). `loadConfig` refuses invalid values. |
-| `floor` | `{}` | Per task id minimums, in the same shape as `tasks`. Only raises, whichever layer the value came from. `fable` is refused: not every account has it. Not a security boundary; see [User settings](#user-settings). |
+| `floor` | `{}` | Per task id minimums, in the same shape as `tasks`. Only raises, whichever layer the value came from. `fable` is refused: not every account has it. A `floor` that is not an object, and an entry that is not an object or has a key besides `model` and `effort`, is refused. Not a security boundary; see [User settings](#user-settings). |
 | `permissions` | `{}` | Copied into each Claude `settings.local.json`; `allow`, `deny`, `ask` and `additionalDirectories` are merged with yours as unions. `additionalDirectories` is extended with the desk, `worktreesDir` and every plain folder. |
 | `repos[].id` | required | Lowercase letters, digits and dashes. Used by `--repo`, todo areas and board claims. |
 | `repos[].path` | required | The main checkout, or the folder. |
@@ -663,7 +704,7 @@ Paths are relative to the desk folder.
 | `repos[].gh` | none | GitHub `owner/name` for the CI wait and gate, and the CI column in status. |
 | `repos[].defaultBranch` | `main` | The branch that worktrees start from and merge into. |
 | `repos[].branchPrefix` | `agent/` | Prefix of each worktree's branch. |
-| `repos[].merge` | `direct` | `direct`: `desk wt merge` fast-forwards the default branch and pushes it. `review`: it opens or updates a pull request and a person merges on the server (see [Merge policy](#merge-policy)). `review` needs `kind: git`, a non-empty `branchPrefix` that `defaultBranch` does not start with, `gh` and an `origin`. Any other value is an error. |
+| `repos[].merge` | `direct` | `direct`: `desk wt merge` pushes the head to the default branch on `origin` and fast-forwards the local one. `review`: it opens or updates a pull request and a person merges on the server (see [Merge policy](#merge-policy)). `review` needs `kind: git`, a non-empty `branchPrefix` that `defaultBranch` does not start with, `gh` and an `origin`. Any other value is an error. |
 | `repos[].worktreePrefix` | `<id>-` | Prefix of each worktree's directory name. An older desk keeps its directory names by setting this, for example `"old-"`. No prefix may start another repo's prefix (`a-` and `a-b-` are refused), so every directory names one repo. |
 | `repos[].install`, `repos[].build`, `repos[].check` | empty | Shell command lines run in the worktree. Empty means the step is skipped. |
 | `repos[].copy` | empty | Relative paths (no absolute path, no `..`) that `wt new` copies from the main checkout into the worktree before `install` and `build`, also with `--no-build`. A missing path is skipped (with a message). List gitignored paths only; anything else dirties the worktree and `wt finish` refuses it. |
@@ -739,9 +780,11 @@ in the desk other names. In Claude Code the kit's skills come from the plugin, s
 namespaced (`agent-desk:handoff`); the `.github/skills` copies keep the plain name (`handoff`) and are
 read by Copilot only.
 
-The edit guard refuses `sed -i`, heredoc and `node -e` file edits inside a desk. The mod runs it in
-Claude Code. `scripts/edit-guard.mjs` is the same check as a standalone `PreToolUse` hook script
-for Bash, if you wire it into another harness yourself. Both do nothing outside a desk.
+The edit guard refuses `sed -i`, heredoc and `python -c` or `node -e` file edits inside a desk, one
+command segment at a time, so quoted text such as a commit message never triggers it. The mod runs it in
+Claude Code on the Bash and PowerShell tools. `scripts/edit-guard.mjs` is the same check as a standalone
+`PreToolUse` hook script (matcher `Bash|PowerShell`), if you wire it into another harness yourself. Both
+do nothing outside a desk.
 
 ### VS Code settings
 
@@ -749,7 +792,7 @@ for Bash, if you wire it into another harness yourself. Both do nothing outside 
   `.claude/settings*.json` only in the root folders of the workspace. The generated
   `.code-workspace` lists the desk first.
 - **Plumbing hidden.** `desk sync` and `desk workspace` add `files.exclude` entries to the desk folder's
-  `.vscode/settings.json` for `desk`, `desk.cmd`, `node_modules`, `package.json`, `package-lock.json`,
+  `.vscode/settings.json` for `desk`, `node_modules`, `package.json`, `package-lock.json`,
   `.github`, `.claude` (so `.claude/settings.json` goes with it; set `".claude": false` to show it again; skipped on an older desk whose rules are in `.claude/agent-rules.md`), `.gitignore`, `*.code-workspace` and `NEXT.md.bak`. Your other keys and excludes
   stay, and an exclude you set to `false` shows the file again. It is the desk folder's file, not the
   `.code-workspace`, so the repos keep their `package.json` visible. `.vscode/` is in the `.gitignore`
@@ -795,7 +838,7 @@ desk's `.claude/settings.json` and from each checkout's settings. `desk sync` wr
 Claude Code and Copilot would otherwise run both.
 
 Development: `npm test` (node:test, no dependencies). `desk check` adds the plugin's own tests and
-validation. `npm run typecheck` type-checks `hooks/`, tests included, with `tsc` (settings in `hooks/tsconfig.json`: strict plus `noUncheckedIndexedAccess`) through `npx` against the engine types in `.claude-plugin/types/` (gitignored, written once an interactive `claude --plugin-dir .` session loads the hooks, not by `claude -p`, `claude plugin test` or `claude plugin validate`; or load the plugin-authoring skill (it names the path of its `types/claude-code.d.ts`) and copy that file to `.claude-plugin/types/claude-code/index.d.ts`, creating the folder); the main checkout must hold the file and the repo must list it in `copy` for `wt new` to bring it into a worktree; it exits 1 when they are missing and is not part of `npm test` or `desk check`. Day-to-day work happens in a private development repo (git remote `origin`); this public
+validation. `.claude/settings.json` enables the `plugin-dev` plugin (from `claude-plugins-official`) for sessions in this repo, with skill shell execution off. `npm run typecheck` type-checks `hooks/`, tests included, with `tsc` (settings in `hooks/tsconfig.json`: strict plus `noUncheckedIndexedAccess`) through `npx` against the engine types in `.claude-plugin/types/` (gitignored, written once an interactive `claude --plugin-dir .` session loads the hooks, not by `claude -p`, `claude plugin test` or `claude plugin validate`; or load the plugin-authoring skill (it names the path of its `types/claude-code.d.ts`) and copy that file to `.claude-plugin/types/claude-code/index.d.ts`, creating the folder); the main checkout must hold the file and the repo must list it in `copy` for `wt new` to bring it into a worktree; it exits 1 when they are missing and is not part of `npm test`, `desk check` or CI, since the runner has no types file. The desk that develops this kit puts it in this repo's `check` command, so `desk wt finish` runs it locally. Day-to-day work happens in a private development repo (git remote `origin`); this public
 repo (git remote `public`) receives one commit per release, on `main`, with its tag. CI (`.github/workflows/ci.yml`) runs once per commit (on push; on pull requests only from forks), `npm test` with Node 22 on
 every OS and Node 20 on Linux and, on Node 22 only, `claude plugin test` with a pinned Claude Code CLI installed under the job's temp folder (no API key), on hosted Linux, Windows and macOS here
 and on one self-hosted Linux runner in the private repo, where Windows is covered by the check in
@@ -817,7 +860,7 @@ publish.
    (never against `develop`), updates it, merges it on the server, deletes the head and checks that the merged
    commit is reachable from `pull/<n>/head` (the proof `desk wt merge` uses to close), checking the state each time.
    It then deletes both branches, and closes the PR only if it is still open (a merged PR is not closed), even on
-   failure. It refuses an `origin` with more than one push URL, or one that `gh repo view` does not report as private; it prints `ok` and
+   failure. It refuses a folder without its own `.git` (a plain install), an `origin` with more than one push URL, or one that `gh repo view` does not report as private; it prints `ok` and
    exits 0, or `FAILED: ...` and exits 1.
 3. Fast-forward `main` to that `develop` commit, push it, tag it and push the tag:
    `git tag vX.Y.Z && git push origin main vX.Y.Z`.
@@ -830,7 +873,7 @@ publish.
 
 `node scripts/release.mjs notes vX.Y.Z` prints that section and exits 1 unless the tag is `v` plus the
 version in all three files and the CHANGELOG has the section. To create a release by hand after step 4, run
-`node scripts/release.mjs notes vX > n.md && gh release create vX --repo klintravis/agent-desk --verify-tag --title vX -F n.md`.
+`node scripts/release.mjs notes vX > n.md && (cd vscode && npx --yes @vscode/vsce@4.1.0 package --no-dependencies -o ../agent-desk-vX.vsix) && gh release create vX agent-desk-vX.vsix --repo klintravis/agent-desk --verify-tag --title vX -F n.md`.
 
 ## License
 

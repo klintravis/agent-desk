@@ -26,6 +26,12 @@ const fixture = (readme, pkg = { engines: { node: '>=20' } }) => {
   writeFileSync(join(d, 'package.json'), JSON.stringify(pkg));
   return d;
 };
+test('a package.json with a byte-order mark is read', () => {
+  const d = fixture('Needs Node 18 or later.\n');
+  writeFileSync(join(d, 'package.json'), String.fromCharCode(0xFEFF) + JSON.stringify({ engines: { node: '>=20' } }));
+  assert.match(gaps(d).join('\n'), /says "Node 18 or later", package\.json engines say >=20/);
+});
+
 // A tiny desk CLI: COMMANDS = { <cmd> }, a README row, and an inventory that lists `items`.
 const ITEMS = ['desk st', '--json', '--dry-run', '--no-build'];
 function cli(src, row = '| `desk st` | x |', { cmd = 'st', items = ITEMS, inventory = true } = {}) {
@@ -114,10 +120,6 @@ test('actions: one per row counts; flag alternatives are not actions', () => {
   assert.deepEqual(gaps(cli(src, '| `desk wt a <x>` | x |\n| `desk wt b <x>` | x |\n| `desk wt c <x>` | x |', { cmd: 'wt', items })), ['desk wt c: in the Commands table of README.md, not in bin/desk.mjs']);
   assert.deepEqual(gaps(cli("function st(argv) { argv.includes('--json'); argv.includes('--dry-run'); }", '| `desk st --json\\|--dry-run` | x |')), []);
   assert.match(gaps(cli('function st() {}', '| `desk st a\\|b\\|--c` | x |')).join('\n'), /lists actions a\|b, but/);
-});
-
-test('flag literals in a self-test the handler calls do not count', () => {
-  assert.deepEqual(gaps(cli("function stTest() { return 'x'.includes('--zzz'); }\nfunction st(argv) { stTest(); }")), []);
 });
 
 test('an unparsable COMMANDS is a gap, not silence', () => {

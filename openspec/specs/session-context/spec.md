@@ -18,12 +18,10 @@ argument, else the payload's `hook_event_name`, else `SubagentStart`.
 - **THEN** `additionalContext` begins `PONYTAIL MODE ACTIVE - level: full`
 
 ### Requirement: Ponytail for every agent that writes code
-The context SHALL contain the body of the kit's `skills/ponytail/SKILL.md` with its front matter removed
-and the table rows for the `lite` and `ultra` levels dropped. Every session and every agent SHALL receive
-it, except a `SubagentStart` whose payload `agent_type`, after any `<plugin>:` prefix, is one of
-`Explore`, `archiver`, `ci-triage`, `reviewer`, `scribe`, `structure-reviewer`, `validator` or `verifier`:
-those agents write no code (the reviewer judges leanness through its `ponytail-review` skill), so they SHALL receive the desk's agent rules without Ponytail and without the
-rule line that says Ponytail is active. A payload with no agent type SHALL receive Ponytail.
+The context SHALL contain the body of the kit's `skills/ponytail/SKILL.md` with its front matter removed and the table rows for the `lite` and `ultra` levels dropped.
+
+#### Scenario: Further rules
+Every session and every agent SHALL receive it, except a `SubagentStart` whose payload `agent_type`, after any `<plugin>:` prefix, is one of `Explore`, `archiver`, `ci-triage`, `reviewer`, `scribe`, `structure-reviewer`, `validator` or `verifier`: those agents write no code (the reviewer judges leanness through its `ponytail-review` skill), so they SHALL receive the desk's agent rules without Ponytail and without the rule line that says Ponytail is active. A payload with no agent type SHALL receive Ponytail.
 
 #### Scenario: Implementer gets Ponytail
 - **WHEN** a `SubagentStart` fires for `agent-desk:implementer`, `general-purpose`, or with no agent type
@@ -40,8 +38,7 @@ rule line that says Ponytail is active. A payload with no agent type SHALL recei
 ### Requirement: Desk rules
 The context SHALL append the desk's `agent-rules.md` (in the desk folder, else `.claude/agent-rules.md`)
 and a closing line telling the agent how to run the desk command by absolute path: `desk` in bash, and
-in PowerShell or cmd `node` on the desk kit's `bin/desk.mjs` with `DESK_HOME` set to the desk (not
-`desk.cmd`), not `npx desk`.
+in PowerShell or cmd `node` on the desk kit's `bin/desk.mjs` with `DESK_HOME` set to the desk, not `npx desk`.
 
 #### Scenario: Old location
 - **WHEN** only `.claude/agent-rules.md` exists
@@ -49,7 +46,7 @@ in PowerShell or cmd `node` on the desk kit's `bin/desk.mjs` with `DESK_HOME` se
 
 #### Scenario: Direct form
 - **WHEN** the context is built for a desk
-- **THEN** the closing line holds the PowerShell and cmd forms with the desk's real paths and does not name `desk.cmd`
+- **THEN** the closing line holds the PowerShell and cmd forms with the desk's real paths
 
 ### Requirement: Board only for sessions
 For `SessionStart` the context SHALL also hold the board summary and, per repo, the desk area and
@@ -79,32 +76,67 @@ A board failure SHALL leave the rest of the context intact.
 - **THEN** the output is `{}` and the exit code 0
 
 ### Requirement: Edit guard verdict
-`verdict(command)` SHALL return a reason for a Bash command that edits files with `sed -i` or
-`sed --in-place` in command position (start, or after `;`, `&`, `|` or `xargs`), a heredoc written into a
-file (`cat > f <<`, `<<EOF >> f`), a python script that writes or reads stdin from a heredoc, or
-`node -e` with `writeFileSync` (except for `settings.local.json` and `worktree-settings`); otherwise it
-SHALL return null. Text that merely mentions `sed -i` inside a quoted string SHALL pass.
+`verdict(command)` SHALL judge each command segment of a shell command on its own. Segments are split on `;`, `&`, `|`, parentheses and newlines outside quotes, after dropping `#` comments and joining a backslash at the end of a line with the next line; heredoc bodies SHALL NOT count as commands, but SHALL count as the script of an interpreter in that segment, and the string of `bash -c` (or `sh`, `zsh`) SHALL be judged as a command of its own.
+
+#### Scenario: Further rules
+It SHALL return a reason for a segment that edits files with `sed -i` or `sed --in-place` (the flag anywhere among the unquoted arguments, `sed` in command position: at the segment's start, or after `do`, `then`, `else`, `if`, `elif`, `while`, `until`, `sudo`, `env`, `command`, `exec`, `time`, `!`, `{`, a variable assignment or `xargs` with flags), a heredoc written into a file (`cat > f <<`, `<<EOF >> f`), `python`, `python3` or `py` that reads stdin from a heredoc (`python - <<`) or runs `-c` with a script that writes, or `node` with `-e` or `--eval` and `writeFileSync` (except for `settings.local.json` and `worktree-settings` in that segment); otherwise it SHALL return null. The interpreter's name SHALL count only outside quotes. Text that merely mentions any of these inside a quoted string, including a commit message, SHALL pass.
 
 #### Scenario: sed in place
 - **WHEN** the command is `sed -i 's/a/b/' x.ts`
 - **THEN** the verdict is `sed -i`
 
+#### Scenario: sed in place, other forms
+- **WHEN** the command is `sed -E -i 's/a/b/' f`, `for f in *; do sed -i 's/a/b/' $f; done`, an indented `  sed -i 's/a/b/' f` on its own line, or `(sed -i 's/a/b/' f)`
+- **THEN** the verdict is `sed -i`
+
+#### Scenario: Other interpreter spellings
+- **WHEN** the command is `py -c "open('a','w')"` or `node --eval "require('fs').writeFileSync('a','b')"`
+- **THEN** the verdict names a python or node edit script
+
+#### Scenario: A separator inside the script
+- **WHEN** the command is `python -c "import os; open('a','w')"`
+- **THEN** the verdict is `python edit script`
+
+#### Scenario: The script in a heredoc
+- **WHEN** the command is `python -c "$(cat <<'EOF' ...`, with a body that holds `open('a','w').write('x')`
+- **THEN** the verdict is `python edit script`
+
+#### Scenario: Apostrophe in a comment
+- **WHEN** the command is `# don't touch the header`, then on the next line `sed -i 's/a/b/' f`
+- **THEN** the verdict is `sed -i`
+
+#### Scenario: Edit-looking comment
+- **WHEN** the command is `# avoid (sed -i here)`, then on the next line `git status`
+- **THEN** the verdict is null
+
+#### Scenario: Continued line
+- **WHEN** the command is `node -e \`, then on the next line `"require('fs').writeFileSync('a','b')"`
+- **THEN** the verdict is `node -e edit script`
+
+#### Scenario: Harmless call beside an edit-looking word
+- **WHEN** the command is `python -c "print(1)" && git commit -m "rewrite x"` or `node -e "console.log(1)" && grep writeFileSync x`
+- **THEN** the verdict is null
+
 #### Scenario: Mention is allowed
-- **WHEN** the command is `echo "blocked a sed -i test" >> log.md`
+- **WHEN** the command is `echo "blocked a sed -i test" >> log.md` or `grep -E "a|sed -i|b" f`
 - **THEN** the verdict is null
 
 #### Scenario: Commit message heredoc
-- **WHEN** the command is `git commit -F - <<'EOF' ...`
+- **WHEN** the command is `git commit -F - <<'EOF' ...`, with a body line that starts with `sed -i`
+- **THEN** the verdict is null
+
+#### Scenario: PowerShell here-string
+- **WHEN** the command is a `git commit -m @'...'@` whose text holds an apostrophe and `; sed -i`
 - **THEN** the verdict is null
 
 ### Requirement: Edit guard denial
 A blocked command SHALL be denied with the reason `Desk rule: no <kind> for file edits ... Use the Edit
-tool (or Write for a new file) instead.` Both the plugin's `tool.call` hook (Bash tool, in a desk only)
+tool (or Write for a new file) instead.` Both the plugin's `tool.call` hook (Bash and PowerShell tools, in a desk only)
 and `scripts/edit-guard.mjs` (a PreToolUse settings hook, inert outside a desk, `--self-test` available)
 SHALL apply it. Both SHALL fail open on an internal error.
 
 #### Scenario: Plugin hook
-- **WHEN** a Bash call in a desk runs a blocked command
+- **WHEN** a Bash or PowerShell call in a desk runs a blocked command
 - **THEN** the call is denied with the desk-rule message
 
 #### Scenario: Outside a desk
@@ -123,7 +155,10 @@ Output styles do not reach subagents, so for `SubagentStart`, when the desk's `o
 - **THEN** the context does not contain the line (the session's own output style applies)
 
 ### Requirement: Merge guard verdict
-A shell command SHALL get a refusal verdict only when, in a repo with `merge: "review"`, it would push to, delete or merge into a branch outside that repo's `branchPrefix`, or when it is `gh pr merge`. An explicit tag ref is not a branch and SHALL be allowed. The rule SHALL live in a pure, Node-free module with a self-test table, and SHALL honour quoted text. It SHALL read a bash `$'...'` word as bash decodes it, a backtick body whose quotes close inside it after the level of backslashes bash removes from it, and what follows a PowerShell assignment as a command.
+A shell command SHALL get a refusal verdict only when, in a repo with `merge: "review"`, it would push to, delete or merge into a branch outside that repo's `branchPrefix`, or when it is `gh pr merge`. An explicit tag ref is not a branch and SHALL be allowed. The rule SHALL live in a pure, Node-free module with a self-test table, and SHALL honour quoted text.
+
+#### Scenario: Further rules
+It SHALL read a bash `$'...'` word as bash decodes it, a backtick body whose quotes close inside it after the level of backslashes bash removes from it, and what follows a PowerShell assignment as a command.
 
 #### Scenario: Agent branches pass
 - **WHEN** the command is `git push origin agent/x`, with or without `-u` or `--force`, or `git push origin agent/main`, and the prefix is `agent/`
@@ -235,6 +270,45 @@ An error in the guard's config, git or input SHALL allow the command. A command 
 - **WHEN** `desk.config.json` cannot be parsed, or git fails
 - **THEN** the command is allowed
 
+#### Scenario: A BOM in the config
+- **WHEN** `desk.config.json` starts with a byte order mark and the command is `git push origin main` in a `review` repo
+- **THEN** the config loads and the command is refused
+
 #### Scenario: Denial text
 - **WHEN** a command is refused
 - **THEN** the reason names the protected branch, or that it cannot read the line, and `desk wt merge`
+
+### Requirement: Merge guard branch switches
+A `git checkout` or `git switch` that names a branch SHALL add that branch to what every later bare push or merge on the same line is judged against, alongside the directory's current branch. The command SHALL be refused when any of those branches is outside the `branchPrefix`. A switch SHALL only add a refusal, never lift one, and SHALL count whatever its directory, its subshell or its success, since the guard cannot see whether it worked or which repo it moved.
+
+#### Scenario: A switch before a bare push or merge
+- **WHEN** the command on `agent/x` is `git checkout main && git merge agent/x && git push`, or the PowerShell command is `git switch main; git push origin HEAD`
+- **THEN** it is refused
+
+#### Scenario: Create forms
+- **WHEN** the command on `agent/x` is `git switch -c main && git push`, `git checkout -B main origin/main; git push` or `git switch --cre main && git push`
+- **THEN** it is refused
+
+#### Scenario: A switch in a subshell or another folder
+- **WHEN** the command on `agent/x` is `(git checkout main); git push` or `git checkout main && cd sub && git push`
+- **THEN** it is refused
+
+#### Scenario: A file checkout
+- **WHEN** the command on `agent/x` is `git checkout -- f && git push`, `git checkout main -- f && git push` or `git checkout main f && git push`
+- **THEN** it is allowed
+
+#### Scenario: A switch after the push
+- **WHEN** the command on `agent/x` is `git push; git checkout main`
+- **THEN** it is allowed
+
+#### Scenario: An explicit refspec
+- **WHEN** the command on `agent/x` is `git checkout main && git push origin agent/x`
+- **THEN** it is allowed, because the refspec names the branch
+
+#### Scenario: A switch cannot lift a refusal
+- **WHEN** the command on `main` is `git checkout agent/y && git push`
+- **THEN** it is refused
+
+#### Scenario: A switch only git can resolve
+- **WHEN** the command on `agent/x` is `git switch - && git push`, `git checkout @{-1} && git push` or `git checkout $B && git push`
+- **THEN** it is allowed, and these forms are listed as not covered

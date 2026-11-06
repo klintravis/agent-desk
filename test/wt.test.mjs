@@ -1,15 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, statSync, chmodSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, statSync, chmodSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, delimiter } from 'node:path';
-import { multiDesk, desk, git, commit, env, BIN } from './helpers.mjs';
+import { multiDesk, desk, git, commit, env, BIN, ok, board, setRepo } from './helpers.mjs';
 import { watchRuns, SESSION_ENV } from '../lib/wt.mjs';
 import { conclusion } from '../bin/desk.mjs';
 
-const ok = (r) => { assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`); return r.stdout; };
 const fails = (r, re) => { assert.notEqual(r.status, 0, r.stdout); assert.match(r.stderr, re); };
-const board = (home) => readFileSync(join(home, 'board.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 
 test('wt new -> finish -> merge gate -> merge, no gh (no CI)', () => {
   const { root, home } = multiDesk();
@@ -28,6 +26,9 @@ test('wt new -> finish -> merge gate -> merge, no gh (no CI)', () => {
   ok(desk(home, 'todo', 'start', 'T-1', '--slug', 'demo'));
   ok(desk(home, 'todo', 'split', 'T-1', 'step one', 'step two')); // T-2, T-3: steps of the change
   ok(desk(home, 'todo', 'add', 'follow-up', '--area', 'a', '--slug', 'demo')); // T-4: tagged, not started
+  ok(desk(home, 'todo', 'add', 'blocked work', '--area', 'a'));
+  ok(desk(home, 'todo', 'start', 'T-5', '--slug', 'demo'));
+  ok(desk(home, 'todo', 'block', 'T-5')); // T-5: started for the slug, then blocked
   const first = commit(wt, 'src/one.txt', 'one\n');
   writeFileSync(join(wt, 'dirty.txt'), 'x');
   fails(desk(home, 'wt', 'finish', 'demo'), /uncommitted changes/);
@@ -47,7 +48,9 @@ test('wt new -> finish -> merge gate -> merge, no gh (no CI)', () => {
   assert.equal(git(join(root, 'a'), 'branch', '--list', 'agent/demo'), '');
   assert.deepEqual(board(home).slice(-2).map((l) => [l.kind, l.text.split(/[=;]/)[0]]), [['merged', 'main'], ['release', 'removed']]);
   const status = (id) => JSON.parse(ok(desk(home, 'todo', 'show', id))).status;
-  assert.deepEqual(['T-1', 'T-2', 'T-3', 'T-4'].map(status), ['done', 'done', 'done', 'open'], 'the active todo and its steps close; a tagged open todo stays');
+  assert.deepEqual(['T-1', 'T-2', 'T-3', 'T-4', 'T-5'].map(status), ['done', 'done', 'done', 'open', 'done'],
+    'the active todo and its steps close, a started-then-blocked todo closes too; a tagged open todo stays');
+  assert.match(JSON.parse(ok(desk(home, 'todo', 'show', 'T-5'))).notes.at(-1), /: merged \(demo\)$/);
 });
 
 test('status --fetch reads commits others pushed; plain status stays on local refs; a branch line carries its state', () => {
@@ -185,6 +188,15 @@ test('stream starts the claude on PATH and its output reaches the log files (T-7
   assert.ok(statSync(out).size + statSync(`${out}.err`).size > before, 'the second run appended');
 });
 
+test('stream brief: a merge:review repo asks for the PR findings in the final message, others do not', () => {
+  const { home } = multiDesk();
+  writeFileSync(join(home, 'task.md'), 'Do the thing.\n');
+  const dry = () => ok(desk(home, 'stream', 'side', 'task.md', '--repo', 'a', '--dry-run'));
+  assert.doesNotMatch(dry(), /PR findings/);
+  setRepo(home, 'a', { merge: 'review' });
+  assert.match(dry(), /final message also holds the `PR findings:` block of the last reviewer or verifier report \(the verifier's after a fix round\)/);
+});
+
 test('stream budget: --budget or front matter budgetUsd becomes --max-budget-usd, default none', () => {
   const { home } = multiDesk();
   const dry = (...a) => ok(desk(home, 'stream', 'side', 'task.md', '--repo', 'a', '--dry-run', ...a));
@@ -279,6 +291,20 @@ test('wt finish: a push rejected after an amend says to rerun with --rebased, wh
   ok(desk(home, 'wt', 'finish', 'amend', '--rebased'));
 });
 
+test('wt finish: a fresh worktree over an old remote branch is told the way out, and --rebased never overwrites it', () => {
+  const { root, home } = multiDesk();
+  const wt = join(root, 'worktrees', 'a-stale');
+  ok(desk(home, 'wt', 'new', 'stale', '--repo', 'a'));
+  commit(wt, 'f.txt', 'old\n');
+  ok(desk(home, 'wt', 'finish', 'stale'));
+  ok(desk(home, 'wt', 'discard', 'stale')); // the remote branch stays
+  ok(desk(home, 'wt', 'new', 'stale', '--repo', 'a'));
+  commit(wt, 'g.txt', 'new\n');
+  const way = /git rebase origin\/agent\/stale.*git push origin --delete agent\/stale/s;
+  fails(desk(home, 'wt', 'finish', 'stale'), way);
+  fails(desk(home, 'wt', 'finish', 'stale', '--rebased'), way); // still refused: the remote commit is unseen
+});
+
 // A pushed, reviewed worktree `stuck` ready for `wt merge`.
 function mergeReady() {
   const { root, home } = multiDesk();
@@ -300,6 +326,61 @@ test('wt merge: a worktree git refuses to remove (locked) keeps the worktree and
   assert.equal(git(join(root, 'a.git'), 'rev-parse', 'main'), sha, 'the merge was pushed');
   assert.ok(existsSync(join(wt, '.git')), 'worktree kept');
   assert.equal(board(home).at(-1).kind, 'merged', 'no release: the claim stays');
+});
+
+test('wt merge: a rejected push leaves the default branch unmoved; a rerun after origin moved says to rebase, not a local divergence', () => {
+  const { root, home, wt } = mergeReady();
+  ok(desk(home, 'todo', 'add', 'w', '--area', 'a')); ok(desk(home, 'todo', 'start', 'T-1', '--slug', 'stuck'));
+  const main = join(root, 'a'), hook = join(main, '.git', 'hooks', 'pre-push'), before = git(main, 'rev-parse', 'main');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  fails(desk(home, 'wt', 'merge', 'stuck'), /git push origin main failed; the default branch was not moved past origin/);
+  assert.equal(git(main, 'rev-parse', 'main'), before, 'local default branch not moved');
+  assert.ok(existsSync(join(wt, '.git')), 'worktree kept');
+  assert.ok(!board(home).some((l) => l.kind === 'merged'), 'no merged line');
+  assert.equal(JSON.parse(ok(desk(home, 'todo', 'show', 'T-1'))).status, 'active', 'todo not closed');
+  rmSync(hook);
+  const other = join(root, 'other'); git(root, 'clone', '-q', join(root, 'a.git'), other);
+  commit(other, 'other.txt', 'o\n'); git(other, 'push', '-q', 'origin', 'main');
+  fails(desk(home, 'wt', 'merge', 'stuck'), /not a fast-forward of main; run desk wt rebase stuck/);
+  assert.equal(git(main, 'branch', '--show-current'), 'main');
+  assert.equal(git(main, 'rev-parse', 'main'), git(join(root, 'a.git'), 'rev-parse', 'main'), 'local caught up to origin, no divergence');
+  assert.ok(existsSync(join(wt, '.git')), 'worktree kept');
+});
+
+test('wt merge: a sha origin already holds (a rerun after a failed local step) skips the push and still closes the work', () => {
+  const { root, home, wt, sha } = mergeReady();
+  git(wt, 'push', '-q', 'origin', `${sha}:refs/heads/main`); // landed on origin, local main still behind
+  ok(desk(home, 'wt', 'merge', 'stuck'));
+  assert.equal(git(join(root, 'a'), 'rev-parse', 'main'), sha);
+  assert.ok(!existsSync(join(wt, '.git')), 'worktree removed');
+  assert.deepEqual(board(home).slice(-2).map((l) => l.kind), ['merged', 'release']);
+});
+
+test('wt merge: a rerun closes work already on origin after origin moved on', () => {
+  const { root, home, wt, sha } = mergeReady();
+  git(wt, 'push', '-q', 'origin', `${sha}:refs/heads/main`);
+  const other = join(root, 'other'); git(root, 'clone', '-q', join(root, 'a.git'), other);
+  commit(other, 'other.txt', 'o\n'); git(other, 'push', '-q', 'origin', 'main');
+  ok(desk(home, 'wt', 'merge', 'stuck'));
+  assert.ok(!existsSync(join(wt, '.git')), 'worktree removed');
+  assert.deepEqual(board(home).slice(-2).map((l) => l.kind), ['merged', 'release']);
+});
+
+test('wt merge: pushed but the local step failed keeps the worktree; a rerun closes the work', () => {
+  const { root, home, wt, sha } = mergeReady();
+  const main = join(root, 'a'), hook = join(main, '.git', 'hooks', 'pre-push'), lock = join(main, '.git', 'index.lock');
+  writeFileSync(hook, `#!/bin/sh
+touch '${lock}'
+exit 0
+`, { mode: 0o755 });
+  fails(desk(home, 'wt', 'merge', 'stuck'), /is pushed to origin/);
+  assert.equal(git(join(root, 'a.git'), 'rev-parse', 'main'), sha, 'pushed');
+  assert.ok(!board(home).some((l) => l.kind === 'merged'), 'no merged line');
+  assert.ok(existsSync(join(wt, '.git')), 'worktree kept');
+  rmSync(lock); rmSync(hook);
+  ok(desk(home, 'wt', 'merge', 'stuck'));
+  assert.ok(!existsSync(join(wt, '.git')), 'worktree removed');
+  assert.deepEqual(board(home).slice(-2).map((l) => l.kind), ['merged', 'release']);
 });
 
 test('wt merge: a folder that cannot be deleted after git unregistered it closes the merge, warning and exit 0', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, () => {

@@ -6,14 +6,21 @@
 // targets the throwaway base, never `develop`. An open PR is closed and both branches deleted in `finally`, even on failure.
 // "[skip ci]" is in the three commit messages and the PR title (the squash commit takes its message from the
 // title): each run would otherwise queue 12 CI jobs on the owner's one runner.
-// shortcut: the gh/git arguments below copy lib/wt.mjs (:65-67 gh/ghBody, :218 pr list, :239 close proof,
-// :250/:255 body on stdin); they can drift, so re-read those lines when wt.mjs changes.
+// shortcut: the gh/git arguments below copy lib/wt.mjs (`gh`/`ghBody`, `prsFor`, the close proof, the body on
+// stdin); they can drift, so re-read those functions when wt.mjs changes.
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isMain } from '../lib/config.mjs';
 
-const sh = (cmd, args, input) => execFileSync(cmd, args, { encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'], timeout: 60e3 }).trim();
+// cwd is this repo's root, never the caller's: git here must not branch or push in whichever repo the shell is in.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+export const sh = (cmd, args, input) => execFileSync(cmd, args, { cwd: ROOT, encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'], timeout: 60e3 }).trim();
 
-export function liveTest(run = sh, id = Date.now()) {
+export function liveTest(run = sh, id = Date.now(), root = ROOT) {
+  // A plain install has no .git here, so git would walk up into whatever repo holds node_modules.
+  if (!existsSync(join(root, '.git'))) throw new Error(`refusing: ${root} is not a git checkout`);
   // The push URL: that is where this script pushes. `git push origin` pushes to every push URL, so exactly one.
   const urls = run('git', ['remote', 'get-url', '--push', '--all', 'origin']).split('\n').map((u) => u.trim()).filter(Boolean);
   if (urls.length !== 1) throw new Error(`refusing: origin has ${urls.length} push URLs`);
@@ -75,6 +82,6 @@ export function liveTest(run = sh, id = Date.now()) {
   return log;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   try { console.log(liveTest().join('\n')); if (!process.exitCode) console.log('ok'); } catch (e) { console.error(`FAILED: ${e.message}`); process.exitCode = 1; }
 }

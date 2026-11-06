@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isMain } from '../lib/config.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FILES = ['package.json', '.claude-plugin/plugin.json', 'vscode/package.json'];
@@ -63,7 +64,8 @@ export function publish(tag, root = ROOT, remote = 'public') {
   return commit;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// Run only as the entry point; isMain compares real paths, so a node_modules/agent-desk junction still runs it.
+if (isMain(import.meta.url)) {
   const [cmd, arg] = process.argv.slice(2);
   try {
     if (cmd === 'bump' && arg) { bump(arg); console.log(`bumped to ${arg}`); }

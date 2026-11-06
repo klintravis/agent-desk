@@ -19,7 +19,8 @@ Section names are README headings.
 | `desk wt` | `lib/wt.mjs` `wt` | Worktree flow |
 | `desk stream` | `lib/wt.mjs` `stream`, `brief`, `taskFile`, `claudeLauncher` | Streams |
 | `desk tokens` | `bin/desk.mjs` `tokens`, `tokenRows`, `tally`, `tokenPatterns`, `worktreeMatcher` | Tokens and overlaps |
-| `desk overlap` | `bin/desk.mjs` `overlap`, `currentOverlaps` | Tokens and overlaps |
+| `desk overlap` | `bin/desk.mjs` `overlap`, `currentOverlaps`, `changedFiles` | Tokens and overlaps |
+| `desk lenses` | `lib/lenses.mjs` `lenses`, `matchLenses`, `addedLines`, `RULES`; `bin/desk.mjs` `changedFiles` | Commands, What is in the kit |
 | `desk init` | `lib/init.mjs` `initCmd`, `init`, `pinKit` | Quickstart |
 | `desk sync` | `lib/sync.mjs` `sync` | Quickstart, Claude Code and GitHub Copilot |
 | `desk workspace` | `lib/sync.mjs` `workspace` | Commands |
@@ -27,7 +28,6 @@ Section names are README headings.
 | `desk check` | `bin/desk.mjs` `check` | Commands |
 | `desk home` | `bin/desk.mjs` `main` | Commands |
 | `desk --version` | `bin/desk.mjs` `main` | Commands |
-| `desk --self-test` | `bin/desk.mjs` `main`, each command's `--self-test` | Commands |
 
 ## todo actions
 
@@ -42,7 +42,6 @@ Section names are README headings.
 | `todo open` | `bin/desk.mjs` `todo` | Todos |
 | `todo set` | `bin/desk.mjs` `todo` | Todos |
 | `todo note` | `bin/desk.mjs` `todo` | Todos |
-| `todo done-slug` | `bin/desk.mjs` `doneSlug` | Todos |
 | `todo list` | `bin/desk.mjs` `tree` | Todos |
 | `todo next` | `bin/desk.mjs` `next` | Todos |
 | `todo show` | `bin/desk.mjs` `todo` | Todos |
@@ -54,8 +53,6 @@ Section names are README headings.
 | `board post` | `bin/desk.mjs` `post` | Board |
 | `board claims` | `bin/desk.mjs` `openClaims` | Board |
 | `board check` | `bin/desk.mjs` `board` | Board |
-| `board merge-ok` | `bin/desk.mjs` `mergeOk` | Board |
-| `board tail` | `bin/desk.mjs` `summary` | Board |
 
 ## wt actions
 
@@ -76,6 +73,7 @@ Section names are README headings.
 | `--watch` | `bin/desk.mjs` `status`, `watch` | Status watch |
 | `--fetch` | `bin/desk.mjs` `status` | Commands |
 | `--json` | `bin/desk.mjs` `status`, `statusData`; `lib/tidy.mjs` `tidy` | Status watch, Tidy |
+| `--cached` | `bin/desk.mjs` `status`, `ghStatus`; `hooks/pane.tsx`, `vscode/extension.js` | Status watch |
 | `--apply` | `lib/tidy.mjs` `tidy` | Tidy |
 | `tidyIds` | `lib/tidy.mjs` `raiseQuestion` (with `source`) | Tidy |
 | `--json` | `lib/sync.mjs` `settings` | Commands |
@@ -86,7 +84,8 @@ Section names are README headings.
 | `--json` (decide) | `bin/desk.mjs` `decide`, `decisionOf`, `hooks/pane.tsx`, `vscode/desk.js` `nextDecision` | Owner decisions |
 | `--pick` (decide) | `bin/desk.mjs` `decide`, `decisionOf`, `skills/decide/SKILL.md` | Owner decisions |
 | `--option` | `bin/desk.mjs` `flags`, `parseOptions` | Owner decisions |
-| `--size` | `bin/desk.mjs` `todoLine` (any field via `flags`) | Todos |
+| `--size` | `bin/desk.mjs` `todoLine` (a schema field except id, created, notes via `flags`; others exit 1) | Todos |
+| `--note` | `bin/desk.mjs` `todo` (`done`, `drop`, `block`, `open`, `set`) | Todos |
 | `--prio` | `bin/desk.mjs` `flags` | Todos |
 | `--` (end of flags) | `bin/desk.mjs` `flags` | Todos |
 | `--why` | `bin/desk.mjs` `todo`, `decideText` | Todos, Owner decisions |
@@ -113,13 +112,12 @@ Section names are README headings.
 | `--max-turns` | `lib/wt.mjs` `stream` | Streams |
 | `--budget` | `lib/wt.mjs` `taskFile`, `stream` | Streams |
 | `--dry-run` | `lib/wt.mjs` `stream` | Streams |
-| `--json` | `bin/desk.mjs` `tokens`; `scripts/friction-scan.mjs` | Tokens and overlaps, Commands |
+| `--json` | `bin/desk.mjs` `tokens`; `lib/lenses.mjs` `lenses` | Tokens and overlaps, Commands |
 | `--session` | `bin/desk.mjs` `tokens` | Tokens and overlaps |
 | `--by-worktree` | `bin/desk.mjs` `tokens`, `worktreeMatcher` | Tokens and overlaps |
 | `--worktrees` | `lib/init.mjs` `init` | Commands |
 | `--harness` | `lib/init.mjs` `init` | Commands |
 | `--no-install` | `lib/init.mjs` `initCmd` | Commands |
-| `--since` | `scripts/friction-scan.mjs` | Commands |
 
 ## Environment variables
 
@@ -144,7 +142,7 @@ Section names are README headings.
 |---|---|---|
 | `kitVersion` | `lib/init.mjs`, `lib/sync.mjs` `recordKitVersion`, `bin/desk.mjs` `check` | Config reference |
 | `worktreesDir` | `lib/config.mjs` `loadConfig` | Config reference |
-| `scratchDir` | `lib/config.mjs` `loadConfig`, `lib/wt.mjs` `stream` | Config reference |
+| `scratchDir` | `lib/config.mjs` `loadConfig`, `lib/wt.mjs` `stream`, `bin/desk.mjs` `ghStatus` | Config reference |
 | `harnesses` | `lib/config.mjs`, `lib/sync.mjs` `sync` | Config reference |
 | `outputStyle` | `lib/config.mjs` `loadConfig`, `lib/sync.mjs` `claudeSettings`, `scripts/subagent-context.mjs` | Config reference |
 | `tasks` | `lib/config.mjs` `loadConfig`, `resolveSettings` | Config reference, User settings |
@@ -186,9 +184,9 @@ Section names are README headings.
 | owner-decisions band | `hooks/pane.tsx` `ui.render` `AbovePrompt` | Desk pane |
 | `/desk` | `hooks/pane.tsx` `command.run` desk | Desk pane |
 | `/decide` | `hooks/pane.tsx` `command.run` decide, `typedArgs`, `runDecide`, `ask` (no arguments: the dialog walk) | Desk pane |
-| `Decide T-n` press | `hooks/pane.tsx` `ask`, `decisionLines`, `runDecide` | Desk pane |
+| `Decide (n)` press | `hooks/pane.tsx` `ask`, `decisionLines`, `runDecide` | Desk pane |
 | status line | `hooks/meters.ts` `paint`, `line`, `bar` | Session meters |
-| `desk-status` schema | `schemas/desk-status.schema.json`, `lib/schema.mjs` `schemaTest` | Status watch |
+| `desk-status` schema | `schemas/desk-status.schema.json`, `test/units.test.mjs` schema checks | Status watch |
 | Plan quota | `hooks/quota.ts` `quotaLine` | Session meters |
 | Context fullness | `hooks/meters.ts` `ctxLine` | Session meters |
 | Cache | `hooks/meters.ts` `cacheLine` | Session meters |
@@ -199,7 +197,10 @@ Section names are README headings.
 | `[REDACTED-EMAIL-` | `hooks/redact.ts` `mint` | Secret redaction |
 | `[REDACTED-IP-` | `hooks/redact.ts` `mint` | Secret redaction |
 | `SendMessage` | `hooks/redact.ts` `NO_RESTORE` | Secret redaction |
+| `SubagentHandback` | `hooks/redact.ts` `NO_RESTORE` | Secret redaction |
 | `AskUserQuestion` | `hooks/redact.ts` `NO_RESTORE` | Secret redaction |
+| `WebSearch` | `hooks/redact.ts` `NO_RESTORE` | Secret redaction |
+| `WebFetch` | `hooks/redact.ts` `NO_RESTORE` | Secret redaction |
 | 1500 characters | `hooks/prune.ts` `CUT_OVER` | Auto-compaction prune |
 | 8 messages | `hooks/prune.ts` `KEEP_RECENT` | Auto-compaction prune |
 | 30% | `hooks/register.ts` `MIN_SAVING` | Auto-compaction prune |
@@ -208,6 +209,7 @@ Section names are README headings.
 | 3 hours | `hooks/warmhold.ts` `AUTO_WARM` | Cold-cache guard |
 | 50k | `hooks/warmhold.ts` `BIG` | Cold-cache guard |
 | 80% | `hooks/meters.ts` `CTX_HINT` | Session meters |
+| 240 samples | `hooks/quota.ts` `MAX_SAMPLES` | Session meters |
 | `desk-status` | `hooks/pane.tsx` `PANE` | Desk pane |
 | `quota-samples` (plugin store key) | `hooks/meters.ts` `QUOTA_KEY` | Session meters |
 | `types/index.d.ts` | `DeskStatus`, `DeskMeters`, `WarmState`, `AgentRow`, `tab` atom shapes | Desk pane |
@@ -219,7 +221,6 @@ Section names are README headings.
 | `scripts/subagent-context.mjs` | SessionStart and SubagentStart hook | What is in the kit, Claude Code and GitHub Copilot |
 | `scripts/edit-guard.mjs` | PreToolUse hook script | What is in the kit, Claude Code and GitHub Copilot |
 | `scripts/merge-guard.mjs` | PreToolUse hook script (`--self-test`) | Merge policy |
-| `scripts/friction-scan.mjs` | transcript scan | What is in the kit |
 | `scripts/docs-check.mjs` | README and this file against the code; run by `npm test` | What is in the kit |
 | `scripts/test.mjs` | `npm test`: runs every `test/*.test.mjs` | What is in the kit |
 | `npm run typecheck` | `scripts/typecheck-hooks.mjs`: developer type check of `hooks/` | Versioning and upgrade |
@@ -237,12 +238,13 @@ Section names are README headings.
 |---|---|---|
 | `kickoff` | `skills/kickoff/SKILL.md` | What is in the kit |
 | `handoff` | `skills/handoff/SKILL.md` | What is in the kit |
-| `orchestrate` | `skills/orchestrate/SKILL.md`, `skills/orchestrate/merge-review.md` | What is in the kit |
+| `orchestrate` | `skills/orchestrate/SKILL.md`, `skills/orchestrate/merge-review.md`, `skills/orchestrate/review-loop.md` | What is in the kit |
 | `ponytail` | `skills/ponytail/SKILL.md` | What is in the kit |
 | `ponytail-review` | `skills/ponytail-review/SKILL.md` | What is in the kit |
 | `ponytail-audit` | `skills/ponytail-audit/SKILL.md` | What is in the kit |
 | `ponytail-debt` | `skills/ponytail-debt/SKILL.md` | What is in the kit |
 | `decide` | `skills/decide/SKILL.md` | What is in the kit |
+| `grill` | `skills/grill/SKILL.md` | What is in the kit |
 | `walkthrough` | `skills/walkthrough/SKILL.md` | What is in the kit |
 | `fix` | `skills/fix/SKILL.md` | What is in the kit |
 | `refactor` | `skills/refactor/SKILL.md` | What is in the kit |
@@ -284,7 +286,7 @@ Section names are README headings.
 | `.code-workspace` | `lib/sync.mjs` `workspace` | Quickstart |
 | `.vscode/settings.json` | `lib/sync.mjs` `hidePlumbing` | VS Code settings |
 | `package.json` | `lib/init.mjs` `pinKit` | Install |
-| `desk.cmd` | `lib/sync.mjs` `writeShim` | Install |
+| `desk` | `lib/sync.mjs` `writeShim` | Install |
 | `written by desk sync` | `lib/sync.mjs` `SHIM_MARK` | Quickstart |
 | `settings.local.json` | `lib/sync.mjs` `syncCheckout` | Quickstart |
 | `synced-permissions.json` | `lib/sync.mjs` `syncedFile` | Quickstart |
@@ -295,9 +297,10 @@ Section names are README headings.
 | `streams/` | `bin/desk.mjs` `summary`, `lib/wt.mjs` `dropStream`; `lib/tidy.mjs` deletes | Board, Tidy |
 | `<slug>-prompt.txt` | `lib/wt.mjs` `stream`; `lib/tidy.mjs` deletes (with the `<slug>-run.jsonl` logs in `scratchDir`) | Streams, Tidy |
 | `<slug>-run.jsonl` | `lib/wt.mjs` `stream` | Streams |
+| `status-gh.json` | `bin/desk.mjs` `ghStatus` | Status watch |
 | `.claude/settings.json` | carried by `lib/sync.mjs` `deskShared` | Quickstart |
 | `~/.agent-desk/settings.json` | read only, `lib/config.mjs` `readUserSettings` | User settings |
-| `user-settings.schema.json` | `lib/schema.mjs` `schemaTest` | User settings |
+| `user-settings.schema.json` | `test/units.test.mjs` schema checks | User settings |
 | `notes.md` | `.github/workflows/release.yml` (CI scratch file, the release body) | Versioning and upgrade |
 
 ## Status screen sections and watch lines
@@ -324,7 +327,7 @@ Section names are README headings.
 | item | where in code | README section |
 |---|---|---|
 | Agent Desk views (Decisions, Work and Todos, shown when a root holds `desk.config.json`) | `vscode/package.json` `contributes.views`, `vscode/extension.js` `activate` | VS Code extension |
-| Refresh command (`agentDesk.refresh`), every 60 seconds and on the view button | `vscode/extension.js` `activate` | VS Code extension |
+| Refresh command (`agentDesk.refresh`), every 60 seconds, on the view button and when `todo`, `board` or `decisions` `.jsonl` changes (file watcher) | `vscode/extension.js` `activate` | VS Code extension |
 | Decide command (`agentDesk.decide`), quick pick over waiting decisions | `vscode/extension.js` `activate`, `askRuling` | VS Code extension |
 | Waiting-decisions badge | `vscode/extension.js` `activate` | VS Code extension |
 | Desk lookup and CLI run | `vscode/desk.js` `findDesk`, `run` | VS Code extension |

@@ -23,4 +23,7 @@ rule broken is a finding only with the concrete case your review skill demands.
 | security | parses outside input, runs commands, handles secrets or auth, gates a feature, changes env vars, ports or setup |
 | ui | changes what a person sees or clicks: components, styles, CLI or TUI output |
 
+This table is what `desk lenses <slug>` applies, as path and added-line rules plus the todo's kind
+(`lib/lenses.mjs`); a lens it cannot see in a diff (a hot path, a feature gate) the brief names by hand.
+
 No lens fits a stack the change uses (Python, Go, SQL, ...)? Use the repo's linters and conventions.

@@ -20,7 +20,7 @@ and the one verdict post at the end only.
 3. Check the repo's written rules explicitly (names, licensing headers, secrets, logging).
 4. Load the `stack-lens` skill and check the review file of each lens the brief names or the diff's
    files match, and the `security` lens whenever the diff touches env vars, ports, secrets, setup steps
-   or a feature gate. The brief's approach sets the scope: a fix that changes more than the fault, or a
+   or a feature gate; a brief limited to one lens: that lens's review file only, and only findings in it; no repo check, CI, PR threads or docs pass, the main reviewer owns those. The brief's approach sets the scope: a fix that changes more than the fault, or a
    refactor that changes behaviour, is a finding (the `validator` proves the tests; you judge the diff).
 5. Never report unfinished research: if you can read the other side (caller, server, library source),
    read it before you report. A break the change clearly intends, in a narrow scope, is not a finding.
