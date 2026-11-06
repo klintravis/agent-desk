@@ -7,6 +7,19 @@ what an existing desk must do on upgrade; `desk check` warns while `kitVersion` 
 
 ## Unreleased
 
+## 0.9.0 - 2026-11-06
+
+- Changed: `bump` and `npm test` also refuse two entries of one section that name the same todo id inside a parenthesis, right after `(` or `,`, which a rebase leaves when it rewords an entry (OpenSpec change `changelog-tid`, T-283). Nothing to do.
+- Changed: `bump` refuses a `## Unreleased` section that holds a repeated entry or two entries naming one OpenSpec change, naming the duplicate and writing nothing; `npm test` fails on such a section (OpenSpec change `changelog-union`, T-99). Nothing to do.
+- Changed: `desk status --watch` caches each transcript's token tally by its mtime and size, so a tick with no new transcript output reads about 27 ms instead of about 250 ms (T-262). Nothing to do.
+- Fix: `desk check` decides that `claude` is missing from the spawn error or the shell's exit code (9009 for cmd; on Windows a plain 1 is settled by `where claude`), not from the English text "not recognized", so on a non-English Windows a missing `claude` skips its steps instead of failing the check (OpenSpec change `claude-probe`, T-261). Nothing to do.
+- Changed: `wt discard` returns the slug's active todos to open, with no worktree and no owner; their notes stay (OpenSpec change `discard-reopens-todos`, T-278). Nothing to do.
+- Fixed: `desk status` says why its screen is bare when `desk.config.json` is refused: a `Warning:` line under the heading, and a `warnings` array in `--json` (absent when there is no refusal; the schema lists it). It still exits 0 (OpenSpec change `status-config-warning`, T-277). Nothing to do.
+- Changed: the README quickstart and global-install lines name the release tag (`npx github:klintravis/agent-desk#v0.8.0 init`), so a new user gets a release, not the default branch; `release.mjs bump` rewrites those pins (T-279, OpenSpec change `pin-quickstart`). Nothing to do.
+- Fix: `desk todo add` without `--area` on a desk whose `desk.config.json` is refused now names the refusal in its error instead of only "add needs --area" (T-281). Nothing to do.
+- Added: the Desk pane shows each status warning as an orange `Warning:` line beside its error line (OpenSpec change `pane-warnings`, T-280). Nothing to do.
+- Fixed: an owner todo that was ruled with `desk decide` and later started for work no longer counts as a waiting decision. `desk status` (`decisions`, the owner count and the pane's Decisions count), `desk decide`, `desk decide --json`, the watch's `OWNER+:` lines and the Decide press now use one set (area `owner`, open or blocked, or active with no `ruled:` note), `desk decide T-n` refuses a ruled one, and the ruled active todo is listed with the work todos in `desk status`. A never-ruled owner todo that is started still waits, and a ruled one set back to open or blocked waits again (a new ruling replaces the old one; ruling T-240). OpenSpec change `owner-waiting`, spec "desk-cli" gains "A ruled owner todo is not waiting". T-236. Nothing to do.
+
 ## 0.8.0 - 2026-11-05
 
 - Changed: features are built test-first (OpenSpec change `tdd-lite`, T-254, ruling T-249). The `implementer` commits a feature's failing test alone as `test: <behaviour>` with the body `red: <cmd> | exit <n>` (`red: n/a <why>` when there is no cheap local test, a commit hook runs the suite or a new module leaves nothing to fail on: `red: n/a new module`), then the code; `orchestrate` sets the feature approach to `test-first` and always runs the `validator`, which reruns `accept:` on the test commit (must fail on the assertion) and on the head (must pass) and checks the test-only commit comes first. `fix` is unchanged. Nothing to do.

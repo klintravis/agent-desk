@@ -19,6 +19,8 @@ export type DeskStatus = {
     below: { task: string; model: string; effort: string; shared: { model: string; effort: string } }[]
     raised: { task: string; model: string; effort: string; replaced: { model?: string; effort?: string } }[]
   } | null
+  /** Why the screen is partial: the refusal when desk.config.json is refused. Absent when there is none. */
+  warnings?: string[]
   /** The text screen, byte for byte what `desk status` prints. */
   text: string
 }

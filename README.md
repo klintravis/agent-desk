@@ -37,7 +37,7 @@ and runs `npm install` (`--no-install` skips it). `npx` is only for that first i
 
 ```sh
 mkdir desk && cd desk
-npx github:klintravis/agent-desk init --repo app=../app
+npx github:klintravis/agent-desk#v0.9.0 init --repo app=../app
 ./desk status            # from then on: the desk's shim (PowerShell and cmd: the node form below)
 ```
 
@@ -66,7 +66,7 @@ Avoid `npx desk` outside the
 desk folder, because it resolves the registry's unrelated `desk` package. The hooks and settings
 `desk sync` writes call `node <desk>/node_modules/agent-desk/...`. Until that copy is installed, the
 hooks and the shim call the kit that ran `desk sync`. A global install
-(`npm install -g github:klintravis/agent-desk`) is optional and only puts a `desk` on your PATH that
+(`npm install -g github:klintravis/agent-desk#v0.9.0`) is optional and only puts a `desk` on your PATH that
 finds the desk from the current folder. The hooks and the shim still use the pinned copy.
 
 **Claude Code plugin.** The repo is its own marketplace:
@@ -162,7 +162,7 @@ engine's own summary runs instead, as it does for a manual `/compact`. A toast s
 
 In an interactive session inside a desk, or once a surface attaches (the VS Code extension, the desktop app, a phone), the mod opens the **Desk** pane (`desk-status`) beside the
 chat. Its rows: Context, Quota, Cache with the output style (`default` when none), Warm (the
-keep-warm toggle and why), today's Tokens and Roots. Then a line counting what waits
+keep-warm toggle and why), today's Tokens and Roots, and an orange `Warning:` line for each warning `desk status` gives (a refused `desk.config.json`). Then a line counting what waits
 (`1 ready to merge · 1 needs review`, in the colour of the worst, absent when nothing does), then three tabs, the same panels as the [VS Code extension](vscode/README.md):
 **Decisions** (each waiting decision with its options and whys, and a `Decide (n)` button; a yellow dot on the tab while one waits),
 **Work**, the default (open branches, most urgent first, each one row with one state word such as `ready`, `rebase` or `fixes needed` and who holds it, and the active todos on it;
@@ -187,7 +187,7 @@ shapes (`status-2`, `meters-2`, `warm-1`, `style-1`, `agents-1`) are declared in
 
 ```sh
 mkdir desk && cd desk
-npx github:klintravis/agent-desk init --repo app=../app --repo api=../api --repo notes=../notes
+npx github:klintravis/agent-desk#v0.9.0 init --repo app=../app --repo api=../api --repo notes=../notes
 # `desk` below is the desk's shim: ./desk (bash), <desk>/desk elsewhere (PowerShell or cmd: the node form above)
 # edit desk.config.json: install/build/check per repo, gh where CI lives on GitHub
 desk sync
@@ -331,7 +331,7 @@ its value.
   (`merge` calls it), and posts `release`. Like `merge`, it fails (`cd out of <path> first`) when your
   current directory is inside the worktree. If git unregistered the worktree but the folder stayed, it
   finishes the same way as `merge`: branch deleted, `release` posted, a warning, exit 0.
-- **`wt discard`** drops the worktree and its branch, uncommitted work included, and posts `release`.
+- **`wt discard`** drops the worktree and its branch, uncommitted work included, posts `release`, and returns the slug's active todos to open (wt and owner cleared, notes kept).
   It refuses a slug another session holds unless you pass `--force`, and, like `merge` and `remove`,
   runs only from outside the worktree. If only the folder stays (git no longer lists the worktree) it
   finishes with a warning naming the folder; if git still lists it, it fails and keeps branch and claim.
@@ -437,6 +437,10 @@ not work yet: `todo add "<thought>" --area idea`, then `todo set T-n --area <rep
 
 ### Owner decisions
 
+A ruled decision (its todo holds the `ruled:` note `desk decide` writes) stops waiting while it is active: it is
+listed with the work todos, and `desk decide T-n` refuses it. Set back to open (`desk todo set T-n --status open`) or blocked it
+waits again, and a new `desk decide T-n` replaces the old ruling.
+
 Write a decision with options, the recommendation first:
 
 ```
@@ -511,11 +515,11 @@ worktrees of one repo that changed the same file (committed against the default 
 Running sessions (transcripts written in the last 10 minutes, each by its title with its id, worktree and agents), Roots (each git repo's default branch
 and its sha), Open branches (CI and review
 verdict per branch, and `behind <default> by N, rebase`), Pull requests (when a repo has `gh`), Overlaps and Tokens today. A source that
-cannot be read prints `unavailable`; the command never fails. `gh` is read per repo: a repo whose read fails shows its kept rows, or `no CI run` if none are kept, and `CI unavailable` appears only when the runs are null (every call failed with nothing kept).
+cannot be read prints `unavailable`; the command never fails. A `desk.config.json` the desk refuses (an unknown key, say) leaves the screen without roots and claim marks and adds a `Warning:` line under the heading, and `warnings` in `--json`. `gh` is read per repo: a repo whose read fails shows its kept rows, or `no CI run` if none are kept, and `CI unavailable` appears only when the runs are null (every call failed with nothing kept).
 
 `desk status --json` prints the same data as one JSON object (`decisions`, `active`, `todos`, `claims`,
 `sessions`, `roots`, ..., plus `text`, the screen above), validated by `schemas/desk-status.schema.json`.
-`todos` is what is open, active or blocked and not in Work (an active todo whose slug has a branch or claim is in Work), without owner decisions and with an idea only while it is active.
+`todos` is what is open, active or blocked and not in Work (an active todo whose slug has a branch or claim is in Work), without waiting owner decisions (a ruled owner todo that is active is listed) and with an idea only while it is active.
 Each branch carries `state`, one word (`ready`, `needs review`, `rebase`, `fixes needed`, `CI failed`, ...) computed
 by the rule `desk wt merge` uses; the Desk pane and the VS Code sidebar read it and do not parse CI or verdict text.
 
@@ -852,7 +856,11 @@ publish.
 
 1. On a branch, run `node scripts/release.mjs bump <x.y.z>`. It needs `x.y.z` greater than the current
    version and entries under `## Unreleased`; it sets the version in `package.json`,
-   `.claude-plugin/plugin.json` and `vscode/package.json` and moves the entries to `## <x.y.z> - <date>`.
+   `.claude-plugin/plugin.json` and `vscode/package.json`, the `npx`/`npm install -g` tag pins in the README, and moves the entries to `## <x.y.z> - <date>`.
+   It refuses a section with a repeated entry or two entries for one OpenSpec change or one todo id inside a parenthesis, right after `(` or `,` (`npm test` checks every
+   section), which `CHANGELOG.md`'s `merge=union` leaves when a rebased branch reworded its entry. The same
+   union merge puts a rebased branch's entry under the version just released, with no conflict and no check:
+   after a rebase across a release, move your entry back under `## Unreleased`.
 2. Review the branch, merge it to `develop`, wait for CI. When the release touches the merge `review` path
    (`desk wt merge` under `merge: "review"`), also run `node scripts/gh-review-live.mjs` from a checkout of the
    private repo. It is a live test of the `gh` calls: it pushes two throwaway branches (`agent/gh-live-base-<id>`,

@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { isMain, findDesk, loadConfig, repoFor, wtDir, worktreeList, projectDirName, projectPrefixes, isDeskProject, MODELS, EFFORTS, userSettingsPath, readUserSettings, orchestrateTable, resolveSettings } from '../lib/config.mjs';
-import { schema } from '../lib/schema.mjs';
-import { tmp, env, NO_USER_SETTINGS } from './helpers.mjs';
+import { spawnSync } from 'node:child_process';
+import { schema, validate } from '../lib/schema.mjs';
+import { tmp, env, NO_USER_SETTINGS, BIN } from './helpers.mjs';
 
 const deskWith = (cfg) => { const d = tmp(); writeFileSync(join(d, 'desk.config.json'), JSON.stringify(cfg)); return d; };
 const userFile = (content) => { const f = join(tmp(), 'settings.json'); writeFileSync(f, typeof content === 'string' ? content : JSON.stringify(content)); return f; };
@@ -296,4 +297,19 @@ test('loadConfig: a harnesses value other than claude and copilot, and a malform
   for (const harnesses of [['claud'], 'claude', [1], []]) assert.throws(() => loadConfig(deskWith({ repos: [], harnesses })), /harnesses must be/);
   for (const floor of [true, 5, 'x', []]) assert.throws(() => loadConfig(deskWith({ repos: [], floor })), /floor must be an object/);
   for (const entry of ['opus', null, [], { modle: 'opus' }]) assert.throws(() => loadConfig(deskWith({ repos: [], floor: { review: entry } })), /floor\.review must be an object/);
+});
+
+test('status shows a refused config as a warning (text and --json) and exits 0; a valid config shows none', () => {
+  const run = (home, ...args) => spawnSync(process.execPath, [BIN, ...args], { cwd: home, env: env(home), encoding: 'utf8' });
+  const home = deskWith({ repos: [], chek: 'x' });
+  const text = run(home, 'status');
+  assert.equal(text.status, 0, text.stderr);
+  assert.match(text.stdout, /^# Desk status .*\nWarning: .*unknown key "chek" in the top level/);
+  const json = run(home, 'status', '--json');
+  assert.equal(json.status, 0, json.stderr);
+  const o = JSON.parse(json.stdout);
+  assert.match(o.warnings[0], /unknown key "chek"/);
+  assert.deepEqual(validate(schema('desk-status'), o), []);
+  const ok = JSON.parse(run(deskWith({ repos: [] }), 'status', '--json').stdout);
+  assert.equal(ok.warnings, undefined);
 });

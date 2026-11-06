@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, appendFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, appendFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmp, desk, multiDesk, env, BIN, KIT } from './helpers.mjs';
@@ -339,6 +339,60 @@ test('written lines carry v: 1 and validate; decide records the ruling in decisi
   assert.equal(existsSync(join(home, 'NEXT.md')), false);
 });
 
+test('a ruled owner todo that is started is not waiting; a never-ruled started one still is', () => {
+  const home = tmp(), waiting = () => JSON.parse(desk(home, 'status', '--json').stdout).decisions.map((d) => d.id);
+  assert.equal(desk(home, 'todo', 'add', 'ruled one', '--area', 'owner').status, 0);
+  assert.equal(desk(home, 'todo', 'add', 'never ruled', '--area', 'owner').status, 0);
+  assert.equal(desk(home, 'decide', 'T-1', 'go').status, 0);
+  assert.equal(desk(home, 'todo', 'start', 'T-1').status, 0);
+  assert.equal(desk(home, 'todo', 'start', 'T-2').status, 0);
+  assert.deepEqual(waiting(), ['T-2'], 'status --json');
+  const st = JSON.parse(desk(home, 'status', '--json').stdout);
+  assert.ok(st.active.some((x) => x.id === 'T-1'), 'ruled, started: in active');
+  assert.ok(st.todos.some((x) => x.id === 'T-1'), 'ruled, started: in todos');
+  assert.ok(!st.active.some((x) => x.id === 'T-2'), 'never ruled: not in active');
+  assert.match(st.text, /T-1/);
+  assert.equal(JSON.parse(desk(home, 'decide', '--json').stdout).id, 'T-2');
+  assert.match(desk(home, 'decide').stdout, /^T-2 \(1 of 1\)/);
+  assert.notEqual(desk(home, 'decide', 'T-1', 'again').status, 0, 'a started ruled todo cannot be ruled again');
+  assert.equal(desk(home, 'decide', 'T-2', 'ok').status, 0);
+  assert.equal(desk(home, 'decide').stdout, 'No owner decisions waiting.\n');
+});
+
+test('a ruled owner todo waits again when reopened, and a new ruling replaces the old one', () => {
+  const home = tmp(), waiting = () => JSON.parse(desk(home, 'status', '--json').stdout).decisions.map((d) => d.id);
+  assert.equal(desk(home, 'todo', 'add', 'q', '--area', 'owner').status, 0);
+  assert.equal(desk(home, 'decide', 'T-1', 'one').status, 0);
+  assert.equal(desk(home, 'todo', 'start', 'T-1').status, 0);
+  assert.deepEqual(waiting(), []);
+  assert.equal(desk(home, 'todo', 'set', 'T-1', '--status', 'open').status, 0);
+  assert.deepEqual(waiting(), ['T-1'], 'reopened: waiting again');
+  assert.equal(desk(home, 'decide', 'T-1', 'two').status, 0);
+  assert.deepEqual(waiting(), []);
+  assert.match(desk(home, 'decide', '--list').stdout, /two/);
+});
+
+test('a ruled owner todo that is blocked waits', () => {
+  const home = tmp(), waiting = () => JSON.parse(desk(home, 'status', '--json').stdout).decisions.map((d) => d.id);
+  assert.equal(desk(home, 'todo', 'add', 'q', '--area', 'owner').status, 0);
+  assert.equal(desk(home, 'decide', 'T-1', 'one').status, 0);
+  assert.equal(desk(home, 'todo', 'start', 'T-1').status, 0);
+  assert.deepEqual(waiting(), []);
+  assert.equal(desk(home, 'todo', 'set', 'T-1', '--status', 'blocked').status, 0);
+  assert.deepEqual(waiting(), ['T-1']);
+});
+
+test('a ruled, started owner todo on a claimed slug is in active and out of todos and decisions', () => {
+  const { home } = multiDesk();
+  assert.equal(desk(home, 'todo', 'add', 'ruled work', '--area', 'owner').status, 0);
+  assert.equal(desk(home, 'decide', 'T-1', 'go').status, 0);
+  assert.equal(desk(home, 'wt', 'new', 'foo', '--repo', 'a').status, 0);
+  assert.equal(desk(home, 'todo', 'start', 'T-1', '--slug', 'foo').status, 0);
+  const st = JSON.parse(desk(home, 'status', '--json').stdout);
+  assert.ok(st.active.some((x) => x.id === 'T-1'), 'in active');
+  assert.ok(!st.todos.some((x) => x.id === 'T-1') && !st.decisions.some((x) => x.id === 'T-1'));
+});
+
 test('status --json validates against desk-status schema', () => {
   const { home } = multiDesk();
   assert.equal(desk(home, 'wt', 'new', 'demo', '--repo', 'a').status, 0);
@@ -401,6 +455,16 @@ test('todo add: the only repo by default, --area required with several repos', (
   writeFileSync(join(home, 'desk.config.json'), JSON.stringify({ repos: [{ id: 'a', path: 'a' }, { id: 'b', path: 'b' }] }));
   const r = desk(home, 'todo', 'add', 'which repo');
   assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /several repos/);
+  assert.doesNotMatch(r.stderr, /refused/, 'several repos is not a refused config');
+  rmSync(join(home, 'desk.config.json'));
+  const none = desk(home, 'todo', 'add', 'no config');
+  assert.equal(none.status, 1);
+  assert.doesNotMatch(none.stderr, /refused/, 'a missing config is not a refused one');
+  writeFileSync(join(home, 'desk.config.json'), JSON.stringify({ repos: [{ id: 'a' }] }));
+  const bad = desk(home, 'todo', 'add', 'refused config');
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /add needs --area .*\(desk\.config\.json refused: .+\)/);
 });
 
 test('todo note: kept whole up to 1000 characters, refused over it; unquoted words are joined; --notes is refused', () => {

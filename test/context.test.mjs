@@ -71,6 +71,12 @@ test('subagent-context: SessionStart adds the board and the next todo per repo',
   const c = ctx(home, 'SessionStart').hookSpecificOutput.additionalContext;
   assert.match(c, /# Desk board/);
   assert.match(c, /- a: nothing open\n- b: T-1 \[open\] first b job/);
+  assert.match(c, /owner decisions waiting: none/);
+  desk(home, 'todo', 'add', 'q1', '--area', 'owner'); // T-2: ruled, closed: not waiting
+  desk(home, 'todo', 'add', 'q2', '--area', 'owner'); // T-3: never ruled, started: waiting
+  desk(home, 'decide', 'T-2', 'go');
+  desk(home, 'todo', 'start', 'T-3');
+  assert.match(ctx(home, 'SessionStart').hookSpecificOutput.additionalContext, /owner decisions waiting: T-3\n/);
 });
 
 test('subagent-context: an unknown config key keeps the board and the repo lines', () => {

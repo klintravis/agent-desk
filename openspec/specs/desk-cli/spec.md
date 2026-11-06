@@ -137,8 +137,8 @@ The `desk` entry point (`bin/desk.mjs`): dispatch, and the read-only and bookkee
 - **THEN** a `warn` line points at `CHANGELOG.md` and `desk sync`, and the exit code is unaffected
 
 #### Scenario: Missing tool
-- **WHEN** `claude` is not on PATH
-- **THEN** its steps print `skip <name>: claude not on PATH` and do not fail the check
+- **WHEN** `claude` is not on PATH, which the check reads from the spawn error `ENOENT` or the shell's exit code 9009 (cmd), or on Windows a plain 1 that `where claude` confirms, never from the shell's message text
+- **THEN** its steps print `skip <name>: claude not on PATH` and do not fail the check, whatever language the shell's message is in
 
 #### Scenario: Config that does not parse
 - **WHEN** a JSON file it parses (the plugin and marketplace manifests, `hooks/hooks.json`, the desk's `desk.config.json`) is not valid JSON
@@ -264,6 +264,21 @@ Every transcript SHALL have one worktree key, worked out from the transcript and
 - **WHEN** worktrees are compared
 - **THEN** committed changes against the base ref plus uncommitted changes count, at most 6 files are listed then `(+N)`, and paths in different repos never overlap
 
+### Requirement: A ruled owner todo is not waiting
+A todo with area `owner` SHALL count as a waiting owner decision while its status is open or blocked, or while it is active and holds no `ruled:` note (the note `desk decide` writes when it closes one). A ruled one that is started for work (active) does not wait; reopened (open) or blocked it waits again, and a new ruling replaces the old one. `desk status` (its `decisions` and the owner count), `desk decide`, `desk decide --json`, the watch's `OWNER+:` lines, `desk decide T-n <ruling>` and the pane's Decisions count and Decide press SHALL all use that one set. A ruled owner todo that is active SHALL be listed with the work todos in `desk status`.
+
+#### Scenario: Ruled, then started
+- **WHEN** `T-1` (area `owner`) was ruled with `desk decide` and then `desk todo start T-1` ran
+- **THEN** `T-1` is not in `decisions` of `desk status --json`, not shown by `desk decide` or `desk decide --json`, and `desk decide T-1 <ruling>` exits 1; it is listed among the status todos and in `active` (or, with a branch or claim on its slug, in Work)
+
+#### Scenario: Ruled, started, reopened
+- **WHEN** a ruled owner todo was started and is then set back to open or blocked
+- **THEN** it is in `decisions` again, `desk decide T-n <ruling>` records the new ruling, and `desk decide --list` shows it
+
+#### Scenario: Never ruled, started
+- **WHEN** an owner todo with no `ruled:` note is started
+- **THEN** it still counts as waiting, since the question has not been answered
+
 ### Requirement: Decide and rulings
 `desk decide` SHALL show the first waiting owner decision, `desk decide --json` SHALL print the same decision as JSON, `desk decide T-n <ruling>` SHALL append the ruling to `decisions.jsonl` and close the todo, `desk decide T-n --pick <n>` SHALL do the same with the nth option's label, counted from 1 as `--json` lists them, and `desk decide --list [n]` SHALL print the recorded rulings.
 
@@ -272,7 +287,7 @@ Every transcript SHALL have one worktree key, worked out from the transcript and
 
 #### Scenario: Show
 - **WHEN** `desk decide` runs
-- **THEN** it picks the first todo with area `owner`, status open, active or blocked, in priority order, and prints `<id> (1 of <n>): <title>`, its context when it has stored options, the options numbered from 1, the first as `Recommended`, the rest as `Or`, each option's why on the line under it, and the answer command, which gives `desk decide <id> --pick <n>` and free words in single quotes, never in double quotes
+- **THEN** it picks the first todo with area `owner`, status open or blocked, or active with no `ruled:` note, in priority order, and prints `<id> (1 of <n>): <title>`, its context when it has stored options, the options numbered from 1, the first as `Recommended`, the rest as `Or`, each option's why on the line under it, and the answer command, which gives `desk decide <id> --pick <n>` and free words in single quotes, never in double quotes
 - **AND** with none waiting it prints `No owner decisions waiting.`
 
 #### Scenario: JSON
@@ -575,14 +590,14 @@ Each entry of `decisions` in `desk status --json` SHALL hold `options`, read the
 - **THEN** its entry is `{id, title, options: [{label, why}, {label, why}]}` and the object still has `v` 2
 
 ### Requirement: Todos in the status JSON
-`desk status --json` SHALL hold `todos`: every todo with status open, active or blocked, except area `owner`, except area `idea` unless it is active, and except an active todo whose slug has an open branch or an open claim (that todo is in Work), ordered active first, then by priority, then id (a surface that shows only the first few never hides an active todo). `v` SHALL stay 2 and the printed screen SHALL not change.
+`desk status --json` SHALL hold `todos`: every todo with status open, active or blocked, except a waiting owner decision (area `owner`, open or blocked, or active with no `ruled:` note; a ruled one that is active is listed), except area `idea` unless it is active, and except an active todo whose slug has an open branch or an open claim (that todo is in Work), ordered active first, then by priority, then id (a surface that shows only the first few never hides an active todo). `v` SHALL stay 2 and the printed screen SHALL not change.
 
 #### Scenario: What is not started
 - **WHEN** todos are open, blocked or in area `watch`
 - **THEN** each is in `todos`
 
 #### Scenario: Decisions and ideas
-- **WHEN** a todo has area `owner`, or area `idea` and is not active
+- **WHEN** a todo is a waiting owner decision, or has area `idea` and is not active
 - **THEN** it is not in `todos`
 
 #### Scenario: An active idea
@@ -640,3 +655,15 @@ Each entry of `decisions` in `desk status --json` SHALL hold `options`, read the
 - **WHEN** the worktree changed only `README.md` under a `feature` todo
 - **THEN** nothing is printed and the exit code is 0
 - **AND** `desk lenses nosuch` exits 1 with `desk lenses: no worktree "nosuch"`
+
+### Requirement: Config warning on the status screen
+When `desk.config.json` is refused, `desk status` SHALL print `Warning: ` and the refusal message on a line directly under its heading, and `desk status --json` SHALL carry the messages in `warnings`, an array of strings valid against `schemas/desk-status.schema.json`. `warnings` SHALL be absent when the config loads. The command SHALL still exit 0.
+
+#### Scenario: Unknown key
+- **WHEN** `desk.config.json` holds an unknown top-level key and `desk status` runs
+- **THEN** the screen has a `Warning:` line naming the key, and the exit code is 0
+- **AND** `desk status --json` has `warnings` holding the same message
+
+#### Scenario: Valid config
+- **WHEN** the config loads
+- **THEN** no `Warning:` line prints and `warnings` is absent

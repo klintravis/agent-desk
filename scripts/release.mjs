@@ -11,6 +11,8 @@ const FILES = ['package.json', '.claude-plugin/plugin.json', 'vscode/package.jso
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
 const VERSION = /("version"\s*:\s*")([^"]*)(")/;
 
+const INSTALL = /((?:npx|install -g) github:klintravis\/agent-desk)(?:#[\w.-]+)?(?![\w-])/g;
+
 const read = (root, f) => readFileSync(join(root, f), 'utf8');
 export const versions = (root = ROOT) => FILES.map((f) => VERSION.exec(read(root, f))?.[2]);
 function agreed(root) {
@@ -31,14 +33,41 @@ export function section(changelog, title) {
   return lines.slice(i + 1, j).join('\n').trim();
 }
 
+// `merge=union` keeps both sides of a reworded entry, so a rebase leaves two lines for one change.
+// A gap per section: an entry line repeated, or two entries naming the same `OpenSpec change \`x\``
+// or the same todo id. Only an id right after "(" or "," counts, so "todo set T-1" or "(T-277 review)" in prose does not.
+export function changelogGaps(changelog) {
+  const out = [];
+  let title = '', lines = new Set(), changes = new Set(), todos = new Set();
+  for (const l of changelog.split(/\r?\n/)) {
+    if (l.startsWith('## ')) { title = l.slice(3).trim(); lines = new Set(); changes = new Set(); todos = new Set(); continue; }
+    if (!l.startsWith('- ')) continue;
+    if (lines.has(l)) out.push(`${title}: duplicate entry "${l.slice(0, 60)}"`);
+    lines.add(l);
+    for (const t of new Set([...l.matchAll(/[(,]\s*(T-\d+)(?=[,)])/g)].map((m) => m[1]))) {
+      if (todos.has(t)) out.push(`${title}: two entries name ${t}`);
+      todos.add(t);
+    }
+    for (const c of new Set([...l.matchAll(/OpenSpec change `([^`]+)`/g)].map((m) => m[1]))) {
+      if (changes.has(c)) out.push(`${title}: two entries name OpenSpec change \`${c}\``);
+      changes.add(c);
+    }
+  }
+  return out;
+}
+
 export function bump(version, root = ROOT, date = new Date().toLocaleDateString('sv')) {
   if (!SEMVER.test(version)) throw new Error(`version must be x.y.z, got ${version}`);
   const pkg = agreed(root);
   if (!gt(version, pkg)) throw new Error(`${version} is not greater than the current ${pkg}`);
   const log = read(root, 'CHANGELOG.md');
   if (!section(log, 'Unreleased')) throw new Error('CHANGELOG.md has no entries under ## Unreleased');
+  const gaps = changelogGaps(`## Unreleased\n${section(log, 'Unreleased')}`);
+  if (gaps.length) throw new Error(`CHANGELOG.md: ${gaps.join('; ')}`);
   writeFileSync(join(root, 'CHANGELOG.md'), log.replace(/^## Unreleased[ \t]*$/m, `## Unreleased\n\n## ${version} - ${date}`));
   for (const f of FILES) writeFileSync(join(root, f), read(root, f).replace(VERSION, `$1${version}$3`));
+  // The README's bootstrap installs name the release tag, so a new user does not get the default branch.
+  writeFileSync(join(root, 'README.md'), read(root, 'README.md').replace(INSTALL, `$1#v${version}`));
 }
 
 export function notes(tag, root = ROOT) {

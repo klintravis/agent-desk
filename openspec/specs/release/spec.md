@@ -15,6 +15,10 @@ It SHALL write the version into all three files, keeping their formatting, and i
 - **WHEN** the current version is 0.1.0, Unreleased has entries and `bump 0.2.0` runs
 - **THEN** all three files say 0.2.0 and the entries sit under `## 0.2.0 - <today>` with an empty `## Unreleased` above
 
+#### Scenario: README install pins
+- **WHEN** `bump 0.2.0` runs and `README.md` has `npx github:klintravis/agent-desk` or `npm install -g github:klintravis/agent-desk`, pinned or not
+- **THEN** each reads `...agent-desk#v0.2.0`
+
 #### Scenario: Version not greater or not semver
 - **WHEN** `bump 0.1.0`, `bump 0.0.9` or `bump 1.0` runs against 0.1.0
 - **THEN** it exits 1 and no file changes
@@ -40,6 +44,17 @@ It SHALL write the version into all three files, keeping their formatting, and i
 #### Scenario: Versions differ
 - **WHEN** the three files carry different versions
 - **THEN** `npm test` fails
+
+### Requirement: CHANGELOG duplicate entries
+`npm test` SHALL fail when a section of `CHANGELOG.md` holds the same entry line twice or two entries that name the same `OpenSpec change \`x\`` or the same todo id inside a parenthesis, right after `(` or `,` and before `,` or `)` (`(T-279)`, `(OpenSpec change \`x\`, T-279)`). `bump` SHALL refuse, naming the duplicate and writing nothing, when `## Unreleased` has one. An entry placed under the wrong version is not detected.
+
+#### Scenario: Reworded entry kept twice
+- **WHEN** a union merge leaves two entries naming `OpenSpec change \`x\`` under `## Unreleased`
+- **THEN** `npm test` fails and `bump` exits 1 with no file changed
+
+#### Scenario: Same change in two versions
+- **WHEN** two different version sections each name `OpenSpec change \`x\``
+- **THEN** no gap is reported
 
 ### Requirement: Release workflow
 Pushing a tag `v*` SHALL run `.github/workflows/release.yml` with `contents: write`. On a private repository the job SHALL be skipped. The job SHALL fail unless the tagged commit is an ancestor of `origin/main`, SHALL run `npm test`, SHALL package `vscode/` with a pinned `@vscode/vsce` before the release exists, and SHALL create the GitHub release named after the tag, with the `notes` output as its body and the vsix attached, using `--verify-tag`.

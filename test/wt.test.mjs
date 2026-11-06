@@ -131,6 +131,26 @@ test('wt discard drops worktree, branch and uncommitted work', () => {
   assert.deepEqual([board(home).at(-1).kind, board(home).at(-1).text], ['release', 'discarded']);
 });
 
+test('wt discard returns the slug\'s active todos to open and clears wt', () => {
+  const { home } = multiDesk();
+  ok(desk(home, 'wt', 'new', 'junk', '--repo', 'b'));
+  ok(desk(home, 'todo', 'add', 'work', '--area', 'b'));
+  ok(desk(home, 'todo', 'add', 'tagged only', '--area', 'b', '--slug', 'junk'));
+  ok(desk(home, 'todo', 'add', 'blocked one', '--area', 'b'));
+  ok(desk(home, 'todo', 'start', 'T-1', '--slug', 'junk'));
+  ok(desk(home, 'todo', 'set', 'T-1', '--state', 'built', '--next', 'finish'));
+  ok(desk(home, 'todo', 'start', 'T-3', '--slug', 'junk'));
+  ok(desk(home, 'todo', 'set', 'T-3', '--status', 'blocked'));
+  assert.match(ok(desk(home, 'wt', 'discard', 'junk')), /reopened: T-1, T-3/);
+  const t = JSON.parse(ok(desk(home, 'todo', 'show', 'T-1')));
+  assert.equal(t.status, 'open');
+  assert.ok(!t.slug && !t.owner && !t.state && !t.next);
+  const b = JSON.parse(ok(desk(home, 'todo', 'show', 'T-3')));
+  assert.ok(b.status === 'open' && !b.slug && !b.owner, 'a started-then-blocked todo is released too');
+  assert.match(t.notes.at(-1), /worktree junk discarded/);
+  assert.equal(JSON.parse(ok(desk(home, 'todo', 'show', 'T-2'))).slug, 'junk', 'an open todo merely tagged stays');
+});
+
 test('wt discard and remove refuse to run with the cwd inside the worktree', () => {
   const { root, home } = multiDesk();
   const wt = join(root, 'worktrees', 'b-here'), sub = join(wt, 'src');

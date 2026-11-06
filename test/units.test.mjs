@@ -2,8 +2,11 @@
 // Each *Checks() returns one boolean per check; `all` fails the test with the index of every false one.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync, appendFileSync, utimesSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { KIT } from './helpers.mjs';
-import { openClaims, mergeOk, clean, fold, next, nextId, tree, tally, tokenPatterns, WARM_READ, overlaps, statusPaths, statusText, statusData, prState, watchDiff, carry, ownerOpen, decisionOf, decideText, rulingsText } from '../bin/desk.mjs';
+import { openClaims, mergeOk, clean, fold, next, nextId, tree, tally, tallyFile, dropUnseen, tokenPatterns, WARM_READ, overlaps, statusPaths, statusText, statusData, prState, watchDiff, carry, ownerOpen, decisionOf, decideText, rulingsText } from '../bin/desk.mjs';
 import { validate, schema, SCHEMAS } from '../lib/schema.mjs';
 
 const all = (checks) => assert.deepEqual(checks.flatMap((c, i) => (c ? [] : [i])), [], 'failed check indexes');
@@ -281,4 +284,35 @@ test('v0.7.0: merge gate overrides, acceptance claims, reserved keys, not pushed
     branchWord({ ci: 'success', board: [V('MERGE @abcdef1')], slug: 'v', head, pushed: false }) === 'not pushed',
     branchWord({ ci: 'success', board: [V('MERGE @abcdef1')], slug: 'v', head }) === 'ready',
   ]);
+});
+
+test('tallyFile: an unchanged transcript is not parsed again, a changed mtime or size is', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'desk-tally-'));
+  const f = join(dir, 'a.jsonl'), t0 = new Date('2026-01-01T00:00:00Z'), t1 = new Date('2026-01-01T00:00:05Z');
+  writeFileSync(f, '{}\n');
+  utimesSync(f, t0, t0);
+  let parses = 0;
+  const parse = (text) => { parses++; return { text }; };
+  const cache = new Map();
+  const a = tallyFile(f, cache, parse);
+  assert.equal(tallyFile(f, cache, parse), a);
+  assert.equal(parses, 1, 'second read of an unchanged file reuses the first parse');
+  utimesSync(f, t1, t1); // same size, new mtime
+  tallyFile(f, cache, parse);
+  assert.equal(parses, 2, 'a changed mtime reparses');
+  appendFileSync(f, '{}\n');
+  utimesSync(f, t1, t1); // same mtime as the last look, bigger file
+  tallyFile(f, cache, parse);
+  assert.equal(parses, 3, 'a changed size reparses');
+  tallyFile(f, undefined, parse);
+  tallyFile(f, undefined, parse);
+  assert.equal(parses, 5, 'without a cache (one-shot status, tokens) every call parses');
+  // A watch tick: tokenRows clears `seen`, tallies the files still in the window, then drops the rest.
+  cache.set(join(dir, 'gone.jsonl'), { mtimeMs: 0, size: 0, t: {}, seen: true });
+  for (const e of cache.values()) e.seen = false;
+  tallyFile(f, cache, parse);
+  dropUnseen(cache);
+  assert.deepEqual([...cache.keys()], [f], 'a file the tick did not tally leaves the cache; a tallied one stays');
+  dropUnseen(undefined); // no cache (one-shot runs): nothing to drop
+  rmSync(dir, { recursive: true, force: true });
 });

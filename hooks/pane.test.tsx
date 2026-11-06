@@ -51,6 +51,23 @@ test('an interactive session opens the pane and shows desk status', async ($, on
   }
 })
 
+test('each status warning shows as an orange Warning line', async ($, on) => {
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('clock.every', () => new Promise(() => {}))
+  on('clock.now', () => ({ value: 0 }))
+  on('process.run', (_$, e) => {
+    const stdout = e.argv.at(-1) === '--json' ? json({ warnings: ['desk.config.json refused: x'] }) : ''
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await wait()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const line = await ui.find({ type: 'Text', text: /^Warning: / })
+  expect(line?.text).toBe('Warning: desk.config.json refused: x')
+  expect(line?.props?.color).toBe('orange')
+})
+
 test('a status from an older CLI with no todos renders the Todos tab as unavailable', async ($, on) => {
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('clock.every', () => new Promise(() => {}))

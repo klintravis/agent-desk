@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmp, KIT, git, commit } from './helpers.mjs';
-import { bump, notes, versions, section, publish } from '../scripts/release.mjs';
+import { bump, notes, versions, section, publish, changelogGaps } from '../scripts/release.mjs';
 
 const LOG = '# Changelog\n\nintro\n\n## Unreleased\n\n- new thing\n\n## 0.1.0 - 2026-10-31\n\n- first\n';
 function fake(log = LOG) {
@@ -15,6 +15,7 @@ function fake(log = LOG) {
   writeFileSync(join(d, '.claude-plugin/plugin.json'), '{\n  "name": "x",\n  "version": "0.1.0"\n}\n');
   writeFileSync(join(d, 'vscode/package.json'), '{\n  "name": "x",\n  "version": "0.1.0"\n}\n');
   writeFileSync(join(d, 'CHANGELOG.md'), log);
+  writeFileSync(join(d, 'README.md'), 'npx github:klintravis/agent-desk#v0.1.0 init\nnpm install -g github:klintravis/agent-desk\n');
   return d;
 }
 const snap = (d) => ['package.json', '.claude-plugin/plugin.json', 'vscode/package.json', 'CHANGELOG.md'].map((f) => readFileSync(join(d, f), 'utf8'));
@@ -27,6 +28,20 @@ test('repo: package and plugin versions agree and the CHANGELOG covers them', ()
   assert.ok(section(log, a) !== null || section(log, 'Unreleased') !== null);
 });
 
+test('repo: README install pins equal the package version', () => {
+  const [v] = versions(KIT);
+  const pins = [...readFileSync(join(KIT, 'README.md'), 'utf8').matchAll(/(?:npx|install -g) github:klintravis\/agent-desk(#[\w.-]+)?/g)].map((m) => m[1]);
+  assert.ok(pins.length > 0);
+  for (const p of pins) assert.equal(p, `#v${v}`);
+});
+
+test('bump replaces a non-semver pin and leaves longer names alone', () => {
+  const d = fake();
+  writeFileSync(join(d, 'README.md'), 'npx github:klintravis/agent-desk#develop init\nnpx github:klintravis/agent-desk-foo\n');
+  bump('0.2.0', d, '2026-11-02');
+  assert.equal(readFileSync(join(d, 'README.md'), 'utf8'), 'npx github:klintravis/agent-desk#v0.2.0 init\nnpx github:klintravis/agent-desk-foo\n');
+});
+
 test('bump moves Unreleased entries under the new version', () => {
   const d = fake();
   bump('0.2.0', d, '2026-11-02');
@@ -36,6 +51,7 @@ test('bump moves Unreleased entries under the new version', () => {
   assert.match(log, /## Unreleased\n\n## 0\.2\.0 - 2026-11-02\n\n- new thing\n\n## 0\.1\.0/);
   assert.equal(section(log, 'Unreleased'), '');
   assert.equal(notes('v0.2.0', d), '- new thing');
+  assert.equal(readFileSync(join(d, 'README.md'), 'utf8'), 'npx github:klintravis/agent-desk#v0.2.0 init\nnpm install -g github:klintravis/agent-desk#v0.2.0\n');
 });
 
 test('bump refuses a version that is not greater, not semver, or empty Unreleased; writes nothing', () => {
@@ -124,4 +140,39 @@ test('CI picks runners by visibility; releases run only on a public repo', () =>
   const create = rel.indexOf('gh release create');
   assert.ok(/gh release create.*\.vsix/.test(rel), 'release attaches the vsix');
   assert.ok(rel.indexOf('vsce@') > -1 && rel.indexOf('vsce@') < create, 'vsce packages before the release exists');
+});
+
+const ENTRY = (n, w = 'thing') => `- Added: ${w} (OpenSpec change \`${n}\`).`;
+test('changelogGaps: a repeated line or a second entry for one OpenSpec change is a gap', () => {
+  assert.deepEqual(changelogGaps(LOG), []);
+  const twice = `## Unreleased\n\n${ENTRY('x')}\n${ENTRY('x', 'reworded thing')}\n\n## 0.1.0 - 2026-10-31\n\n- a\n- a\n`;
+  const g = changelogGaps(twice);
+  assert.equal(g.length, 2);
+  assert.match(g[0], /Unreleased.*OpenSpec change `x`/);
+  assert.match(g[1], /0\.1\.0.*duplicate entry/);
+  assert.deepEqual(changelogGaps(`## Unreleased\n\n${ENTRY('x')}\n${ENTRY('y')}\n\n## 0.1.0\n\n${ENTRY('x')}\n`), []);
+});
+
+test('changelogGaps: two entries naming one todo id are a gap; an id in prose is not', () => {
+  const log = `## Unreleased\n\n- Fixed: a (T-279).\n- Fixed: a reworded (T-279, OpenSpec change \`x\`).\n`;
+  assert.deepEqual(changelogGaps(log), ['Unreleased: two entries name T-279']);
+  assert.deepEqual(changelogGaps(`## Unreleased\n\n- Fixed: a (T-279).\n- Fixed: b after T-279 and (T-277 review) (T-5).\n`), []);
+});
+
+test('repo: develop CHANGELOG has no duplicate entries', () => {
+  assert.deepEqual(changelogGaps(readFileSync(join(KIT, 'CHANGELOG.md'), 'utf8')), []);
+});
+
+test('bump refuses duplicate Unreleased entries and writes nothing', () => {
+  const d = fake(`## Unreleased\n\n${ENTRY('x')}\n${ENTRY('x', 'reworded')}\n\n## 0.1.0 - 2026-10-31\n\n- first\n`);
+  const before = snap(d);
+  assert.throws(() => bump('0.2.0', d, '2026-11-02'), /OpenSpec change `x`/);
+  assert.deepEqual(snap(d), before);
+});
+
+test('bump refuses two Unreleased entries naming one todo id and writes nothing', () => {
+  const d = fake(`## Unreleased\n\n- Fixed: a (T-9).\n- Fixed: a reworded (T-9).\n\n## 0.1.0 - 2026-10-31\n\n- first\n`);
+  const before = snap(d);
+  assert.throws(() => bump('0.2.0', d, '2026-11-02'), /two entries name T-9/);
+  assert.deepEqual(snap(d), before);
 });

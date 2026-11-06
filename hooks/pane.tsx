@@ -316,6 +316,7 @@ export function registerPane(on: On) {
         </Box>
         {!s && <Text dimColor>{bad || 'Loading desk status…'}</Text>}
         {s && bad && <Text color="red">{bad}</Text>}
+        {s?.warnings?.map((w, i) => <Text key={String(i)} color="orange">Warning: {w}</Text>)}
         {head && <Box marginTop={1} paddingX={1}><Text color={head.color} weight="medium" wrap="truncate-end">{head.text}</Text></Box>}
         {s && <Box marginTop={1} gap={1}>{tabs.flatMap(([id, label, mark]) => [<Button key={`tab-${id}`} {...(open === id ? { variant: 'primary' as const } : { dimColor: true })} onPress={() => void update($, tab, () => id!).catch(() => {})}>{label}</Button>, ...(mark ? [<Text key={`mark-${id}`} color={mark}>●</Text>] : [])])}</Box>}
         {s && open === 'decisions' && section('Decisions', s.decisions.length ? <Box flexDirection="column" gap={1}>{s.decisions.map((d) => (
